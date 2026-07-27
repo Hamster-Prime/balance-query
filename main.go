@@ -33,35 +33,16 @@ typedef struct {
 extern int cliproxyPluginCall(char*, uint8_t*, size_t, cliproxy_buffer*);
 extern void cliproxyPluginFree(void*, size_t);
 extern void cliproxyPluginShutdown(void);
-
-static const cliproxy_host_api* stored_host;
-
-static void store_host_api(const cliproxy_host_api* host) {
-	stored_host = host;
-}
-
-static int call_host_api(const char* method, const uint8_t* request, size_t request_len, cliproxy_buffer* response) {
-	if (stored_host == NULL || stored_host->call == NULL) {
-		return 1;
-	}
-	return stored_host->call(stored_host->host_ctx, method, request, request_len, response);
-}
-
-static void free_host_buffer(void* ptr, size_t len) {
-	if (stored_host != NULL && stored_host->free_buffer != NULL && ptr != NULL) {
-		stored_host->free_buffer(ptr, len);
-	}
-}
 */
 import "C"
 
 import (
-	"encoding/base64"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -71,26 +52,33 @@ import (
 	"github.com/Hamster-Prime/balance-query/internal/cache"
 	"github.com/Hamster-Prime/balance-query/internal/providers"
 	"github.com/Hamster-Prime/balance-query/internal/ui"
+	"gopkg.in/yaml.v3"
 )
 
 const (
-	pluginName    = "balance-query"
-	pluginVersion = "1.0.0"
+	pluginID      = "balance-query"
+	pluginVersion = "0.2.0"
 	abiVersion    = 1
 	schemaVersion = 1
-	resourcePath  = "/dashboard"
-)
 
-// ── global state ─────────────────────────────────────────────────────────────
+	resourcePath = "/dashboard"
+	queryPath    = "/" + pluginID + "/query"
+
+	defaultTTLSeconds = 300
+	maxQueryAccounts  = 128
+	maxQueryBodyBytes = 1 << 20
+)
 
 var (
-	resultCache = cache.New[string, balance.Result](300 * time.Second)
-	lastFetchMu sync.RWMutex
-	lastFetch   time.Time
-	ttlSeconds  = 300
-)
+	resultCache = cache.New[string, balance.Result](defaultTTLSeconds * time.Second)
+	querySlots  = make(chan struct{}, 8)
 
-// ── envelope types ────────────────────────────────────────────────────────────
+	stateMu sync.RWMutex
+	state   = balance.PluginConfig{
+		CacheTTLSeconds:  defaultTTLSeconds,
+		ProviderMappings: map[string]balance.ProviderType{},
+	}
+)
 
 type envelope struct {
 	OK     bool            `json:"ok"`
@@ -103,16 +91,13 @@ type envelopeError struct {
 	Message string `json:"message"`
 }
 
-// ── CPA ABI boilerplate ───────────────────────────────────────────────────────
-
 func main() {}
 
 //export cliproxy_plugin_init
-func cliproxy_plugin_init(host *C.cliproxy_host_api, plugin *C.cliproxy_plugin_api) C.int {
+func cliproxy_plugin_init(_ *C.cliproxy_host_api, plugin *C.cliproxy_plugin_api) C.int {
 	if plugin == nil {
 		return 1
 	}
-	C.store_host_api(host)
 	plugin.abi_version = C.uint32_t(abiVersion)
 	plugin.call = C.cliproxy_plugin_call_fn(C.cliproxyPluginCall)
 	plugin.free_buffer = C.cliproxy_plugin_free_fn(C.cliproxyPluginFree)
@@ -127,9 +112,10 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 		response.len = 0
 	}
 	if method == nil {
-		writeResponse(response, errorEnvelope("invalid_method", "method is required"))
+		writeResponse(response, errorEnvelope("invalid_method", "缺少插件调用方法"))
 		return 1
 	}
+
 	var requestBytes []byte
 	if request != nil && requestLen > 0 {
 		requestBytes = C.GoBytes(unsafe.Pointer(request), C.int(requestLen))
@@ -144,36 +130,32 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 }
 
 //export cliproxyPluginFree
-func cliproxyPluginFree(ptr unsafe.Pointer, size C.size_t) {
+func cliproxyPluginFree(ptr unsafe.Pointer, _ C.size_t) {
 	if ptr != nil {
 		C.free(ptr)
 	}
-	_ = size
 }
 
 //export cliproxyPluginShutdown
 func cliproxyPluginShutdown() {}
-
-// ── method dispatch ───────────────────────────────────────────────────────────
 
 func handleMethod(method string, request []byte) ([]byte, error) {
 	switch method {
 	case "plugin.register", "plugin.reconfigure":
 		return handleRegister(request)
 	case "management.register":
-		return handleMgmtRegister()
+		return handleManagementRegister()
 	case "management.handle":
-		return handleMgmtHandle(request)
-	case "command_line.register":
-		return handleCLIRegister()
-	case "command_line.execute":
-		return handleCLIExecute(request)
+		return handleManagementRequest(request)
 	default:
-		return errorEnvelope("unknown_method", "unknown method: "+method), nil
+		return errorEnvelope("unknown_method", "不支持的插件方法："+method), nil
 	}
 }
 
-// ── plugin registration ───────────────────────────────────────────────────────
+type lifecycleRequest struct {
+	ConfigYAML    []byte `json:"config_yaml"`
+	SchemaVersion uint32 `json:"schema_version"`
+}
 
 type registration struct {
 	SchemaVersion uint32                   `json:"schema_version"`
@@ -191,56 +173,128 @@ type pluginMetadata struct {
 }
 
 type configField struct {
-	Key         string `json:"key"`
-	Type        string `json:"type"`
-	Default     any    `json:"default,omitempty"`
-	Description string `json:"description"`
+	Name        string   `json:"Name"`
+	Type        string   `json:"Type"`
+	EnumValues  []string `json:"EnumValues,omitempty"`
+	Description string   `json:"Description"`
 }
 
 type registrationCapabilities struct {
-	ManagementAPI     bool `json:"management_api"`
-	CommandLinePlugin bool `json:"command_line_plugin"`
+	ManagementAPI bool `json:"management_api"`
 }
 
-func handleRegister(_ []byte) ([]byte, error) {
-	reg := registration{
+func handleRegister(raw []byte) ([]byte, error) {
+	if err := applyRuntimeConfig(raw); err != nil {
+		return nil, err
+	}
+	return okEnvelope(registration{
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
-			Name:             pluginName,
+			Name:             "余额与配额",
 			Version:          pluginVersion,
-			Author:           "community",
+			Author:           "Hamster-Prime",
 			GitHubRepository: "https://github.com/Hamster-Prime/balance-query",
 			Logo:             "https://raw.githubusercontent.com/Hamster-Prime/balance-query/main/assets/logo.png",
 			ConfigFields: []configField{
 				{
-					Key:         "cache_ttl_seconds",
+					Name:        "cache_ttl_seconds",
 					Type:        "integer",
-					Default:     300,
-					Description: "Balance result cache TTL in seconds (10–86400). Set to 0 to disable caching.",
+					Description: "余额查询缓存时长（秒）；设为 0 可关闭缓存。",
+				},
+				{
+					Name:        "provider_mappings",
+					Type:        "object",
+					Description: "OpenAI 兼容提供商与余额查询类型的映射，由插件页面维护。",
 				},
 			},
 		},
-		Capabilities: registrationCapabilities{
-			ManagementAPI:     true,
-			CommandLinePlugin: true,
-		},
+		Capabilities: registrationCapabilities{ManagementAPI: true},
+	})
+}
+
+func applyRuntimeConfig(raw []byte) error {
+	if len(raw) == 0 {
+		return nil
 	}
-	return okEnvelope(reg)
+	var request lifecycleRequest
+	if err := json.Unmarshal(raw, &request); err != nil {
+		return fmt.Errorf("解析插件配置请求失败：%w", err)
+	}
+	if len(request.ConfigYAML) == 0 {
+		return nil
+	}
+
+	var decoded struct {
+		CacheTTLSeconds  *int                            `yaml:"cache_ttl_seconds"`
+		ProviderMappings map[string]balance.ProviderType `yaml:"provider_mappings"`
+	}
+	if err := yaml.Unmarshal(request.ConfigYAML, &decoded); err != nil {
+		return fmt.Errorf("解析插件配置失败：%w", err)
+	}
+	next := balance.PluginConfig{
+		CacheTTLSeconds:  defaultTTLSeconds,
+		ProviderMappings: decoded.ProviderMappings,
+	}
+	if decoded.CacheTTLSeconds != nil {
+		next.CacheTTLSeconds = normalizeTTL(*decoded.CacheTTLSeconds)
+	}
+	if next.ProviderMappings == nil {
+		next.ProviderMappings = map[string]balance.ProviderType{}
+	}
+	for key, providerType := range next.ProviderMappings {
+		if !balance.IsKnownProvider(providerType) {
+			delete(next.ProviderMappings, key)
+		}
+	}
+
+	stateMu.Lock()
+	previousTTL := state.CacheTTLSeconds
+	state = next
+	stateMu.Unlock()
+
+	if previousTTL != next.CacheTTLSeconds {
+		resultCache.SetTTL(time.Duration(next.CacheTTLSeconds) * time.Second)
+		resultCache.Flush()
+	}
+	return nil
 }
 
-// ── management API ────────────────────────────────────────────────────────────
-
-type mgmtRegistration struct {
-	Resources []mgmtResource `json:"resources,omitempty"`
+func normalizeTTL(value int) int {
+	if value == 0 {
+		return 0
+	}
+	if value < 10 {
+		return 10
+	}
+	if value > 86400 {
+		return 86400
+	}
+	return value
 }
 
-type mgmtResource struct {
+func currentTTL() int {
+	stateMu.RLock()
+	defer stateMu.RUnlock()
+	return state.CacheTTLSeconds
+}
+
+type managementRegistration struct {
+	Routes    []managementRoute    `json:"routes,omitempty"`
+	Resources []managementResource `json:"resources,omitempty"`
+}
+
+type managementRoute struct {
+	Method string `json:"Method"`
+	Path   string `json:"Path"`
+}
+
+type managementResource struct {
 	Path        string `json:"Path"`
 	Menu        string `json:"Menu"`
 	Description string `json:"Description"`
 }
 
-type mgmtRequest struct {
+type managementRequest struct {
 	Method  string      `json:"Method"`
 	Path    string      `json:"Path"`
 	Headers http.Header `json:"Headers"`
@@ -248,412 +302,316 @@ type mgmtRequest struct {
 	Body    []byte      `json:"Body"`
 }
 
-type mgmtResponse struct {
+type managementResponse struct {
 	StatusCode int         `json:"StatusCode"`
 	Headers    http.Header `json:"Headers"`
 	Body       []byte      `json:"Body"`
 }
 
-func handleMgmtRegister() ([]byte, error) {
-	return okEnvelope(mgmtRegistration{
-		Resources: []mgmtResource{{
+func handleManagementRegister() ([]byte, error) {
+	return okEnvelope(managementRegistration{
+		Routes: []managementRoute{{Method: http.MethodPost, Path: queryPath}},
+		Resources: []managementResource{{
 			Path:        resourcePath,
-			Menu:        "Balance Query",
-			Description: "View balance and quota status for all configured AI providers.",
+			Menu:        "余额与配额",
+			Description: "查看 OpenAI 兼容提供商的余额与套餐配额",
 		}},
 	})
 }
 
-func handleMgmtHandle(raw []byte) ([]byte, error) {
-	var req mgmtRequest
+func handleManagementRequest(raw []byte) ([]byte, error) {
+	var request managementRequest
 	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &req); err != nil {
-			return nil, fmt.Errorf("decode management request: %w", err)
+		if err := json.Unmarshal(raw, &request); err != nil {
+			return nil, fmt.Errorf("解析管理请求失败：%w", err)
 		}
 	}
 
-	action := req.Query.Get("action")
-
-	switch action {
-	case "set_ttl":
-		if ttlStr := req.Query.Get("ttl"); ttlStr != "" {
-			if v, err := strconv.Atoi(ttlStr); err == nil && v >= 10 && v <= 86400 {
-				ttlSeconds = v
-				resultCache.SetTTL(time.Duration(v) * time.Second)
-			}
+	if strings.HasSuffix(request.Path, queryPath) {
+		if !strings.EqualFold(request.Method, http.MethodPost) {
+			return okEnvelope(jsonResponse(http.StatusMethodNotAllowed, map[string]string{
+				"error": "仅支持 POST 请求",
+			}))
 		}
-		return okEnvelope(redirect(resourcePath))
+		return handleBalanceQuery(request)
+	}
 
-	case "refresh":
-		resultCache.Flush()
-		return okEnvelope(redirect(resourcePath))
+	page := ui.RenderDashboard(currentTTL())
+	return okEnvelope(htmlResponse(http.StatusOK, page))
+}
 
-	case "settings":
-		return handleSettingsPage()
+type accountQuery struct {
+	ID          string               `json:"id"`
+	ProviderKey string               `json:"provider_key"`
+	AccountName string               `json:"account_name"`
+	BaseURL     string               `json:"base_url"`
+	APIKey      string               `json:"api_key"`
+	ProxyURL    string               `json:"proxy_url,omitempty"`
+	QueryType   balance.ProviderType `json:"query_type"`
+}
 
-	case "save_config":
-		return handleSaveConfig(req)
+type balanceQueryRequest struct {
+	Accounts []accountQuery `json:"accounts"`
+	Refresh  bool           `json:"refresh"`
+}
 
+type balanceQueryResponse struct {
+	Results    []balance.Result `json:"results"`
+	FetchedAt  time.Time        `json:"fetched_at"`
+	TTLSeconds int              `json:"ttl_seconds"`
+}
+
+func handleBalanceQuery(request managementRequest) ([]byte, error) {
+	if len(request.Body) > maxQueryBodyBytes {
+		return okEnvelope(jsonResponse(http.StatusRequestEntityTooLarge, map[string]string{
+			"error": "查询请求过大",
+		}))
+	}
+	var query balanceQueryRequest
+	if err := json.Unmarshal(request.Body, &query); err != nil {
+		return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{
+			"error": "查询参数格式不正确",
+		}))
+	}
+	if len(query.Accounts) > maxQueryAccounts {
+		return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("单次最多查询 %d 个密钥", maxQueryAccounts),
+		}))
+	}
+
+	for i := range query.Accounts {
+		if err := validateAccountQuery(query.Accounts[i]); err != nil {
+			return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("第 %d 个查询项无效：%s", i+1, err),
+			}))
+		}
+	}
+
+	results := fetchAccounts(query.Accounts, query.Refresh)
+	return okEnvelope(jsonResponse(http.StatusOK, balanceQueryResponse{
+		Results:    results,
+		FetchedAt:  time.Now(),
+		TTLSeconds: currentTTL(),
+	}))
+}
+
+func validateAccountQuery(account accountQuery) error {
+	if strings.TrimSpace(account.ID) == "" || len(account.ID) > 256 {
+		return fmt.Errorf("缺少有效的账户标识")
+	}
+	if strings.TrimSpace(account.ProviderKey) == "" || len(account.ProviderKey) > 4096 {
+		return fmt.Errorf("缺少有效的提供商标识")
+	}
+	if strings.TrimSpace(account.AccountName) == "" || len(account.AccountName) > 256 {
+		return fmt.Errorf("缺少有效的提供商名称")
+	}
+	if strings.TrimSpace(account.APIKey) == "" || len(account.APIKey) > 8192 {
+		return fmt.Errorf("接口密钥为空或过长")
+	}
+	if !balance.IsKnownProvider(account.QueryType) {
+		return fmt.Errorf("未知的余额查询类型")
+	}
+	if len(account.BaseURL) > 4096 {
+		return fmt.Errorf("接口地址过长")
+	}
+	parsed, err := url.Parse(strings.TrimSpace(account.BaseURL))
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
+		return fmt.Errorf("接口地址必须是有效的 HTTP(S) URL")
+	}
+	if err := validateProxyURL(account.ProxyURL); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateProxyURL(value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	if len(trimmed) > 4096 {
+		return fmt.Errorf("代理地址过长")
+	}
+	if strings.EqualFold(trimmed, "direct") || strings.EqualFold(trimmed, "none") {
+		return nil
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return fmt.Errorf("代理地址无效")
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https", "socks5", "socks5h":
+		return nil
 	default:
-		// Default: dashboard.
-		results := fetchAll()
-		lastFetchMu.RLock()
-		fetchedAt := lastFetch
-		lastFetchMu.RUnlock()
-		page := ui.RenderDashboard(results, ttlSeconds, fetchedAt)
-		return okEnvelope(htmlResp(http.StatusOK, page, nil))
+		return fmt.Errorf("代理地址协议不受支持")
 	}
 }
 
-// handleSettingsPage renders the settings page.
-func handleSettingsPage() ([]byte, error) {
-	auths, err := listAuthEntries()
-	if err != nil {
-		return nil, fmt.Errorf("list auth entries: %w", err)
-	}
-	cfg, _ := loadPluginConfig() // best-effort; empty config on error
-
-	uiAuths := make([]ui.AuthEntry, len(auths))
-	for i, a := range auths {
-		uiAuths[i] = ui.AuthEntry{
-			AuthIndex: a.AuthIndex,
-			Name:      a.Name,
-			Provider:  a.Provider,
-		}
-	}
-	page := ui.RenderSettings(uiAuths, cfg, "")
-	return okEnvelope(htmlResp(http.StatusOK, page, nil))
-}
-
-// handleSaveConfig parses the posted form and persists the PluginConfig.
-func handleSaveConfig(req mgmtRequest) ([]byte, error) {
-	// The body is an application/x-www-form-urlencoded payload.
-	body := string(req.Body)
-	form, err := url.ParseQuery(body)
-	if err != nil {
-		return nil, fmt.Errorf("parse form body: %w", err)
-	}
-
-	cfg := balance.PluginConfig{
-		Mappings: make(map[string]balance.AuthMapping),
-	}
-
-	for key, vals := range form {
-		if !strings.HasPrefix(key, "p_") {
+func fetchAccounts(accounts []accountQuery, refresh bool) []balance.Result {
+	results := make([]balance.Result, len(accounts))
+	var wait sync.WaitGroup
+	for index := range accounts {
+		account := accounts[index]
+		cacheKey := accountCacheKey(account)
+		if refresh {
+			resultCache.Delete(cacheKey)
+		} else if cached, ok := resultCache.Get(cacheKey); ok {
+			cached.AuthID = account.ID
+			cached.AccountName = account.AccountName
+			cached.KeyPreview = maskAPIKey(account.APIKey)
+			cached.BaseURL = account.BaseURL
+			results[index] = cached
 			continue
 		}
-		authIndex := strings.TrimPrefix(key, "p_")
-		providerVal := ""
-		if len(vals) > 0 {
-			providerVal = vals[0]
-		}
-		if providerVal == "" {
-			continue // not configured — skip
-		}
-		mapping := balance.AuthMapping{
-			Provider: balance.ProviderType(providerVal),
-		}
-		// If provider needs a base URL, pull it from url_<authIndex>.
-		if balance.NeedsBaseURL(mapping.Provider) {
-			urlKey := "url_" + authIndex
-			if uv := form.Get(urlKey); uv != "" {
-				mapping.BaseURL = uv
+
+		wait.Add(1)
+		go func(resultIndex int, item accountQuery, key string) {
+			defer wait.Done()
+			querySlots <- struct{}{}
+			defer func() { <-querySlots }()
+
+			result := fetchAccount(item)
+			results[resultIndex] = result
+			if result.Error == "" && currentTTL() > 0 {
+				resultCache.Set(key, result)
 			}
-		}
-		cfg.Mappings[authIndex] = mapping
+		}(index, account, cacheKey)
 	}
-
-	if err := savePluginConfig(cfg); err != nil {
-		// Re-render settings page with the error.
-		auths, _ := listAuthEntries()
-		uiAuths := make([]ui.AuthEntry, len(auths))
-		for i, a := range auths {
-			uiAuths[i] = ui.AuthEntry{
-				AuthIndex: a.AuthIndex,
-				Name:      a.Name,
-				Provider:  a.Provider,
-			}
-		}
-		page := ui.RenderSettings(uiAuths, cfg, err.Error())
-		return okEnvelope(htmlResp(http.StatusOK, page, nil))
-	}
-
-	// Flush cache so next dashboard load uses new config.
-	resultCache.Flush()
-	return okEnvelope(redirect(resourcePath))
-}
-
-func redirect(location string) mgmtResponse {
-	return mgmtResponse{
-		StatusCode: http.StatusFound,
-		Headers:    http.Header{"Location": {location}},
-		Body:       []byte("Redirecting…"),
-	}
-}
-
-func htmlResp(status int, body []byte, extra map[string][]string) mgmtResponse {
-	headers := http.Header{"content-type": {"text/html; charset=utf-8"}}
-	for k, v := range extra {
-		headers[k] = v
-	}
-	return mgmtResponse{StatusCode: status, Headers: headers, Body: body}
-}
-
-// ── CLI ───────────────────────────────────────────────────────────────────────
-
-type cliFlagDef struct {
-	Name  string `json:"Name"`
-	Usage string `json:"Usage"`
-	Type  string `json:"Type"`
-}
-
-type cliRegisterResp struct {
-	Flags []cliFlagDef `json:"Flags"`
-}
-
-type cliExecuteResp struct {
-	Stdout   string `json:"Stdout"` // base64-encoded
-	ExitCode int    `json:"ExitCode"`
-}
-
-func handleCLIRegister() ([]byte, error) {
-	return okEnvelope(cliRegisterResp{
-		Flags: []cliFlagDef{
-			{Name: "balance", Usage: "Query balance and quota for all configured providers", Type: "bool"},
-			{Name: "balance-refresh", Usage: "Force-refresh cached balance data", Type: "bool"},
-		},
-	})
-}
-
-func handleCLIExecute(raw []byte) ([]byte, error) {
-	var flags map[string]any
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &flags)
-	}
-	if v, ok := flags["balance-refresh"]; ok && v == true {
-		resultCache.Flush()
-	}
-	results := fetchAll()
-	text := ui.RenderCLITable(results)
-	return okEnvelope(cliExecuteResp{
-		Stdout:   base64.StdEncoding.EncodeToString([]byte(text)),
-		ExitCode: 0,
-	})
-}
-
-// ── core fetch logic ──────────────────────────────────────────────────────────
-
-// hostAuthListResp mirrors the CPA host.auth.list response.
-type hostAuthListResp struct {
-	Files []hostAuthEntry `json:"files"`
-}
-
-type hostAuthEntry struct {
-	AuthIndex string `json:"auth_index"`
-	Name      string `json:"name"`
-	Provider  string `json:"provider"`
-}
-
-// hostAuthGetRuntimeResp mirrors the CPA host.auth.get_runtime response.
-type hostAuthGetRuntimeResp struct {
-	Token string `json:"token"`
-}
-
-// listAuthEntries fetches the full auth list from the host.
-func listAuthEntries() ([]hostAuthEntry, error) {
-	raw, err := callHost("host.auth.list", map[string]any{})
-	if err != nil {
-		return nil, err
-	}
-	var resp hostAuthListResp
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return nil, fmt.Errorf("decode auth list: %w", err)
-	}
-	return resp.Files, nil
-}
-
-// fetchAll retrieves balance results for all CPA auth entries,
-// using the manual provider mapping and the in-memory cache.
-func fetchAll() []balance.Result {
-	auths, err := listAuthEntries()
-	if err != nil {
-		return []balance.Result{{
-			Provider:  "system",
-			Error:     "host.auth.list failed: " + err.Error(),
-			FetchedAt: time.Now(),
-		}}
-	}
-
-	cfg, _ := loadPluginConfig() // best-effort; empty on error
-
-	results := make([]balance.Result, len(auths))
-	var wg sync.WaitGroup
-	for i, entry := range auths {
-		if cached, ok := resultCache.Get(entry.AuthIndex); ok {
-			results[i] = cached
-			continue
-		}
-		wg.Add(1)
-		go func(idx int, e hostAuthEntry) {
-			defer wg.Done()
-			results[idx] = fetchOne(e, cfg)
-		}(i, entry)
-	}
-	wg.Wait()
-
-	lastFetchMu.Lock()
-	lastFetch = time.Now()
-	lastFetchMu.Unlock()
-
+	wait.Wait()
 	return results
 }
 
-// fetchOne fetches the balance for a single auth entry using its manual mapping.
-func fetchOne(entry hostAuthEntry, cfg balance.PluginConfig) balance.Result {
-	mapping, ok := cfg.Mappings[entry.AuthIndex]
-	if !ok || mapping.Provider == "" {
-		return balance.Result{
-			Provider:  entry.Provider,
-			AuthID:    entry.AuthIndex,
-			Error:     "not configured — assign a provider type in Settings",
-			FetchedAt: time.Now(),
-		}
-	}
-
-	fetcher := providers.Build(mapping.Provider, mapping.BaseURL)
+func fetchAccount(account accountQuery) balance.Result {
+	fetcher := providers.Build(account.QueryType, account.BaseURL)
 	if fetcher == nil {
-		return balance.Result{
-			Provider:  string(mapping.Provider),
-			AuthID:    entry.AuthIndex,
-			Error:     "unknown provider type: " + string(mapping.Provider),
-			FetchedAt: time.Now(),
-		}
+		return accountError(account, "未找到对应的余额查询器")
 	}
-
-	tokenRaw, err := callHost("host.auth.get_runtime", map[string]any{"auth_index": entry.AuthIndex})
-	if err != nil {
-		return balance.Result{
-			Provider:  string(mapping.Provider),
-			AuthID:    entry.AuthIndex,
-			Error:     "get_runtime failed: " + err.Error(),
-			FetchedAt: time.Now(),
-		}
-	}
-	var rtResp hostAuthGetRuntimeResp
-	if err := json.Unmarshal(tokenRaw, &rtResp); err != nil {
-		return balance.Result{
-			Provider:  string(mapping.Provider),
-			AuthID:    entry.AuthIndex,
-			Error:     "decode runtime token: " + err.Error(),
-			FetchedAt: time.Now(),
-		}
-	}
-
-	result := fetcher.Fetch(entry.AuthIndex, rtResp.Token)
-	resultCache.Set(entry.AuthIndex, result)
+	result := fetcher.Fetch(account.ID, account.APIKey, account.ProxyURL)
+	redactResultSecret(&result, account.APIKey)
+	result.AuthID = account.ID
+	result.AccountName = account.AccountName
+	result.KeyPreview = maskAPIKey(account.APIKey)
+	result.BaseURL = account.BaseURL
 	return result
 }
 
-// ── plugin config persistence ─────────────────────────────────────────────────
-
-// loadPluginConfig reads the PluginConfig from the host.auth.get store.
-func loadPluginConfig() (balance.PluginConfig, error) {
-	raw, err := callHost("host.auth.get", map[string]any{"name": balance.ConfigFileName})
-	if err != nil {
-		// File not found yet — return empty config.
-		return balance.PluginConfig{Mappings: map[string]balance.AuthMapping{}}, nil
+func accountError(account accountQuery, message string) balance.Result {
+	return balance.Result{
+		Provider:    balance.ProviderLabel[account.QueryType],
+		AuthID:      account.ID,
+		AccountName: account.AccountName,
+		KeyPreview:  maskAPIKey(account.APIKey),
+		BaseURL:     account.BaseURL,
+		Error:       message,
+		FetchedAt:   time.Now(),
 	}
-	// host.auth.get returns the file content as a base64-encoded string or raw bytes.
-	// Attempt direct JSON unmarshal first; fall back to base64 decoding.
-	var cfg balance.PluginConfig
-	if err2 := json.Unmarshal(raw, &cfg); err2 == nil {
-		if cfg.Mappings == nil {
-			cfg.Mappings = map[string]balance.AuthMapping{}
-		}
-		return cfg, nil
-	}
-	// The result might be a JSON string containing the raw file bytes as base64.
-	var b64str string
-	if err3 := json.Unmarshal(raw, &b64str); err3 == nil {
-		decoded, err4 := base64.StdEncoding.DecodeString(b64str)
-		if err4 == nil {
-			if err5 := json.Unmarshal(decoded, &cfg); err5 == nil {
-				if cfg.Mappings == nil {
-					cfg.Mappings = map[string]balance.AuthMapping{}
-				}
-				return cfg, nil
-			}
-		}
-	}
-	return balance.PluginConfig{Mappings: map[string]balance.AuthMapping{}}, nil
 }
 
-// savePluginConfig persists PluginConfig via host.auth.save.
-func savePluginConfig(cfg balance.PluginConfig) error {
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
+func maskAPIKey(value string) string {
+	key := strings.TrimSpace(value)
+	if len(key) <= 6 {
+		if len(key) <= 2 {
+			return "••••"
+		}
+		return "••••" + key[len(key)-2:]
 	}
-	_, err = callHost("host.auth.save", map[string]any{
-		"name":    balance.ConfigFileName,
-		"content": string(data),
-	})
-	return err
+	return key[:3] + "••••••" + key[len(key)-4:]
 }
 
-// ── host callback helper ──────────────────────────────────────────────────────
-
-func callHost(method string, payload any) (json.RawMessage, error) {
-	rawPayload, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal %s payload: %w", method, err)
+func redactResultSecret(result *balance.Result, secret string) {
+	if result == nil {
+		return
 	}
-	cMethod := C.CString(method)
-	defer C.free(unsafe.Pointer(cMethod))
-
-	var response C.cliproxy_buffer
-	var requestPtr *C.uint8_t
-	if len(rawPayload) > 0 {
-		cPayload := C.CBytes(rawPayload)
-		if cPayload == nil {
-			return nil, fmt.Errorf("allocate payload for %s", method)
+	redact := func(value string) string {
+		if secret == "" {
+			return value
 		}
-		defer C.free(cPayload)
-		requestPtr = (*C.uint8_t)(cPayload)
+		return strings.ReplaceAll(value, secret, maskAPIKey(secret))
 	}
-
-	callCode := C.call_host_api(cMethod, requestPtr, C.size_t(len(rawPayload)), &response)
-	var rawResponse []byte
-	if response.ptr != nil && response.len > 0 {
-		rawResponse = C.GoBytes(response.ptr, C.int(response.len))
+	result.Error = localizeFetchError(redact(result.Error))
+	result.QuotaDisplay = redact(result.QuotaDisplay)
+	result.Plan = redact(result.Plan)
+	result.ResetAt = redact(result.ResetAt)
+	for key, value := range result.Extra {
+		result.Extra[key] = redact(value)
 	}
-	if response.ptr != nil {
-		C.free_host_buffer(response.ptr, response.len)
-	}
-	if len(rawResponse) == 0 {
-		return nil, fmt.Errorf("host %s returned no response (code=%d)", method, int(callCode))
-	}
-
-	var env envelope
-	if err := json.Unmarshal(rawResponse, &env); err != nil {
-		return nil, fmt.Errorf("decode host %s envelope: %w", method, err)
-	}
-	if !env.OK {
-		if env.Error != nil {
-			return nil, fmt.Errorf("%s: %s", env.Error.Code, env.Error.Message)
-		}
-		return nil, fmt.Errorf("host %s failed", method)
-	}
-	if callCode != 0 {
-		return nil, fmt.Errorf("host %s returned code=%d", method, int(callCode))
-	}
-	return append(json.RawMessage(nil), env.Result...), nil
 }
 
-// ── envelope helpers ──────────────────────────────────────────────────────────
+func localizeFetchError(message string) string {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return ""
+	}
+	lower := strings.ToLower(trimmed)
+	switch {
+	case strings.Contains(lower, "http 401"), strings.Contains(lower, "unauthorized"), strings.Contains(lower, "invalid api key"):
+		return "余额接口拒绝了密钥，请检查密钥是否有效"
+	case strings.Contains(lower, "http 403"), strings.Contains(lower, "forbidden"), strings.Contains(lower, "permission"):
+		return "账户没有访问余额接口的权限"
+	case strings.Contains(lower, "http 404"), strings.Contains(lower, "not found"):
+		return "未找到余额接口，请检查查询类型和接口地址"
+	case strings.Contains(lower, "http 429"), strings.Contains(lower, "too many requests"), strings.Contains(lower, "rate limit"):
+		return "余额接口请求过于频繁，请稍后重试"
+	case strings.Contains(lower, "http 5"):
+		return "余额服务暂时不可用，请稍后重试"
+	case strings.Contains(lower, "代理"), strings.Contains(lower, "proxy"):
+		return "通过代理连接余额服务失败，请检查该密钥的代理设置"
+	case strings.Contains(lower, "解析余额接口响应失败"), strings.Contains(lower, "invalid character"), strings.Contains(lower, "json"):
+		return "余额接口返回了无法识别的数据"
+	case strings.Contains(lower, "请求余额接口失败"), strings.Contains(lower, "timeout"), strings.Contains(lower, "deadline"), strings.Contains(lower, "connection"), strings.Contains(lower, "dial tcp"), strings.Contains(lower, "no such host"), strings.Contains(lower, "tls"), strings.Contains(lower, "certificate"):
+		return "无法连接余额服务，请检查网络、代理或接口地址"
+	default:
+		return "余额查询未成功，请检查查询类型、接口地址和账户状态"
+	}
+}
 
-func okEnvelope(v any) ([]byte, error) {
-	raw, err := json.Marshal(v)
+func accountCacheKey(account accountQuery) string {
+	secretHash := sha256.Sum256([]byte(account.APIKey))
+	identity := strings.Join([]string{
+		account.ID,
+		account.ProviderKey,
+		string(account.QueryType),
+		strings.TrimSpace(account.BaseURL),
+		strings.TrimSpace(account.ProxyURL),
+		hex.EncodeToString(secretHash[:]),
+	}, "\x00")
+	digest := sha256.Sum256([]byte(identity))
+	return hex.EncodeToString(digest[:])
+}
+
+func htmlResponse(status int, body []byte) managementResponse {
+	return managementResponse{
+		StatusCode: status,
+		Headers: http.Header{
+			"Content-Type":            {"text/html; charset=utf-8"},
+			"Cache-Control":           {"no-store"},
+			"X-Content-Type-Options":  {"nosniff"},
+			"Referrer-Policy":         {"no-referrer"},
+			"Content-Security-Policy": {"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src http: https:; frame-ancestors *"},
+		},
+		Body: body,
+	}
+}
+
+func jsonResponse(status int, value any) managementResponse {
+	body, err := json.Marshal(value)
+	if err != nil {
+		body = []byte(`{"error":"生成响应失败"}`)
+		status = http.StatusInternalServerError
+	}
+	return managementResponse{
+		StatusCode: status,
+		Headers: http.Header{
+			"Content-Type":           {"application/json; charset=utf-8"},
+			"Cache-Control":          {"no-store"},
+			"X-Content-Type-Options": {"nosniff"},
+		},
+		Body: body,
+	}
+}
+
+func okEnvelope(value any) ([]byte, error) {
+	raw, err := json.Marshal(value)
 	if err != nil {
 		return nil, err
 	}

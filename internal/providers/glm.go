@@ -20,27 +20,27 @@ type GLMZhipu struct{}
 
 type glmQuotaResp struct {
 	Data struct {
-		Level  string        `json:"level"`
+		Level  string         `json:"level"`
 		Limits []glmLimitItem `json:"limits"`
 	} `json:"data"`
 }
 
 type glmLimitItem struct {
-	Type        string  `json:"type"`        // "TOKENS_LIMIT" or "TIME_LIMIT"
-	Percentage  float64 `json:"percentage"`  // used percentage (0–100)
-	Unit        int64   `json:"unit"`
-	Number      int64   `json:"number"`
-	CurrentValue int64  `json:"currentValue"`
-	Total       int64   `json:"total"`
+	Type         string  `json:"type"`       // "TOKENS_LIMIT" or "TIME_LIMIT"
+	Percentage   float64 `json:"percentage"` // used percentage (0–100)
+	Unit         int64   `json:"unit"`
+	Number       int64   `json:"number"`
+	CurrentValue int64   `json:"currentValue"`
+	Total        int64   `json:"total"`
 	// Unix ms timestamp for next reset.
 	NextResetTime int64 `json:"nextResetTime"`
 }
 
-func fetchGLMQuota(authID, token, baseURL, label string) balance.Result {
+func fetchGLMQuota(authID, token, proxyURL, baseURL, label string) balance.Result {
 	url := baseURL + "/api/monitor/usage/quota/limit"
 	var resp glmQuotaResp
 	// GLM requires raw token — no "Bearer" prefix.
-	if err := getJSONRawAuth(url, token, &resp); err != nil {
+	if err := getJSONRawAuth(url, token, proxyURL, &resp); err != nil {
 		return errResult(authID, label, err.Error())
 	}
 	d := resp.Data
@@ -53,7 +53,7 @@ func fetchGLMQuota(authID, token, baseURL, label string) balance.Result {
 		Extra:     make(map[string]string),
 	}
 	if d.Level != "" {
-		r.Extra["tier"] = d.Level
+		r.Extra["套餐等级"] = d.Level
 	}
 
 	for _, lim := range d.Limits {
@@ -66,7 +66,7 @@ func fetchGLMQuota(authID, token, baseURL, label string) balance.Result {
 			if lim.NextResetTime > 0 {
 				r.ResetAt = fmt.Sprintf("%s", time.UnixMilli(lim.NextResetTime).Format("01-02 15:04"))
 			}
-			r.QuotaDisplay = fmt.Sprintf("5h窗口 %.1f%% 已用 (%d tokens)", lim.Percentage, lim.Number)
+			r.QuotaDisplay = fmt.Sprintf("5 小时窗口已使用 %.1f%%（共 %d 令牌）", lim.Percentage, lim.Number)
 		case "TIME_LIMIT":
 			r.Extra["MCP 月用量"] = fmt.Sprintf("%.1f%%", lim.Percentage)
 		}
@@ -74,10 +74,10 @@ func fetchGLMQuota(authID, token, baseURL, label string) balance.Result {
 	return r
 }
 
-func (GLMZai) Fetch(authID, token string) balance.Result {
-	return fetchGLMQuota(authID, token, "https://api.z.ai", balance.ProviderLabel[balance.ProviderGLMZAI])
+func (GLMZai) Fetch(authID, token, proxyURL string) balance.Result {
+	return fetchGLMQuota(authID, token, proxyURL, "https://api.z.ai", balance.ProviderLabel[balance.ProviderGLMZAI])
 }
 
-func (GLMZhipu) Fetch(authID, token string) balance.Result {
-	return fetchGLMQuota(authID, token, "https://open.bigmodel.cn", balance.ProviderLabel[balance.ProviderGLMZhipu])
+func (GLMZhipu) Fetch(authID, token, proxyURL string) balance.Result {
+	return fetchGLMQuota(authID, token, proxyURL, "https://open.bigmodel.cn", balance.ProviderLabel[balance.ProviderGLMZhipu])
 }

@@ -24,18 +24,18 @@ type longcatUserResp struct {
 	Msg  string `json:"msg"`
 }
 
-func (Longcat) Fetch(authID, token string) balance.Result {
+func (Longcat) Fetch(authID, token, proxyURL string) balance.Result {
 	label := balance.ProviderLabel[balance.ProviderLongcat]
 	var resp longcatUserResp
-	if err := getJSON("https://longcat.chat/platform/api/v1/user/me", token, &resp); err != nil {
+	if err := getJSON("https://longcat.chat/platform/api/v1/user/me", token, proxyURL, &resp); err != nil {
 		return errResult(authID, label, err.Error())
 	}
 	d := resp.Data
 	display := ""
 	if d.TokensTotal > 0 {
-		display = fmt.Sprintf("Token Pack: %d / %d tokens 剩余", d.TokensRemaining, d.TokensTotal)
+		display = fmt.Sprintf("令牌套餐：剩余 %d / %d", d.TokensRemaining, d.TokensTotal)
 	} else if d.AvailableBalance > 0 || d.UsedBalance > 0 {
-		display = fmt.Sprintf("余额: ¥%.4f (已用 ¥%.4f)", d.AvailableBalance, d.UsedBalance)
+		display = fmt.Sprintf("余额 ¥%.4f（已使用 ¥%.4f）", d.AvailableBalance, d.UsedBalance)
 	}
 	return balance.Result{
 		Provider:        label,

@@ -21,10 +21,10 @@ type miniMaxBalanceResp struct {
 	} `json:"base_resp"`
 }
 
-func (MiniMaxAPI) Fetch(authID, token string) balance.Result {
+func (MiniMaxAPI) Fetch(authID, token, proxyURL string) balance.Result {
 	label := balance.ProviderLabel[balance.ProviderMiniMaxAPI]
 	var resp miniMaxBalanceResp
-	if err := getJSON("https://api.minimaxi.com/v1/user/balance", token, &resp); err != nil {
+	if err := getJSON("https://api.minimaxi.com/v1/user/balance", token, proxyURL, &resp); err != nil {
 		return errResult(authID, label, err.Error())
 	}
 	if resp.BaseResp.StatusCode != 0 {
@@ -35,7 +35,7 @@ func (MiniMaxAPI) Fetch(authID, token string) balance.Result {
 		Provider:     label,
 		AuthID:       authID,
 		BalanceUSD:   d.AvailableCredits,
-		QuotaDisplay: fmt.Sprintf("¥%.4f 可用 (已用 ¥%.4f)", d.AvailableCredits, d.UsedCredits),
+		QuotaDisplay: fmt.Sprintf("可用 ¥%.4f（已使用 ¥%.4f）", d.AvailableCredits, d.UsedCredits),
 		FetchedAt:    time.Now(),
 	}
 }
@@ -56,9 +56,9 @@ type miniMaxCodingResp struct {
 	} `json:"base_resp"`
 }
 
-func fetchMiniMaxCoding(authID, token, apiBase, label string) balance.Result {
+func fetchMiniMaxCoding(authID, token, proxyURL, apiBase, label string) balance.Result {
 	var resp miniMaxCodingResp
-	if err := getJSON(apiBase+"/v1/token-plan/quota", token, &resp); err != nil {
+	if err := getJSON(apiBase+"/v1/token-plan/quota", token, proxyURL, &resp); err != nil {
 		return errResult(authID, label, err.Error())
 	}
 	if resp.BaseResp.StatusCode != 0 {
@@ -77,7 +77,7 @@ func fetchMiniMaxCoding(authID, token, apiBase, label string) balance.Result {
 		TokensRemaining: remaining,
 		Plan:            d.Plan,
 		ResetAt:         d.ResetAt,
-		QuotaDisplay:    fmt.Sprintf("%d / %d tokens 剩余", remaining, d.TokensTotal),
+		QuotaDisplay:    fmt.Sprintf("剩余 %d / %d 令牌", remaining, d.TokensTotal),
 		FetchedAt:       time.Now(),
 	}
 }
@@ -85,15 +85,15 @@ func fetchMiniMaxCoding(authID, token, apiBase, label string) balance.Result {
 // MiniMaxCodingCN queries MiniMax Token Plan quota (国内, api.minimaxi.com).
 type MiniMaxCodingCN struct{}
 
-func (MiniMaxCodingCN) Fetch(authID, token string) balance.Result {
-	return fetchMiniMaxCoding(authID, token, "https://api.minimaxi.com",
+func (MiniMaxCodingCN) Fetch(authID, token, proxyURL string) balance.Result {
+	return fetchMiniMaxCoding(authID, token, proxyURL, "https://api.minimaxi.com",
 		balance.ProviderLabel[balance.ProviderMiniMaxCodingCN])
 }
 
 // MiniMaxCodingGlobal queries MiniMax Token Plan quota (海外, api.minimax.io).
 type MiniMaxCodingGlobal struct{}
 
-func (MiniMaxCodingGlobal) Fetch(authID, token string) balance.Result {
-	return fetchMiniMaxCoding(authID, token, "https://api.minimax.io",
+func (MiniMaxCodingGlobal) Fetch(authID, token, proxyURL string) balance.Result {
+	return fetchMiniMaxCoding(authID, token, proxyURL, "https://api.minimax.io",
 		balance.ProviderLabel[balance.ProviderMiniMaxCodingGlobal])
 }

@@ -20,10 +20,10 @@ type openCodeBalanceResp struct {
 	Message string `json:"message"`
 }
 
-func (OpenCode) Fetch(authID, token string) balance.Result {
+func (OpenCode) Fetch(authID, token, proxyURL string) balance.Result {
 	label := balance.ProviderLabel[balance.ProviderOpenCode]
 	var resp openCodeBalanceResp
-	if err := getJSON("https://opencode.ai/api/v1/user/balance", token, &resp); err != nil {
+	if err := getJSON("https://opencode.ai/api/v1/user/balance", token, proxyURL, &resp); err != nil {
 		return errResult(authID, label, err.Error())
 	}
 	if !resp.Success {
@@ -35,7 +35,7 @@ func (OpenCode) Fetch(authID, token string) balance.Result {
 		AuthID:       authID,
 		BalanceUSD:   d.AvailableCredits,
 		Plan:         d.Plan,
-		QuotaDisplay: fmt.Sprintf("$%.4f 可用 (已用 $%.4f)", d.AvailableCredits, d.UsedCredits),
+		QuotaDisplay: fmt.Sprintf("可用 $%.4f（已使用 $%.4f）", d.AvailableCredits, d.UsedCredits),
 		FetchedAt:    time.Now(),
 	}
 }

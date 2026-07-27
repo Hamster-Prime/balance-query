@@ -21,10 +21,10 @@ type xiaomiBalanceResp struct {
 	Message string `json:"message"`
 }
 
-func (XiaomiAPI) Fetch(authID, token string) balance.Result {
+func (XiaomiAPI) Fetch(authID, token, proxyURL string) balance.Result {
 	label := balance.ProviderLabel[balance.ProviderXiaomiAPI]
 	var resp xiaomiBalanceResp
-	if err := getJSON("https://platform.xiaomimimo.com/api/v1/user/balance", token, &resp); err != nil {
+	if err := getJSON("https://platform.xiaomimimo.com/api/v1/user/balance", token, proxyURL, &resp); err != nil {
 		return errResult(authID, label, err.Error())
 	}
 	d := resp.Data
@@ -32,7 +32,7 @@ func (XiaomiAPI) Fetch(authID, token string) balance.Result {
 		Provider:     label,
 		AuthID:       authID,
 		BalanceUSD:   d.AvailableBalance,
-		QuotaDisplay: fmt.Sprintf("¥%.4f 可用 (已用 ¥%.4f / 总 ¥%.4f)", d.AvailableBalance, d.UsedBalance, d.TotalBalance),
+		QuotaDisplay: fmt.Sprintf("可用 ¥%.4f（已使用 ¥%.4f，共 ¥%.4f）", d.AvailableBalance, d.UsedBalance, d.TotalBalance),
 		FetchedAt:    time.Now(),
 	}
 }
@@ -52,10 +52,10 @@ type xiaomiTokenPlanResp struct {
 	Message string `json:"message"`
 }
 
-func (XiaomiTokenPlan) Fetch(authID, token string) balance.Result {
+func (XiaomiTokenPlan) Fetch(authID, token, proxyURL string) balance.Result {
 	label := balance.ProviderLabel[balance.ProviderXiaomiToken]
 	var resp xiaomiTokenPlanResp
-	if err := getJSON("https://platform.xiaomimimo.com/api/v1/token-plan/quota", token, &resp); err != nil {
+	if err := getJSON("https://platform.xiaomimimo.com/api/v1/token-plan/quota", token, proxyURL, &resp); err != nil {
 		return errResult(authID, label, err.Error())
 	}
 	d := resp.Data
@@ -71,7 +71,7 @@ func (XiaomiTokenPlan) Fetch(authID, token string) balance.Result {
 		TokensRemaining: remaining,
 		Plan:            d.Plan,
 		ResetAt:         d.ResetAt,
-		QuotaDisplay:    fmt.Sprintf("%d / %d tokens 剩余", remaining, d.TokensTotal),
+		QuotaDisplay:    fmt.Sprintf("剩余 %d / %d 令牌", remaining, d.TokensTotal),
 		FetchedAt:       time.Now(),
 	}
 }

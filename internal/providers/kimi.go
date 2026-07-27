@@ -21,15 +21,15 @@ type kimiBalanceResp struct {
 	} `json:"data"`
 }
 
-func (KimiAPI) Fetch(authID, token string) balance.Result {
+func (KimiAPI) Fetch(authID, token, proxyURL string) balance.Result {
 	var resp kimiBalanceResp
-	if err := getJSON("https://api.moonshot.ai/v1/users/me/balance", token, &resp); err != nil {
+	if err := getJSON("https://api.moonshot.ai/v1/users/me/balance", token, proxyURL, &resp); err != nil {
 		return errResult(authID, balance.ProviderLabel[balance.ProviderKimiAPI], err.Error())
 	}
 	return balance.Result{
 		Provider: balance.ProviderLabel[balance.ProviderKimiAPI],
 		AuthID:   authID,
-		QuotaDisplay: fmt.Sprintf("可用: %.4f 元 (现金: %.4f, 赠金: %.4f)",
+		QuotaDisplay: fmt.Sprintf("可用 %.4f 元（现金 %.4f，赠金 %.4f）",
 			resp.Data.AvailableBalance, resp.Data.CashBalance, resp.Data.VoucherBalance),
 		FetchedAt: time.Now(),
 	}
@@ -70,9 +70,9 @@ type kimiUsageResp struct {
 	} `json:"data"`
 }
 
-func (KimiCode) Fetch(authID, token string) balance.Result {
+func (KimiCode) Fetch(authID, token, proxyURL string) balance.Result {
 	var resp kimiUsageResp
-	if err := getJSON("https://api.kimi.com/coding/v1/usages", token, &resp); err != nil {
+	if err := getJSON("https://api.kimi.com/coding/v1/usages", token, proxyURL, &resp); err != nil {
 		return errResult(authID, balance.ProviderLabel[balance.ProviderKimiCode], err.Error())
 	}
 
@@ -96,7 +96,7 @@ func (KimiCode) Fetch(authID, token string) balance.Result {
 		if u.ResetAt == "" && u.ResetIn > 0 {
 			r.ResetAt = fmt.Sprintf("%.0f 小时后", u.ResetIn/3600)
 		}
-		r.QuotaDisplay = fmt.Sprintf("%d / %d tokens 已用", u.Used, u.Limit)
+		r.QuotaDisplay = fmt.Sprintf("已使用 %d / %d 令牌", u.Used, u.Limit)
 	}
 
 	// Annotate sub-windows (5h etc.) as extra.
@@ -112,11 +112,11 @@ func (KimiCode) Fetch(authID, token string) balance.Result {
 		w := lim.Window
 		switch {
 		case w.TimeUnit == "MINUTE" && w.Duration == 300:
-			windowLabel = "5h窗口"
+			windowLabel = "5 小时窗口"
 		case w.TimeUnit == "HOUR":
-			windowLabel = fmt.Sprintf("%dh窗口", w.Duration)
+			windowLabel = fmt.Sprintf("%d 小时窗口", w.Duration)
 		case w.TimeUnit == "DAY":
-			windowLabel = fmt.Sprintf("%dd窗口", w.Duration)
+			windowLabel = fmt.Sprintf("%d 天窗口", w.Duration)
 		default:
 			if d.Name != "" {
 				windowLabel = d.Name

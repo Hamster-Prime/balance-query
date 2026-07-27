@@ -1,14 +1,17 @@
-// Package balance defines result types, provider interface, and per-auth config.
+// Package balance defines result types, provider interfaces, and plugin config.
 package balance
 
 import "time"
 
 // ── Result ───────────────────────────────────────────────────────────────────
 
-// Result is the unified balance/quota snapshot for one auth entry.
+// Result is the unified balance/quota snapshot for one provider API key.
 type Result struct {
-	Provider string `json:"provider"`
-	AuthID   string `json:"auth_id"`
+	Provider    string `json:"provider"`
+	AuthID      string `json:"auth_id"`
+	AccountName string `json:"account_name,omitempty"`
+	KeyPreview  string `json:"key_preview,omitempty"`
+	BaseURL     string `json:"base_url,omitempty"`
 
 	// Monetary balance; -1 if not applicable.
 	BalanceUSD float64 `json:"balance_usd,omitempty"`
@@ -40,7 +43,7 @@ type Result struct {
 
 // Fetcher is implemented by each provider package.
 type Fetcher interface {
-	Fetch(authID, token string) Result
+	Fetch(authID, token, proxyURL string) Result
 }
 
 // ── ProviderType ─────────────────────────────────────────────────────────────
@@ -49,36 +52,36 @@ type Fetcher interface {
 type ProviderType string
 
 const (
-	ProviderSub2API              ProviderType = "sub2api"
-	ProviderDeepSeek             ProviderType = "deepseek"
-	ProviderGLMZAI               ProviderType = "glm_zai"
-	ProviderGLMZhipu             ProviderType = "glm_zhipu"
-	ProviderNewAPI               ProviderType = "newapi"
-	ProviderKimiAPI              ProviderType = "kimi_api"
-	ProviderKimiCode             ProviderType = "kimi_code"
-	ProviderLongcat              ProviderType = "longcat"
-	ProviderMiniMaxAPI           ProviderType = "minimax_api"
-	ProviderMiniMaxCodingCN      ProviderType = "minimax_coding_cn"
-	ProviderMiniMaxCodingGlobal  ProviderType = "minimax_coding_global"
-	ProviderOpenCode             ProviderType = "opencode"
-	ProviderVolcengine           ProviderType = "volcengine"
-	ProviderXiaomiAPI            ProviderType = "xiaomi_api"
-	ProviderXiaomiToken          ProviderType = "xiaomi_token"
+	ProviderSub2API             ProviderType = "sub2api"
+	ProviderDeepSeek            ProviderType = "deepseek"
+	ProviderGLMZAI              ProviderType = "glm_zai"
+	ProviderGLMZhipu            ProviderType = "glm_zhipu"
+	ProviderNewAPI              ProviderType = "newapi"
+	ProviderKimiAPI             ProviderType = "kimi_api"
+	ProviderKimiCode            ProviderType = "kimi_code"
+	ProviderLongcat             ProviderType = "longcat"
+	ProviderMiniMaxAPI          ProviderType = "minimax_api"
+	ProviderMiniMaxCodingCN     ProviderType = "minimax_coding_cn"
+	ProviderMiniMaxCodingGlobal ProviderType = "minimax_coding_global"
+	ProviderOpenCode            ProviderType = "opencode"
+	ProviderVolcengine          ProviderType = "volcengine"
+	ProviderXiaomiAPI           ProviderType = "xiaomi_api"
+	ProviderXiaomiToken         ProviderType = "xiaomi_token"
 )
 
 // ProviderLabel maps each ProviderType to a human-readable display name.
 var ProviderLabel = map[ProviderType]string{
 	ProviderSub2API:             "Sub2API",
 	ProviderDeepSeek:            "DeepSeek 官方 API",
-	ProviderGLMZAI:              "GLM Coding Plan (Z.AI)",
-	ProviderGLMZhipu:            "GLM Coding Plan (Zhipu/bigmodel)",
+	ProviderGLMZAI:              "GLM Coding Plan（Z.AI）",
+	ProviderGLMZhipu:            "GLM Coding Plan（智谱 BigModel）",
 	ProviderNewAPI:              "New API",
 	ProviderKimiAPI:             "Kimi 官方 API",
 	ProviderKimiCode:            "Kimi Coding Plan",
 	ProviderLongcat:             "Longcat",
-	ProviderMiniMaxAPI:          "MiniMax 官方 API (国内)",
-	ProviderMiniMaxCodingCN:     "MiniMax Coding Plan (国内)",
-	ProviderMiniMaxCodingGlobal: "MiniMax Coding Plan (海外)",
+	ProviderMiniMaxAPI:          "MiniMax 官方 API（国内）",
+	ProviderMiniMaxCodingCN:     "MiniMax Coding Plan（国内）",
+	ProviderMiniMaxCodingGlobal: "MiniMax Coding Plan（海外）",
 	ProviderOpenCode:            "Open Code",
 	ProviderVolcengine:          "火山引擎 Coding Plan",
 	ProviderXiaomiAPI:           "小米 MiMo API",
@@ -106,26 +109,18 @@ func AllProviders() []ProviderType {
 	}
 }
 
-// NeedsBaseURL returns true for providers that require a custom base URL.
-func NeedsBaseURL(p ProviderType) bool {
-	return p == ProviderSub2API || p == ProviderNewAPI
-}
-
-// ── PluginConfig ─────────────────────────────────────────────────────────────
-
-// AuthMapping holds the user's explicit choice for one CPA auth entry.
-type AuthMapping struct {
-	Provider ProviderType `json:"provider"`
-	// BaseURL is required for sub2api and newapi; ignored for other providers.
-	BaseURL string `json:"base_url,omitempty"`
-}
-
-// PluginConfig is the full persisted configuration for this plugin,
-// stored as a CPA auth file named "balance-query-config.json".
+// PluginConfig is persisted under plugins.configs.balance-query by CPA.
 type PluginConfig struct {
-	// Mappings maps auth_index → provider assignment.
-	Mappings map[string]AuthMapping `json:"mappings"`
+	CacheTTLSeconds  int                     `json:"cache_ttl_seconds" yaml:"cache_ttl_seconds"`
+	ProviderMappings map[string]ProviderType `json:"provider_mappings" yaml:"provider_mappings"`
 }
 
-// ConfigFileName is the name used when saving config via host.auth.save.
-const ConfigFileName = "balance-query-config.json"
+// IsKnownProvider reports whether p is a supported balance query type.
+func IsKnownProvider(p ProviderType) bool {
+	for _, candidate := range AllProviders() {
+		if p == candidate {
+			return true
+		}
+	}
+	return false
+}

@@ -9,8 +9,26 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    name: 测试
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: test
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
@@ -125,6 +143,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -151,22 +170,21 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: "balance-query ${{ github.ref_name }}"
           body: |
-            ## balance-query ${{ github.ref_name }}
+            ## 余额与配额 ${{ github.ref_name }}
 
-            CLIProxyAPI plugin — query AI platform balances and quotas in a unified Web dashboard.
+            CLIProxyAPI 插件：查询“AI 提供商”中 OpenAI 兼容提供商的余额与套餐配额。
 
-            ### Installation via CPA Plugin Store
-            Add the following to your CPA `config.yaml`:
+            ### 从 CPA 插件商店安装
+            在 CPA `config.yaml` 中加入：
             ```yaml
             plugins:
               store-sources:
                 - "https://raw.githubusercontent.com/Hamster-Prime/balance-query/main/registry-v2.json"
             ```
-            Then install `balance-query` from the plugin store in the CPA Web UI.
+            然后在 CPA Web 面板的插件商店中安装“余额与配额”。
 
-            ### Manual installation
-            Download the `.zip` for your platform, extract the shared library (`.so`/`.dll`/`.dylib`),
-            and place it in your CPA `plugins/` directory.
+            ### 手动安装
+            下载对应平台的 `.zip`，解压共享库（`.so`/`.dll`/`.dylib`）并放入 CPA 的 `plugins/` 目录。
           files: dist/zips/*.zip
           draft: false
           prerelease: false
@@ -205,15 +223,15 @@ jobs:
             "plugins": [
               {
                 "id": "balance-query",
-                "name": "Balance Query",
-                "description": "Query balance and quota for 15 AI platform accounts (DeepSeek, GLM, Kimi, Sub2API, New API, MiniMax, Longcat, OpenCode, Volcengine, Xiaomi…) in a unified Web dashboard.",
+                "name": "余额与配额",
+                "description": "查询 CPA OpenAI 兼容提供商的余额与套餐配额，支持 DeepSeek、GLM、Kimi、Sub2API、New API、MiniMax 等类型。",
                 "author": "Hamster-Prime",
                 "version": "${VERSION}",
                 "repository": "${REPO}",
                 "logo": "https://raw.githubusercontent.com/Hamster-Prime/balance-query/main/assets/logo.png",
                 "homepage": "${REPO}",
                 "license": "MIT",
-                "tags": ["balance", "quota", "management-ui", "deepseek", "glm", "kimi", "sub2api"]
+                "tags": ["余额", "配额", "OpenAI兼容", "DeepSeek", "GLM", "Kimi", "Sub2API"]
               }
             ]
           }
@@ -244,15 +262,15 @@ jobs:
               "schema_version": 2,
               "plugins": [{
                   "id": "balance-query",
-                  "name": "Balance Query",
-                  "description": "Query balance and quota for 15 AI platform accounts (DeepSeek, GLM, Kimi, Sub2API, New API, MiniMax, Longcat, OpenCode, Volcengine, Xiaomi…) in a unified Web dashboard.",
+                  "name": "余额与配额",
+                  "description": "查询 CPA OpenAI 兼容提供商的余额与套餐配额，支持 DeepSeek、GLM、Kimi、Sub2API、New API、MiniMax 等类型。",
                   "author": "Hamster-Prime",
                   "version": version,
                   "repository": repo,
                   "logo": "https://raw.githubusercontent.com/Hamster-Prime/balance-query/main/assets/logo.png",
                   "homepage": repo,
                   "license": "MIT",
-                  "tags": ["balance", "quota", "management-ui", "deepseek", "glm", "kimi", "sub2api"],
+                  "tags": ["余额", "配额", "OpenAI兼容", "DeepSeek", "GLM", "Kimi", "Sub2API"],
                   "install": {
                       "type": "direct",
                       "artifacts": artifacts
@@ -269,5 +287,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add registry.json registry-v2.json
-          git diff --cached --quiet || git commit -m "chore: update registry for ${{ github.ref_name }} [skip ci]"
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "chore: update registry for ${{ github.ref_name }} [skip ci]"
+          git fetch origin main
+          git rebase origin/main
           git push origin HEAD:main

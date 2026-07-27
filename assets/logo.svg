@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">余额与配额</title>
+  <rect width="128" height="128" rx="20" fill="#2d2a26"/>
+  <g fill="none" stroke="#f6f4f1" stroke-linecap="round" stroke-linejoin="round" stroke-width="7" transform="translate(16 16) scale(4)">
+    <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3v4a1 1 0 0 1-1 1H5a2 2 0 0 1-2-2V5"/>
+    <path d="M16 12h5" stroke="#6ee7b7"/>
+  </g>
+</svg>

@@ -21,24 +21,24 @@ type deepSeekResp struct {
 	} `json:"balance_infos"`
 }
 
-func (DeepSeek) Fetch(authID, token string) balance.Result {
+func (DeepSeek) Fetch(authID, token, proxyURL string) balance.Result {
 	var resp deepSeekResp
-	if err := getJSON("https://api.deepseek.com/user/balance", token, &resp); err != nil {
+	if err := getJSON("https://api.deepseek.com/user/balance", token, proxyURL, &resp); err != nil {
 		return errResult(authID, balance.ProviderLabel[balance.ProviderDeepSeek], err.Error())
 	}
 	r := balance.Result{
 		Provider:  balance.ProviderLabel[balance.ProviderDeepSeek],
 		AuthID:    authID,
 		FetchedAt: time.Now(),
-		Extra:     map[string]string{"available": fmt.Sprintf("%v", resp.IsAvailable)},
+		Extra:     map[string]string{"账户状态": map[bool]string{true: "可用", false: "不可用"}[resp.IsAvailable]},
 	}
 	for _, b := range resp.BalanceInfos {
 		switch b.Currency {
 		case "CNY":
-			r.QuotaDisplay = fmt.Sprintf("¥%s (赠: ¥%s, 充: ¥%s)",
+			r.QuotaDisplay = fmt.Sprintf("¥%s（赠送 ¥%s，充值 ¥%s）",
 				b.TotalBalance, b.GrantedBalance, b.ToppedUpBalance)
 		case "USD":
-			r.QuotaDisplay = fmt.Sprintf("$%s (granted: $%s, topped-up: $%s)",
+			r.QuotaDisplay = fmt.Sprintf("$%s（赠送 $%s，充值 $%s）",
 				b.TotalBalance, b.GrantedBalance, b.ToppedUpBalance)
 		}
 	}

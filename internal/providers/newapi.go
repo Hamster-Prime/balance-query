@@ -8,7 +8,7 @@ import (
 )
 
 // NewAPI handles New API / One API compatible relay instances.
-// BaseURL is required and must be set per-auth by the user.
+// BaseURL comes from the selected CPA OpenAI-compatible provider.
 // Endpoint: GET <baseURL>/api/user/self
 type NewAPI struct {
 	BaseURL string // e.g. "https://api.newapi.ai"
@@ -24,15 +24,18 @@ type newAPIUserSelfResp struct {
 	Message string `json:"message"`
 }
 
-func (n NewAPI) Fetch(authID, token string) balance.Result {
+func (n NewAPI) Fetch(authID, token, proxyURL string) balance.Result {
 	label := balance.ProviderLabel[balance.ProviderNewAPI]
 	baseURL := n.BaseURL
 	if baseURL == "" {
-		return errResult(authID, label,
-			"New API base URL not configured — please set it in the Balance Query settings page")
+		return errResult(authID, label, "所选 OpenAI 兼容提供商没有配置接口地址")
+	}
+	endpoint, err := serviceEndpoint(baseURL, "/api/user/self")
+	if err != nil {
+		return errResult(authID, label, err.Error())
 	}
 	var resp newAPIUserSelfResp
-	if err := getJSON(baseURL+"/api/user/self", token, &resp); err != nil {
+	if err := getJSON(endpoint, token, proxyURL, &resp); err != nil {
 		return errResult(authID, label, err.Error())
 	}
 	if !resp.Success {
@@ -45,8 +48,8 @@ func (n NewAPI) Fetch(authID, token string) balance.Result {
 		Provider:     label,
 		AuthID:       authID,
 		BalanceUSD:   remainUSD,
-		QuotaDisplay: fmt.Sprintf("$%.4f 剩余 (已用 $%.4f)", remainUSD, usedUSD),
-		Extra:        map[string]string{"username": resp.Data.Username},
+		QuotaDisplay: fmt.Sprintf("剩余 $%.4f（已使用 $%.4f）", remainUSD, usedUSD),
+		Extra:        map[string]string{"用户名": resp.Data.Username},
 		FetchedAt:    time.Now(),
 	}
 }

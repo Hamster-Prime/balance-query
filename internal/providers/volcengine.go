@@ -23,10 +23,10 @@ type volcengineQuotaResp struct {
 	Message string `json:"message"`
 }
 
-func (VolcengineCodingPlan) Fetch(authID, token string) balance.Result {
+func (VolcengineCodingPlan) Fetch(authID, token, proxyURL string) balance.Result {
 	label := balance.ProviderLabel[balance.ProviderVolcengine]
 	var resp volcengineQuotaResp
-	if err := getJSON("https://ark.cn-beijing.volces.com/api/v3/user/coding_plan/quota", token, &resp); err != nil {
+	if err := getJSON("https://ark.cn-beijing.volces.com/api/v3/user/coding_plan/quota", token, proxyURL, &resp); err != nil {
 		return errResult(authID, label, err.Error())
 	}
 	d := resp.Data
@@ -42,7 +42,7 @@ func (VolcengineCodingPlan) Fetch(authID, token string) balance.Result {
 		TokensRemaining: remaining,
 		Plan:            d.Plan,
 		ResetAt:         d.ExpireAt,
-		QuotaDisplay:    fmt.Sprintf("%d / %d tokens 剩余", remaining, d.TokensTotal),
+		QuotaDisplay:    fmt.Sprintf("剩余 %d / %d 令牌", remaining, d.TokensTotal),
 		FetchedAt:       time.Now(),
 	}
 }

@@ -4,8 +4,9 @@ import (
 	"github.com/Hamster-Prime/balance-query/internal/balance"
 )
 
-// Build returns a Fetcher for the given ProviderType.
-// For Sub2API and NewAPI the caller must supply the base URL.
+// Build returns a Fetcher for the given ProviderType. baseURL is inherited
+// from the selected CPA OpenAI-compatible provider and is used by self-hosted
+// Sub2API and New API instances.
 func Build(p balance.ProviderType, baseURL string) balance.Fetcher {
 	switch p {
 	case balance.ProviderSub2API:
