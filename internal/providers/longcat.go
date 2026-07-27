@@ -1,0 +1,51 @@
+package providers
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v7/examples/plugin/balance-query/go/internal/balance"
+)
+
+// Longcat queries the Longcat (meituan) API platform.
+// Docs: https://longcat.chat/platform/docs
+type Longcat struct{}
+
+type longcatUserResp struct {
+	Data struct {
+		AvailableBalance float64 `json:"available_balance"`
+		UsedBalance      float64 `json:"used_balance"`
+		TokensRemaining  int64   `json:"tokens_remaining"`
+		TokensTotal      int64   `json:"tokens_total"`
+		Plan             string  `json:"plan"`
+		ExpireAt         string  `json:"expire_at"`
+	} `json:"data"`
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+}
+
+func (Longcat) Fetch(authID, token string) balance.Result {
+	label := balance.ProviderLabel[balance.ProviderLongcat]
+	var resp longcatUserResp
+	if err := getJSON("https://longcat.chat/platform/api/v1/user/me", token, &resp); err != nil {
+		return errResult(authID, label, err.Error())
+	}
+	d := resp.Data
+	display := ""
+	if d.TokensTotal > 0 {
+		display = fmt.Sprintf("Token Pack: %d / %d tokens 剩余", d.TokensRemaining, d.TokensTotal)
+	} else if d.AvailableBalance > 0 || d.UsedBalance > 0 {
+		display = fmt.Sprintf("余额: ¥%.4f (已用 ¥%.4f)", d.AvailableBalance, d.UsedBalance)
+	}
+	return balance.Result{
+		Provider:        label,
+		AuthID:          authID,
+		BalanceUSD:      d.AvailableBalance,
+		TokensTotal:     d.TokensTotal,
+		TokensRemaining: d.TokensRemaining,
+		Plan:            d.Plan,
+		ResetAt:         d.ExpireAt,
+		QuotaDisplay:    display,
+		FetchedAt:       time.Now(),
+	}
+}

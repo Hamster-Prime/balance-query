@@ -1,0 +1,44 @@
+package providers
+
+import (
+	"github.com/router-for-me/CLIProxyAPI/v7/examples/plugin/balance-query/go/internal/balance"
+)
+
+// Build returns a Fetcher for the given ProviderType.
+// For Sub2API and NewAPI the caller must supply the base URL.
+func Build(p balance.ProviderType, baseURL string) balance.Fetcher {
+	switch p {
+	case balance.ProviderSub2API:
+		return Sub2API{BaseURL: baseURL}
+	case balance.ProviderDeepSeek:
+		return DeepSeek{}
+	case balance.ProviderGLMZAI:
+		return GLMZai{}
+	case balance.ProviderGLMZhipu:
+		return GLMZhipu{}
+	case balance.ProviderNewAPI:
+		return NewAPI{BaseURL: baseURL}
+	case balance.ProviderKimiAPI:
+		return KimiAPI{}
+	case balance.ProviderKimiCode:
+		return KimiCode{}
+	case balance.ProviderLongcat:
+		return Longcat{}
+	case balance.ProviderMiniMaxAPI:
+		return MiniMaxAPI{}
+	case balance.ProviderMiniMaxCodingCN:
+		return MiniMaxCodingCN{}
+	case balance.ProviderMiniMaxCodingGlobal:
+		return MiniMaxCodingGlobal{}
+	case balance.ProviderOpenCode:
+		return OpenCode{}
+	case balance.ProviderVolcengine:
+		return VolcengineCodingPlan{}
+	case balance.ProviderXiaomiAPI:
+		return XiaomiAPI{}
+	case balance.ProviderXiaomiToken:
+		return XiaomiTokenPlan{}
+	default:
+		return nil
+	}
+}

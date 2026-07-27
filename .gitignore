@@ -1,0 +1,13 @@
+bin/
+*.so
+*.h
+*.a
+
+# Go build cache
+/vendor/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
