@@ -26,8 +26,8 @@ jobs:
             apt: gcc-aarch64-linux-gnu
           - goos: darwin
             goarch: amd64
-            runner: macos-13
-            cc: clang
+            runner: macos-14
+            cc: clang -arch x86_64
           - goos: darwin
             goarch: arm64
             runner: macos-14
