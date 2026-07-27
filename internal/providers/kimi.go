@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/examples/plugin/balance-query/go/internal/balance"
+	"github.com/Hamster-Prime/balance-query/internal/balance"
 )
 
 // KimiAPI queries the official Moonshot/Kimi pay-as-you-go API balance.

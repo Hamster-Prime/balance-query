@@ -1,7 +1,7 @@
 package providers
 
 import (
-	"github.com/router-for-me/CLIProxyAPI/v7/examples/plugin/balance-query/go/internal/balance"
+	"github.com/Hamster-Prime/balance-query/internal/balance"
 )
 
 // Build returns a Fetcher for the given ProviderType.
