@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "balance-query",
+      "name": "Balance Query",
+      "description": "Query balance and quota for 15 AI platform accounts (DeepSeek, GLM, Kimi, Sub2API, New API, MiniMax, Longcat, OpenCode, Volcengine, Xiaomi…) in a unified Web dashboard.",
+      "author": "Hamster-Prime",
+      "version": "0.1.0",
+      "repository": "https://github.com/Hamster-Prime/balance-query",
+      "logo": "https://raw.githubusercontent.com/Hamster-Prime/balance-query/main/assets/logo.png",
+      "homepage": "https://github.com/Hamster-Prime/balance-query",
+      "license": "MIT",
+      "tags": ["balance", "quota", "management-ui", "deepseek", "glm", "kimi", "sub2api"]
+    }
+  ]
+}

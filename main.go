@@ -67,10 +67,10 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/examples/plugin/balance-query/go/internal/balance"
-	"github.com/router-for-me/CLIProxyAPI/v7/examples/plugin/balance-query/go/internal/cache"
-	"github.com/router-for-me/CLIProxyAPI/v7/examples/plugin/balance-query/go/internal/providers"
-	"github.com/router-for-me/CLIProxyAPI/v7/examples/plugin/balance-query/go/internal/ui"
+	"github.com/Hamster-Prime/balance-query/internal/balance"
+	"github.com/Hamster-Prime/balance-query/internal/cache"
+	"github.com/Hamster-Prime/balance-query/internal/providers"
+	"github.com/Hamster-Prime/balance-query/internal/ui"
 )
 
 const (
@@ -209,8 +209,8 @@ func handleRegister(_ []byte) ([]byte, error) {
 			Name:             pluginName,
 			Version:          pluginVersion,
 			Author:           "community",
-			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
-			Logo:             "https://raw.githubusercontent.com/router-for-me/CLIProxyAPI/main/docs/logo.png",
+			GitHubRepository: "https://github.com/Hamster-Prime/balance-query",
+			Logo:             "https://raw.githubusercontent.com/Hamster-Prime/balance-query/main/assets/logo.png",
 			ConfigFields: []configField{
 				{
 					Key:         "cache_ttl_seconds",

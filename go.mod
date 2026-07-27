@@ -1,3 +1,3 @@
-module github.com/router-for-me/CLIProxyAPI/v7/examples/plugin/balance-query/go
+module github.com/Hamster-Prime/balance-query
 
 go 1.22

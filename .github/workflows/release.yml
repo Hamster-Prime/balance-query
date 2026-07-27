@@ -1,0 +1,269 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-22.04
+            cc: gcc
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-22.04
+            cc: aarch64-linux-gnu-gcc
+            apt: gcc-aarch64-linux-gnu
+          - goos: darwin
+            goarch: amd64
+            runner: macos-13
+            cc: clang
+          - goos: darwin
+            goarch: arm64
+            runner: macos-14
+            cc: clang
+          - goos: windows
+            goarch: amd64
+            runner: ubuntu-22.04
+            cc: x86_64-w64-mingw32-gcc
+            apt: gcc-mingw-w64-x86-64
+          - goos: windows
+            goarch: arm64
+            runner: ubuntu-22.04
+            cc: llvm-mingw
+            use_llvm_mingw: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install cross-compiler (apt)
+        if: matrix.apt != ''
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.apt }}
+
+      - name: Install llvm-mingw (Windows arm64)
+        if: matrix.use_llvm_mingw == true
+        run: |
+          LLVM_MINGW_VER=20240619
+          curl -fsSL "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VER}/llvm-mingw-${LLVM_MINGW_VER}-ucrt-ubuntu-20.04-x86_64.tar.xz" \
+            | tar -xJ -C /opt
+          echo "/opt/llvm-mingw-${LLVM_MINGW_VER}-ucrt-ubuntu-20.04-x86_64/bin" >> $GITHUB_PATH
+
+      - name: Build shared library
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "1"
+          CC: ${{ matrix.cc == 'llvm-mingw' && 'aarch64-w64-mingw32-gcc' || matrix.cc }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          EXT=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".dll"; elif [ "${{ matrix.goos }}" = "darwin" ]; then EXT=".dylib"; else EXT=".so"; fi
+          OUTNAME="balance-query${EXT}"
+          go build -buildmode=c-shared -trimpath -ldflags="-s -w" -o "${OUTNAME}" .
+          ZIP="balance-query_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.zip"
+          zip "${ZIP}" "${OUTNAME}"
+          echo "ZIP=${ZIP}" >> $GITHUB_ENV
+          # Compute sha256 and size
+          SHA256=$(sha256sum "${ZIP}" | awk '{print $1}')
+          SIZE=$(stat -c%s "${ZIP}" 2>/dev/null || stat -f%z "${ZIP}")
+          echo "SHA256=${SHA256}" >> $GITHUB_ENV
+          echo "SIZE=${SIZE}" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ env.ZIP }}
+          retention-days: 1
+
+      - name: Save metadata
+        run: |
+          mkdir -p meta
+          VERSION="${GITHUB_REF_NAME#v}"
+          cat > "meta/${{ matrix.goos }}_${{ matrix.goarch }}.json" <<EOF
+          {
+            "goos": "${{ matrix.goos }}",
+            "goarch": "${{ matrix.goarch }}",
+            "version": "${VERSION}",
+            "zip": "${{ env.ZIP }}",
+            "sha256": "${{ env.SHA256 }}",
+            "size": ${{ env.SIZE }}
+          }
+          EOF
+
+      - name: Upload metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: meta-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: meta/
+          retention-days: 1
+
+  release:
+    name: Create GitHub Release & update registry
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Collect zips & metadata
+        id: collect
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          # Flatten zip files into dist/zips/
+          mkdir -p dist/zips
+          find dist -name '*.zip' -exec mv {} dist/zips/ \;
+          # Flatten metadata
+          mkdir -p dist/meta
+          find dist -name '*.json' -exec mv {} dist/meta/ \;
+          ls dist/zips/
+          ls dist/meta/
+
+      - name: Create Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "balance-query ${{ github.ref_name }}"
+          body: |
+            ## balance-query ${{ github.ref_name }}
+
+            CLIProxyAPI plugin — query AI platform balances and quotas in a unified Web dashboard.
+
+            ### Installation via CPA Plugin Store
+            Add the following to your CPA `config.yaml`:
+            ```yaml
+            plugins:
+              store-sources:
+                - "https://raw.githubusercontent.com/Hamster-Prime/balance-query/main/registry-v2.json"
+            ```
+            Then install `balance-query` from the plugin store in the CPA Web UI.
+
+            ### Manual installation
+            Download the `.zip` for your platform, extract the shared library (`.so`/`.dll`/`.dylib`),
+            and place it in your CPA `plugins/` directory.
+          files: dist/zips/*.zip
+          draft: false
+          prerelease: false
+
+      - name: Generate registry files
+        run: |
+          VERSION="${{ steps.collect.outputs.version }}"
+          TAG="${GITHUB_REF_NAME}"
+          REPO="https://github.com/Hamster-Prime/balance-query"
+          RAW="https://github.com/Hamster-Prime/balance-query/releases/download/${TAG}"
+
+          # Build artifact array from metadata
+          ARTIFACTS=$(python3 - <<'PYEOF'
+          import json, os, glob
+
+          meta_files = glob.glob('dist/meta/*.json')
+          artifacts = []
+          for f in sorted(meta_files):
+              with open(f) as fp:
+                  m = json.load(fp)
+              artifacts.append({
+                  "goos": m["goos"],
+                  "goarch": m["goarch"],
+                  "url": f"$RAW/{m['zip']}",
+                  "sha256": m["sha256"],
+                  "size": m["size"]
+              })
+          print(json.dumps(artifacts, indent=4))
+          PYEOF
+          )
+
+          # Write registry.json (v1)
+          cat > registry.json <<JSONEOF
+          {
+            "schema_version": 1,
+            "plugins": [
+              {
+                "id": "balance-query",
+                "name": "Balance Query",
+                "description": "Query balance and quota for 15 AI platform accounts (DeepSeek, GLM, Kimi, Sub2API, New API, MiniMax, Longcat, OpenCode, Volcengine, Xiaomi…) in a unified Web dashboard.",
+                "author": "Hamster-Prime",
+                "version": "${VERSION}",
+                "repository": "${REPO}",
+                "logo": "https://raw.githubusercontent.com/Hamster-Prime/balance-query/main/assets/logo.png",
+                "homepage": "${REPO}",
+                "license": "MIT",
+                "tags": ["balance", "quota", "management-ui", "deepseek", "glm", "kimi", "sub2api"]
+              }
+            ]
+          }
+          JSONEOF
+
+          # Write registry-v2.json (with artifacts)
+          python3 - <<PYEOF2
+          import json, os
+
+          version = "${VERSION}"
+          repo = "${REPO}"
+          raw_base = "${RAW}"
+
+          meta_files = [f for f in __import__('glob').glob('dist/meta/*.json')]
+          artifacts = []
+          for f in sorted(meta_files):
+              with open(f) as fp:
+                  m = json.load(fp)
+              artifacts.append({
+                  "goos": m["goos"],
+                  "goarch": m["goarch"],
+                  "url": f"{raw_base}/{m['zip']}",
+                  "sha256": m["sha256"],
+                  "size": int(m["size"])
+              })
+
+          registry = {
+              "schema_version": 2,
+              "plugins": [{
+                  "id": "balance-query",
+                  "name": "Balance Query",
+                  "description": "Query balance and quota for 15 AI platform accounts (DeepSeek, GLM, Kimi, Sub2API, New API, MiniMax, Longcat, OpenCode, Volcengine, Xiaomi…) in a unified Web dashboard.",
+                  "author": "Hamster-Prime",
+                  "version": version,
+                  "repository": repo,
+                  "logo": "https://raw.githubusercontent.com/Hamster-Prime/balance-query/main/assets/logo.png",
+                  "homepage": repo,
+                  "license": "MIT",
+                  "tags": ["balance", "quota", "management-ui", "deepseek", "glm", "kimi", "sub2api"],
+                  "install": {
+                      "type": "direct",
+                      "artifacts": artifacts
+                  }
+              }]
+          }
+          with open('registry-v2.json', 'w') as fp:
+              json.dump(registry, fp, indent=2)
+          print("registry-v2.json written")
+          PYEOF2
+
+      - name: Commit updated registry files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add registry.json registry-v2.json
+          git diff --cached --quiet || git commit -m "chore: update registry for ${{ github.ref_name }} [skip ci]"
+          git push origin HEAD:main
