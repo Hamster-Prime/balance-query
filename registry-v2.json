@@ -3,22 +3,22 @@
   "plugins": [
     {
       "id": "balance-query",
-      "name": "Balance Query",
-      "description": "Query balance and quota for 15 AI platform accounts (DeepSeek, GLM, Kimi, Sub2API, New API, MiniMax, Longcat, OpenCode, Volcengine, Xiaomi…) in a unified Web dashboard.",
+      "name": "\u4f59\u989d\u4e0e\u914d\u989d",
+      "description": "\u67e5\u8be2 CPA OpenAI \u517c\u5bb9\u63d0\u4f9b\u5546\u7684\u4f59\u989d\u4e0e\u5957\u9910\u914d\u989d\uff0c\u652f\u6301 DeepSeek\u3001GLM\u3001Kimi\u3001Sub2API\u3001New API\u3001MiniMax \u7b49\u7c7b\u578b\u3002",
       "author": "Hamster-Prime",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "repository": "https://github.com/Hamster-Prime/balance-query",
       "logo": "https://raw.githubusercontent.com/Hamster-Prime/balance-query/main/assets/logo.png",
       "homepage": "https://github.com/Hamster-Prime/balance-query",
       "license": "MIT",
       "tags": [
-        "balance",
-        "quota",
-        "management-ui",
-        "deepseek",
-        "glm",
-        "kimi",
-        "sub2api"
+        "\u4f59\u989d",
+        "\u914d\u989d",
+        "OpenAI\u517c\u5bb9",
+        "DeepSeek",
+        "GLM",
+        "Kimi",
+        "Sub2API"
       ],
       "install": {
         "type": "direct",
@@ -26,44 +26,44 @@
           {
             "goos": "darwin",
             "goarch": "amd64",
-            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.1.0/balance-query_0.1.0_darwin_amd64.zip",
-            "sha256": "4830556694a3bfa231c1363b47fe203dc2da3fc781137c52b7a424e7bc895c83",
-            "size": 2252229
+            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.2.0/balance-query_0.2.0_darwin_amd64.zip",
+            "sha256": "774532b4204e6476fd4d7ad2ac9ebbcd63bec7d39d3fcf2c3d26270df59a2021",
+            "size": 2467116
           },
           {
             "goos": "darwin",
             "goarch": "arm64",
-            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.1.0/balance-query_0.1.0_darwin_arm64.zip",
-            "sha256": "1b5a00f6492116ce876326e0d68cdb9f0e3d62890d385e170f63601dfcaf3bb0",
-            "size": 2104864
+            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.2.0/balance-query_0.2.0_darwin_arm64.zip",
+            "sha256": "ea017152255a37773359f14ff91ae7b79c00e41caff050c43686c641478b09fe",
+            "size": 2303967
           },
           {
             "goos": "linux",
             "goarch": "amd64",
-            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.1.0/balance-query_0.1.0_linux_amd64.zip",
-            "sha256": "60e6c4620da7b9f9d5db678700e2ae0a9167c4f9244475ed922bf490edd576a5",
-            "size": 2355699
+            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.2.0/balance-query_0.2.0_linux_amd64.zip",
+            "sha256": "1fa231799fb05208d4de48bc5552181a2013c1edf977323a004be9a946696662",
+            "size": 2576692
           },
           {
             "goos": "linux",
             "goarch": "arm64",
-            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.1.0/balance-query_0.1.0_linux_arm64.zip",
-            "sha256": "8e10608c139e787759061712a3e4008f5309d28ecde167906c13bcf388adc64f",
-            "size": 2164325
+            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.2.0/balance-query_0.2.0_linux_arm64.zip",
+            "sha256": "113dd8f061c0230e63c2b6894e9882deaa145facd9392fca11cd185d2ad4dcde",
+            "size": 2366085
           },
           {
             "goos": "windows",
             "goarch": "amd64",
-            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.1.0/balance-query_0.1.0_windows_amd64.zip",
-            "sha256": "f9e183ad7b82fe82e970817d23ec55c1dbb1c88535d2c4a6953214f249996c9d",
-            "size": 2305655
+            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.2.0/balance-query_0.2.0_windows_amd64.zip",
+            "sha256": "52de9558e609fc488e6aa8a8d8763e4c66d378e954fb4025ffeb11f9cafaa468",
+            "size": 2518858
           },
           {
             "goos": "windows",
             "goarch": "arm64",
-            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.1.0/balance-query_0.1.0_windows_arm64.zip",
-            "sha256": "464ed7128592bdc81baa38e4f145800dfd56247e028cc5fae53c43630b046d0c",
-            "size": 2073366
+            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.2.0/balance-query_0.2.0_windows_arm64.zip",
+            "sha256": "28040fb558e8740c4a64c67a1f8718430e533473ec0758db37aebca5ee458933",
+            "size": 2266937
           }
         ]
       }
