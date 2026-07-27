@@ -161,12 +161,17 @@ func TestRenderDashboardUsesSingleColumnCollapsibleAccountDetails(t *testing.T) 
 		`repeat(auto-fit,minmax(200px,1fr))`,
 		`account-detail-collapse`,
 		`grid-template-rows:0fr`,
-		`grid-template-rows:1fr`,
 		`var detailKeys = !result.error ? extraDetailKeys(result) : [];`,
 		`detailButton.setAttribute("aria-expanded", "false")`,
 		`detailButton.setAttribute("aria-controls", detailsID)`,
 		`collapse.setAttribute("aria-hidden", "true")`,
 		`collapse.setAttribute("inert", "")`,
+		`function setDisclosureState(button, collapse, expanded)`,
+		`var wasExpanded = collapse.getAttribute("aria-hidden") === "false"`,
+		`collapse.removeAttribute("inert")`,
+		`collapse.addEventListener("transitionend", finish)`,
+		`if (collapse.getAttribute("aria-hidden") === "true") collapse.setAttribute("inert", "")`,
+		`setDisclosureState(detailButton, collapse, nextExpanded)`,
 		`查看账户明细`,
 		`收起账户明细`,
 	} {
@@ -176,6 +181,30 @@ func TestRenderDashboardUsesSingleColumnCollapsibleAccountDetails(t *testing.T) 
 	}
 	if strings.Contains(page, `.result-card:hover{border-color:var(--border-hover);box-shadow:var(--shadow-lg);transform:`) {
 		t.Fatal("full-width result cards should not jump vertically on hover")
+	}
+	accountExpanded := regexp.MustCompile(`\.account-detail-collapse\[aria-hidden="false"\]\{[^}]*grid-template-rows:1fr`)
+	if !accountExpanded.MatchString(page) {
+		t.Fatal("account detail disclosure must animate between compatible 0fr and 1fr tracks")
+	}
+}
+
+func TestRenderDashboardNamesSingleAndMultipleEnabledKeys(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, want := range []string{
+		`var enabledKeys = provider.keys.map(function (keyEntry, originalIndex)`,
+		`return { entry:keyEntry, originalIndex:originalIndex };`,
+		`}).filter(function (item) { return !item.entry.disabled; });`,
+		`enabledKeys.forEach(function (item, displayIndex)`,
+		`var accountName = enabledKeys.length === 1 ? provider.name : provider.name + " · 密钥 " + (displayIndex + 1);`,
+		`(item.originalIndex + 1)`,
+		`account_name: accountName`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing enabled-key naming marker %q", want)
+		}
+	}
+	if strings.Contains(page, `account_name: provider.name + " · 密钥 " + (index + 1)`) {
+		t.Fatal("dashboard still appends a key number to every single-key provider")
 	}
 }
 
@@ -228,8 +257,10 @@ func TestRenderDashboardGroupsOverviewByCategoryAndMultipleKeys(t *testing.T) {
 func TestRenderDashboardSuppressesDuplicatedQuotaSummaries(t *testing.T) {
 	page := string(RenderDashboard(300))
 	for _, want := range []string{
+		`function typedWalletBalance(result)`,
 		`var genericBalancePresent = Boolean(result.has_balance_amount) || owns(result, "balance_amount")`,
-		`return "钱包余额 " + amountWithUnit(genericAmount, result.balance_currency || "credits")`,
+		`return { amount:genericAmount, unit:result.balance_currency || "credits" };`,
+		`if (typedWallet) return amountWithUnit(typedWallet.amount, typedWallet.unit);`,
 		`var balancePresent = Boolean(result.has_balance) || owns(result, "balance_usd")`,
 		`return "钱包余额 " + amountWithUnit(balanceAmount, "usd")`,
 		`var hasWindows = Array.isArray(result.quota_windows) && result.quota_windows.length > 0`,
@@ -237,6 +268,12 @@ func TestRenderDashboardSuppressesDuplicatedQuotaSummaries(t *testing.T) {
 		`if (Array.isArray(result.quota_windows) && result.quota_windows.length > 0) return ""`,
 		`if (plan === "钱包余额") return ""`,
 		`if (hasWindows && (plan === "账户额度" || plan === "密钥独立额度")) return ""`,
+		`function renderWalletBalance(card, result)`,
+		`var box = element("div", "quota-window wallet-window")`,
+		`box.setAttribute("aria-label", "钱包余额")`,
+		`return [typedWalletBalance(result) ? "钱包余额" : "", titlePlanText(result), titleDateText(result)].filter(Boolean);`,
+		`var renderedWallet = renderWalletBalance(card, result);`,
+		`var balanceText = renderedWallet ? "" : formatBalance(result);`,
 		`if (balanceText) {`,
 	} {
 		if !strings.Contains(page, want) {
@@ -244,6 +281,7 @@ func TestRenderDashboardSuppressesDuplicatedQuotaSummaries(t *testing.T) {
 		}
 	}
 	for _, unwanted := range []string{
+		`return "钱包余额 " + amountWithUnit(genericAmount, result.balance_currency || "credits")`,
 		`renderAccountMeta(overview, result)`,
 		`label:"查询状态"`,
 	} {
@@ -261,6 +299,9 @@ func TestRenderDashboardPlacesPlanAndResetInTitle(t *testing.T) {
 		`title-meta-chip`,
 		`appendTitleMetadata(titleRow, resultTitleMetadata(result))`,
 		`appendTitleMetadata(titleRow, commonTitleMetadata(results))`,
+		`var successful = results.filter(function (result) { return !result.error; });`,
+		`var walletValues = successful.map(function (result) { return typedWalletBalance(result) ? "钱包余额" : ""; });`,
+		`if (walletValues.length && walletValues.every(Boolean)) values.push("钱包余额");`,
 		`owns(extra, "密钥到期") || owns(extra, "套餐到期") ? "到期 " : "重置 "`,
 		`key === "套餐名称" && result.plan`,
 	} {
@@ -270,6 +311,9 @@ func TestRenderDashboardPlacesPlanAndResetInTitle(t *testing.T) {
 	}
 	if strings.Contains(page, `class="account-meta"`) || strings.Contains(page, `function renderAccountMeta`) {
 		t.Fatal("dashboard still reserves a separate row for account plan/reset metadata")
+	}
+	if strings.Contains(page, `if (successful.length !== results.length) return [];`) {
+		t.Fatal("failed keys should not hide common metadata from successful wallet results")
 	}
 }
 
@@ -294,7 +338,7 @@ func TestRenderDashboardUsesRemainingQuotaForProgress(t *testing.T) {
 		`if (percent <= 50) return " warning"`,
 		`track.setAttribute("aria-label", translateWindowLabel(item.label) + "剩余额度")`,
 		`track.setAttribute("aria-valuenow", String(Math.round(visualRemaining)))`,
-		`track.setAttribute("aria-valuetext", formatAmount(progressRemaining, "%") + " 剩余")`,
+		`track.setAttribute("aria-valuetext", formatAmount(aggregatePercent && remainingPercent != null ? remainingPercent : progressRemaining, "%") + " 剩余")`,
 		`bar.style.width = visualRemaining.toFixed(1) + "%"`,
 		`var percent = clampPercent((total - used) / total * 100)`,
 		`track.setAttribute("aria-label", "令牌剩余额度")`,
@@ -317,43 +361,97 @@ func TestRenderDashboardUsesRemainingQuotaForProgress(t *testing.T) {
 	}
 }
 
-func TestRenderDashboardUsesConservativeMultipleKeyAggregates(t *testing.T) {
+func TestRenderDashboardSumsSuccessfulMultipleKeyQuotaWindows(t *testing.T) {
 	page := string(RenderDashboard(300))
 	for _, want := range []string{
+		`function aggregateQuotaWindows(results)`,
+		`var successful = results.filter(function (result) { return !result.error; });`,
+		`var baseKey = group + "\u0000" + label;`,
+		`var keyScoped = available.every(function (entry) { return entry.item.aggregation_scope === "key"; });`,
+		`aggregate.aggregation_scope = keyScoped ? "key" : "unknown";`,
+		`var unlimited = available.some(function (entry) { return Boolean(entry.item.unlimited); });`,
+		`if (unlimited) {`,
+		`aggregate.unlimited = true;`,
+		`if (showUsage && keyScoped) {`,
+		`aggregate.used = available.reduce(function (sum, entry)`,
+		`} else if (showUsage) {`,
+		`var representativeUnlimited = available.find(function (entry) { return entry.item.unlimited && entry.item.show_used_when_unlimited; });`,
+		`return aggregate;`,
+		`percentSum += Math.max(0, percent);`,
+		`totalSum += total;`,
+		`remainingSum += Math.max(0, remaining);`,
+		`usedSum += Math.max(0, used);`,
+		`aggregate.remaining_percent = percentSum;`,
+		`aggregate.progress_remaining_percent = percentSum / percentCount;`,
+		`aggregate.status = "共享账户额度";`,
+		`if (totalCount) aggregate.total = totalSum;`,
+		`if (remainingCount) aggregate.remaining = remainingSum;`,
+		`if (usedCount) aggregate.used = usedSum;`,
+		`var progressRemaining = owns(item, "progress_remaining_percent") ? finiteNumber(item.progress_remaining_percent) : quotaRemainingPercent(item);`,
+		`var aggregateWindows = aggregateQuotaWindows(results);`,
+		`bundleSummaryMetrics(results, aggregateWindows.length > 0)`,
+		`renderQuotaGroups(section, { quota_windows:aggregateWindows`,
 		`function bundleSummaryMetrics`,
-		`function quotaBucketMetrics`,
-		`item.aggregation_scope === "key"`,
 		`result.has_balance`,
 		`result.has_cost`,
-		`coverage + "/" + expectedCount`,
-		`entry.fetchedAt`,
 		`quotaResetNode(item, fetchedAt)`,
 		`var duplicateReset = Boolean(item.reset_at && accountResetAt`,
 		`var resetNode = duplicateReset ? null : quotaResetNode(item, fetchedAt)`,
-		`if (!timestamp && item.reset_at)`,
 		`Boolean(result.has_balance_amount) || owns(result, "balance_amount")`,
 		`canonicalQuotaUnit(genericPresent ? result.balance_currency : "usd")`,
-		`if (successful.length !== results.length) return []`,
+		`if (!successful.length) return []`,
 		`planValues.every(Boolean)`,
 		`summaryValues.every(Boolean)`,
-		`按密钥合计`,
-		`按密钥总额度`,
-		`最低剩余`,
-		`平均剩余`,
-		`剩余范围`,
 		`canonicalQuotaUnit`,
 		`result.balance_usd`,
-		`已返回合计剩余`,
-		`剩余数值覆盖`,
-		`百分比覆盖`,
-		`hasPercentOnly`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("dashboard is missing multi-key aggregate marker %q", want)
 		}
 	}
-	if strings.Contains(page, `remainingPercents.reduce(function (sum, value) { return sum + value; }, 0)`) {
-		t.Fatal("dashboard must not present summed percentages as a quota total")
+
+	scopeBeforeUnlimited := regexp.MustCompile(`(?s)var keyScoped = available\.every.*?aggregate\.aggregation_scope = keyScoped \? "key" : "unknown";.*?var unlimited = available\.some`)
+	if !scopeBeforeUnlimited.MatchString(page) {
+		t.Fatal("dashboard must determine quota ownership before aggregating unlimited usage")
+	}
+	unlimitedBeforeFiniteTotals := regexp.MustCompile(`(?s)var unlimited = available\.some.*?if \(unlimited\) \{.*?return aggregate;.*?var percentSum = 0;`)
+	if !unlimitedBeforeFiniteTotals.MatchString(page) {
+		t.Fatal("dashboard must propagate unlimited quota before aggregating finite quota values")
+	}
+	for _, unwanted := range []string{`quotaBucketMetrics(`, `最低剩余`, `平均剩余`, `剩余范围`} {
+		if strings.Contains(page, unwanted) {
+			t.Fatalf("dashboard still contains obsolete minimum/range quota aggregation %q", unwanted)
+		}
+	}
+}
+
+func TestRenderDashboardKeepsReconnectLabelAndReusesRefreshIcon(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, want := range []string{
+		`id="reconnect-button"`,
+		`<span class="btn-label">重新连接</span>`,
+		`.btn.is-refreshing .refresh-icon{animation:spin .9s linear infinite}`,
+		`var refreshIcon = button.querySelector(".refresh-icon");`,
+		`button.classList.toggle("is-refreshing", Boolean(busy && refreshIcon));`,
+		`if (refreshIcon) {`,
+		`if (oldSpinner) oldSpinner.remove();`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing responsive toolbar marker %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		`<span class="btn-label optional">重新连接</span>`,
+		`.btn-label.optional{display:none}`,
+	} {
+		if strings.Contains(page, unwanted) {
+			t.Fatalf("dashboard still hides or duplicates the reconnect/refresh control %q", unwanted)
+		}
+	}
+
+	refreshBranch := regexp.MustCompile(`(?s)var refreshIcon = button\.querySelector\("\.refresh-icon"\);.*?if \(refreshIcon\) \{.*?return;.*?if \(busy && !oldSpinner\)`)
+	if !refreshBranch.MatchString(page) {
+		t.Fatal("refresh busy state must return before the generic spinner is inserted")
 	}
 }
 
@@ -392,7 +490,7 @@ func TestRenderDashboardSkipsNativeKeysDisabledInCPA(t *testing.T) {
 	for _, want := range []string{
 		`keyEntryDisabled`,
 		`entry["excluded-models"]`,
-		`if (keyEntry.disabled) return;`,
+		`}).filter(function (item) { return !item.entry.disabled; });`,
 		`entry.disabled ? " disabled"`,
 		`该密钥已在 CPA 中停用`,
 	} {

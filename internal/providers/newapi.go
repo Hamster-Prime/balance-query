@@ -39,6 +39,7 @@ type newAPIStatusResp struct {
 		USDExchangeRate            float64 `json:"usd_exchange_rate"`
 		CustomCurrencySymbol       string  `json:"custom_currency_symbol"`
 		CustomCurrencyExchangeRate float64 `json:"custom_currency_exchange_rate"`
+		DisplayInCurrency          *bool   `json:"display_in_currency"`
 	} `json:"data"`
 }
 
@@ -77,7 +78,7 @@ func (n NewAPI) Fetch(authID, token, proxyURL string) balance.Result {
 		statusURL, _ := serviceEndpoint(n.BaseURL, "/api/status")
 		_ = getJSONWithHeaders(statusURL, proxyURL, nil, &status)
 		return parseNewAPITokenUsage(authID, usage, status)
-	} else if !strings.Contains(strings.ToLower(err.Error()), "http 404") {
+	} else if !isHTTPStatusError(err, 404, 405) {
 		return errResult(authID, label, err.Error())
 	}
 	return n.fetchLegacyBilling(authID, token, proxyURL)
@@ -90,14 +91,19 @@ func parseNewAPITokenUsage(authID string, response newAPITokenUsageResp, status 
 	used := convert(response.Data.TotalUsed)
 	remaining := convert(response.Data.TotalAvailable)
 	window := balance.QuotaWindow{
-		Group:            "密钥额度",
-		Label:            "总额度",
-		Used:             used,
-		Total:            total,
-		Remaining:        remaining,
-		Unit:             unit,
-		Unlimited:        response.Data.UnlimitedQuota,
-		AggregationScope: "key",
+		Group:                 "密钥额度",
+		Label:                 "总额度",
+		Used:                  used,
+		Total:                 total,
+		Remaining:             remaining,
+		Unit:                  unit,
+		Unlimited:             response.Data.UnlimitedQuota,
+		ShowUsedWhenUnlimited: response.Data.UnlimitedQuota,
+		AggregationScope:      "key",
+	}
+	if window.Unlimited {
+		window.Total = 0
+		window.Remaining = 0
 	}
 	if !window.Unlimited && total > 0 {
 		window.UsedPercent = percentFromValues(used, total)
@@ -120,7 +126,7 @@ func parseNewAPITokenUsage(authID string, response newAPITokenUsageResp, status 
 		r.Extra["密钥名称"] = response.Data.Name
 	}
 	if response.Data.UnlimitedQuota {
-		r.QuotaDisplay = "密钥额度不设上限"
+		r.QuotaDisplay = fmt.Sprintf("不限量，已用 %.4f %s", used, unit)
 	} else {
 		r.QuotaDisplay = fmt.Sprintf("剩余 %.4f / %.4f %s", remaining, total, unit)
 	}
@@ -151,25 +157,44 @@ func newAPIQuotaConverter(status newAPIStatusResp) (func(float64) float64, strin
 	if !status.Success || data.QuotaPerUnit <= 0 {
 		return func(value float64) float64 { return value }, "内部额度"
 	}
-	switch strings.ToUpper(strings.TrimSpace(data.QuotaDisplayType)) {
+	displayType := strings.ToUpper(strings.TrimSpace(data.QuotaDisplayType))
+	if displayType == "" && data.DisplayInCurrency != nil && !*data.DisplayInCurrency {
+		return func(value float64) float64 { return value }, "内部额度"
+	}
+	switch displayType {
 	case "TOKENS":
 		return func(value float64) float64 { return value }, "令牌"
 	case "CNY":
 		rate := data.USDExchangeRate
 		if rate <= 0 {
-			rate = 1
+			return func(value float64) float64 { return value }, "内部额度"
 		}
 		return func(value float64) float64 { return value / data.QuotaPerUnit * rate }, "CNY"
 	case "CUSTOM":
 		rate := data.CustomCurrencyExchangeRate
 		if rate <= 0 {
-			rate = 1
+			return func(value float64) float64 { return value }, "内部额度"
 		}
 		unit := firstNonEmpty(data.CustomCurrencySymbol, "自定义币种")
 		return func(value float64) float64 { return value / data.QuotaPerUnit * rate }, unit
-	default:
+	case "", "USD":
 		return func(value float64) float64 { return value / data.QuotaPerUnit }, "USD"
+	default:
+		return func(value float64) float64 { return value }, "内部额度"
 	}
+}
+
+func isHTTPStatusError(err error, statuses ...int) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	for _, status := range statuses {
+		if strings.Contains(message, fmt.Sprintf("http %d", status)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (n NewAPI) fetchLegacyBilling(authID, token, proxyURL string) balance.Result {
@@ -204,25 +229,36 @@ func (n NewAPI) fetchLegacyBilling(authID, token, proxyURL string) balance.Resul
 		total = subscription.SoftLimit
 	}
 	used := usage.TotalUsage / 100
+	unlimited := total == 100000000
 	remaining := maxFloat(total-used, 0)
+	if unlimited {
+		total = 0
+		remaining = 0
+	}
 	window := balance.QuotaWindow{
-		Group:            "密钥额度",
-		Label:            "总额度（兼容模式）",
-		Used:             used,
-		Total:            total,
-		Remaining:        remaining,
-		Unit:             "站点额度",
-		UsedPercent:      percentFromValues(used, total),
-		RemainingPercent: clampPercent(100 - percentFromValues(used, total)),
-		AggregationScope: "account",
+		Group:                 "密钥额度",
+		Label:                 "总额度（兼容模式）",
+		Used:                  used,
+		Total:                 total,
+		Remaining:             remaining,
+		Unit:                  "站点额度",
+		UsedPercent:           percentFromValues(used, total),
+		RemainingPercent:      clampPercent(100 - percentFromValues(used, total)),
+		Unlimited:             unlimited,
+		ShowUsedWhenUnlimited: unlimited,
+		AggregationScope:      "unknown",
 	}
 	if subscription.AccessUntil > 0 {
 		window.ResetAt = formatUnixTimestamp(subscription.AccessUntil)
 	}
+	quotaDisplay := fmt.Sprintf("剩余 %.4f / %.4f 站点额度", remaining, total)
+	if unlimited {
+		quotaDisplay = fmt.Sprintf("不限量，已用 %.4f 站点额度", used)
+	}
 	r := balance.Result{
 		Provider:     label,
 		AuthID:       authID,
-		QuotaDisplay: fmt.Sprintf("剩余 %.4f / %.4f 站点额度", remaining, total),
+		QuotaDisplay: quotaDisplay,
 		ResetAt:      window.ResetAt,
 		QuotaWindows: []balance.QuotaWindow{window},
 		Extra: map[string]string{

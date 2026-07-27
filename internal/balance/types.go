@@ -84,6 +84,9 @@ type QuotaWindow struct {
 	Unlimited      bool   `json:"unlimited,omitempty"`
 	Unavailable    bool   `json:"unavailable,omitempty"`
 	Status         string `json:"status,omitempty"`
+	// ShowUsedWhenUnlimited asks the UI to keep a provider-reported usage
+	// counter visible even though the key itself has no enforced cap.
+	ShowUsedWhenUnlimited bool `json:"show_used_when_unlimited,omitempty"`
 
 	// AggregationScope is "key" only when each API key owns an independent
 	// allowance. Account, organization, and unknown windows must not be summed.

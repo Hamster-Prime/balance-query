@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -24,7 +25,12 @@ type miniMaxQuotaResp struct {
 		StatusCode int    `json:"status_code"`
 		StatusMsg  string `json:"status_msg"`
 	} `json:"base_resp"`
-	ModelRemains []miniMaxModelRemain `json:"model_remains"`
+	HasStatusCode   bool                 `json:"-"`
+	ResponseError   string               `json:"-"`
+	PlanTitle       string               `json:"current_subscribe_title"`
+	PointsBalance   float64              `json:"points_balance"`
+	HasPointBalance bool                 `json:"-"`
+	ModelRemains    []miniMaxModelRemain `json:"model_remains"`
 }
 
 type miniMaxModelRemain struct {
@@ -37,6 +43,7 @@ type miniMaxModelRemain struct {
 	CurrentIntervalTotalCount   float64  `json:"current_interval_total_count"`
 	CurrentIntervalUsageCount   float64  `json:"current_interval_usage_count"` // remaining, despite the name
 	CurrentIntervalRemainingPct *float64 `json:"current_interval_remaining_percent"`
+	IntervalBoostPermille       *float64 `json:"interval_boost_permille"`
 	CurrentIntervalStatus       int      `json:"current_interval_status"`
 	CurrentWeeklyTotalCount     float64  `json:"current_weekly_total_count"`
 	CurrentWeeklyUsageCount     float64  `json:"current_weekly_usage_count"` // remaining, despite the name
@@ -48,36 +55,145 @@ type miniMaxModelRemain struct {
 	WeeklyBoostPermille         *float64 `json:"weekly_boost_permille"`
 }
 
+func (response *miniMaxQuotaResp) UnmarshalJSON(data []byte) error {
+	*response = miniMaxQuotaResp{}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+	nested, _ := payload["data"].(map[string]any)
+	base, _ := nested["base_resp"].(map[string]any)
+	if _, exists := firstNumber(base, "status_code"); !exists {
+		base, _ = payload["base_resp"].(map[string]any)
+	}
+	if code, ok := firstNumber(base, "status_code"); ok {
+		response.BaseResp.StatusCode = int(code)
+		response.HasStatusCode = true
+	}
+	response.BaseResp.StatusMsg = firstString(base, "status_msg")
+	response.ResponseError = firstNonEmpty(firstString(nested, "message", "error"), firstString(payload, "message", "error"))
+	response.PlanTitle = firstString(nested, "current_subscribe_title")
+	if response.PlanTitle == "" {
+		response.PlanTitle = firstString(payload, "current_subscribe_title")
+	}
+	if response.PlanTitle == "" {
+		if subscription, ok := nested["current_subscribe"].(map[string]any); ok {
+			response.PlanTitle = firstString(subscription, "current_subscribe_title")
+		}
+	}
+	if response.PlanTitle == "" {
+		if subscription, ok := payload["current_subscribe"].(map[string]any); ok {
+			response.PlanTitle = firstString(subscription, "current_subscribe_title")
+		}
+	}
+	response.PointsBalance, response.HasPointBalance = firstNumber(nested, "points_balance")
+	if !response.HasPointBalance {
+		response.PointsBalance, response.HasPointBalance = firstNumber(payload, "points_balance")
+	}
+	response.ModelRemains = nil
+	rawModels, _ := nested["model_remains"].([]any)
+	if rawModels == nil {
+		rawModels, _ = payload["model_remains"].([]any)
+	}
+	for _, raw := range rawModels {
+		model, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		response.ModelRemains = append(response.ModelRemains, miniMaxModelRemainFromMap(model))
+	}
+	return nil
+}
+
+func miniMaxModelRemainFromMap(values map[string]any) miniMaxModelRemain {
+	number := func(keys ...string) float64 {
+		value, _ := firstNumber(values, keys...)
+		return value
+	}
+	integer := func(keys ...string) int64 {
+		value, _ := int64Value(firstValue(values, keys...))
+		return value
+	}
+	pointer := func(keys ...string) *float64 {
+		value, ok := firstNumber(values, keys...)
+		if !ok {
+			return nil
+		}
+		return &value
+	}
+	return miniMaxModelRemain{
+		ModelName:                   firstString(values, "model_name"),
+		StartTime:                   integer("start_time"),
+		EndTime:                     integer("end_time"),
+		RemainsTime:                 integer("remains_time"),
+		CurrentIntervalTotalCount:   number("current_interval_total_count"),
+		CurrentIntervalUsageCount:   number("current_interval_usage_count"),
+		CurrentIntervalRemainingPct: pointer("current_interval_remaining_percent"),
+		IntervalBoostPermille:       pointer("interval_boost_permille", "interval_boost_permill"),
+		CurrentIntervalStatus:       int(number("current_interval_status")),
+		CurrentWeeklyTotalCount:     number("current_weekly_total_count"),
+		CurrentWeeklyUsageCount:     number("current_weekly_usage_count"),
+		CurrentWeeklyRemainingPct:   pointer("current_weekly_remaining_percent"),
+		CurrentWeeklyStatus:         int(number("current_weekly_status")),
+		WeeklyStartTime:             integer("weekly_start_time"),
+		WeeklyEndTime:               integer("weekly_end_time"),
+		WeeklyRemainsTime:           integer("weekly_remains_time"),
+		WeeklyBoostPermille:         pointer("weekly_boost_permille", "weekly_boost_permill"),
+	}
+}
+
 func fetchMiniMaxCoding(authID, token, proxyURL, apiBase, label string) balance.Result {
 	endpoint := apiBase + "/v1/token_plan/remains"
-	var resp miniMaxQuotaResp
-	err := getJSON(endpoint, token, proxyURL, &resp)
-	if err != nil {
-		// The official CLI probes both supported credential styles because key
-		// types differ between MiniMax products and regions.
-		resp = miniMaxQuotaResp{}
-		if retryErr := getJSONWithHeaders(endpoint, proxyURL, map[string]string{"x-api-key": token}, &resp); retryErr != nil {
-			return errResult(authID, label, err.Error())
+	if strings.TrimSpace(token) == "" {
+		return errResult(authID, label, "接口密钥为空")
+	}
+
+	// MiniMax's official CLI probes both credential styles. A key can receive
+	// HTTP 200 with a non-zero business status under the wrong style, so only a
+	// fully successful business response stops the probe.
+	authHeaders := []map[string]string{
+		{"Authorization": "Bearer " + token},
+		{"x-api-key": token},
+	}
+	lastMessage := "MiniMax 配额查询失败"
+	for _, headers := range authHeaders {
+		var resp miniMaxQuotaResp
+		if err := getJSONWithHeaders(endpoint, proxyURL, headers, &resp); err != nil {
+			lastMessage = err.Error()
+			continue
 		}
-	}
-	if resp.BaseResp.StatusCode != 0 {
-		message := strings.TrimSpace(resp.BaseResp.StatusMsg)
-		if message == "" {
-			message = fmt.Sprintf("MiniMax 配额接口返回业务错误 %d", resp.BaseResp.StatusCode)
+		if resp.BaseResp.StatusCode != 0 {
+			lastMessage = strings.TrimSpace(resp.BaseResp.StatusMsg)
+			if lastMessage == "" {
+				lastMessage = fmt.Sprintf("MiniMax 配额接口返回业务错误 %d", resp.BaseResp.StatusCode)
+			}
+			continue
 		}
-		return errResult(authID, label, message)
+		if !resp.HasStatusCode && len(resp.ModelRemains) == 0 {
+			lastMessage = firstNonEmpty(strings.TrimSpace(resp.ResponseError), "MiniMax 配额接口未返回有效业务状态")
+			continue
+		}
+		if len(resp.ModelRemains) == 0 {
+			result := parseMiniMaxQuota(authID, label, resp)
+			result.QuotaWindows = []balance.QuotaWindow{{
+				Group:            "Token Plan",
+				Label:            "当前配额",
+				Unavailable:      true,
+				Status:           "暂无可用配额数据",
+				AggregationScope: "key",
+			}}
+			return result
+		}
+		return parseMiniMaxQuota(authID, label, resp)
 	}
-	if len(resp.ModelRemains) == 0 {
-		return errResult(authID, label, "官方接口未返回 Token Plan 配额数据")
-	}
-	return parseMiniMaxQuota(authID, label, resp)
+	return errResult(authID, label, lastMessage)
 }
 
 func parseMiniMaxQuota(authID, label string, resp miniMaxQuotaResp) balance.Result {
 	r := balance.Result{
 		Provider:  label,
 		AuthID:    authID,
-		Plan:      "Token Plan",
+		Plan:      firstNonEmpty(resp.PlanTitle, "Token Plan"),
 		FetchedAt: time.Now(),
 		Extra:     map[string]string{},
 	}
@@ -89,10 +205,14 @@ func parseMiniMaxQuota(authID, label string, resp miniMaxQuotaResp) balance.Resu
 			model.CurrentIntervalStatus == 3 && model.CurrentWeeklyStatus == 3
 
 		intervalSeconds := (model.EndTime - model.StartTime) / 1000
+		intervalBoost := 1.0
+		if model.IntervalBoostPermille != nil {
+			intervalBoost = maxFloat(*model.IntervalBoostPermille, 0) / 1000
+		}
 		current := miniMaxWindow(group, durationWindowLabel(intervalSeconds),
 			model.CurrentIntervalTotalCount, model.CurrentIntervalUsageCount,
 			model.CurrentIntervalRemainingPct, model.CurrentIntervalStatus,
-			model.EndTime, model.RemainsTime, unavailable, 1, false)
+			model.EndTime, model.RemainsTime, unavailable, intervalBoost, false)
 		weeklyBoost := 1.0
 		if model.WeeklyBoostPermille != nil {
 			weeklyBoost = maxFloat(*model.WeeklyBoostPermille, 0) / 1000
@@ -110,6 +230,12 @@ func parseMiniMaxQuota(authID, label string, resp miniMaxQuotaResp) balance.Resu
 		if model.WeeklyBoostPermille != nil && *model.WeeklyBoostPermille != 1000 {
 			r.Extra[group+"周额度倍率"] = fmt.Sprintf("%.1f%%", *model.WeeklyBoostPermille/10)
 		}
+		if model.IntervalBoostPermille != nil && *model.IntervalBoostPermille != 1000 {
+			r.Extra[group+"短周期额度倍率"] = fmt.Sprintf("%.1f%%", *model.IntervalBoostPermille/10)
+		}
+	}
+	if resp.HasPointBalance {
+		r.Extra["积分余额"] = formatQuotaNumber(resp.PointsBalance)
 	}
 	for _, model := range resp.ModelRemains {
 		if model.WeeklyStartTime > 0 || model.WeeklyEndTime > 0 {
@@ -125,15 +251,16 @@ func parseMiniMaxQuota(authID, label string, resp miniMaxQuotaResp) balance.Resu
 
 func miniMaxWindow(group, label string, total, remaining float64, remainingPct *float64, status int, resetAt, resetInMS int64, unavailable bool, boost float64, allowUnlimited bool) balance.QuotaWindow {
 	window := balance.QuotaWindow{
-		Group:          group,
-		Label:          label,
-		Total:          total,
-		Remaining:      remaining,
-		Used:           maxFloat(total-remaining, 0),
-		Unit:           "次",
-		ResetAt:        formatUnixTimestamp(resetAt),
-		ResetInSeconds: maxInt64(resetInMS/1000, 0),
-		Unavailable:    unavailable,
+		Group:            group,
+		Label:            label,
+		Total:            total,
+		Remaining:        remaining,
+		Used:             maxFloat(total-remaining, 0),
+		Unit:             "次",
+		ResetAt:          formatUnixTimestamp(resetAt),
+		ResetInSeconds:   maxInt64(resetInMS/1000, 0),
+		Unavailable:      unavailable,
+		AggregationScope: "key",
 	}
 	if unavailable {
 		window.Status = "不在当前套餐中"

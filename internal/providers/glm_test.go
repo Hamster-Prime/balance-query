@@ -65,4 +65,7 @@ func TestGLMQuotaUsesUsageAsTotalAndExplicitRemaining(t *testing.T) {
 	if window.Label != "5 小时令牌额度" {
 		t.Fatalf("label = %q", window.Label)
 	}
+	if window.AggregationScope != "key" {
+		t.Fatalf("aggregation scope = %q, want key", window.AggregationScope)
+	}
 }

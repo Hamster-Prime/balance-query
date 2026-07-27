@@ -149,6 +149,7 @@ func kimiQuotaWindow(values map[string]any, fallbackLabel string) (balance.Quota
 		Label:            localizedQuotaLabel(firstNonEmpty(firstString(values, "name", "title"), fallbackLabel)),
 		UsedPercent:      usedPercent,
 		RemainingPercent: remainingPercent,
+		AggregationScope: "key",
 	}
 	// Kimi documents these values as shared membership quota rather than a
 	// literal request allowance. Its official CLI likewise renders used/limit
@@ -235,6 +236,7 @@ func parseKimiBoosterWallet(result *balance.Result, wallet map[string]any) {
 			Unit:             currency,
 			UsedPercent:      percentFromValues(used, totalLimit),
 			RemainingPercent: clampPercent(100 - percentFromValues(used, totalLimit)),
+			AggregationScope: "key",
 		})
 	} else if enabled {
 		result.Extra["每月付费上限"] = "已启用"

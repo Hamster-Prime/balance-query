@@ -52,6 +52,11 @@ func TestParseKimiUsageTopLevelWindowsAndBooster(t *testing.T) {
 	if got := result.QuotaWindows[2]; got.Label != "每月付费上限" || got.Total != 200 || got.Used != 50 {
 		t.Fatalf("booster monthly window = %#v", got)
 	}
+	for _, window := range result.QuotaWindows {
+		if window.AggregationScope != "key" {
+			t.Fatalf("Kimi window scope = %q, want key: %#v", window.AggregationScope, window)
+		}
+	}
 	if got := result.Extra["加量包余额"]; got != "100.00 / 200.00 USD" {
 		t.Fatalf("booster balance = %q", got)
 	}
@@ -288,6 +293,72 @@ func TestParseMiniMaxQuotaKeepsDetailedSummaryAndSkipsUnavailableFirstModel(t *t
 	}
 	if result.QuotaDisplay != "5 小时配额：剩余 75 / 100 次" {
 		t.Fatalf("quota display = %q", result.QuotaDisplay)
+	}
+}
+
+func TestMiniMaxQuotaResponseAcceptsNestedStringFieldsAndBoostAliases(t *testing.T) {
+	var response miniMaxQuotaResp
+	err := json.Unmarshal([]byte(`{
+		"base_resp":{"status_code":"0"},
+		"data":{"current_subscribe_title":"Token Plan Plus","points_balance":"14000","model_remains":[{
+			"model_name":"general",
+			"start_time":"1800000000000",
+			"end_time":"1800018000000",
+			"remains_time":"3600000",
+			"current_interval_total_count":"100",
+			"current_interval_usage_count":"80",
+			"current_interval_remaining_percent":"80",
+			"current_interval_status":"1",
+			"interval_boost_permille":"1250",
+			"current_weekly_total_count":"1000",
+			"current_weekly_usage_count":"900",
+			"current_weekly_remaining_percent":"90",
+			"current_weekly_status":"1",
+			"weekly_boost_permill":"1500"
+		}]}
+	}`), &response)
+	if err != nil {
+		t.Fatalf("unmarshal MiniMax nested response: %v", err)
+	}
+	if len(response.ModelRemains) != 1 {
+		t.Fatalf("nested model remains = %#v", response.ModelRemains)
+	}
+	if response.PlanTitle != "Token Plan Plus" || !response.HasPointBalance || response.PointsBalance != 14000 {
+		t.Fatalf("nested plan metadata = %#v", response)
+	}
+	model := response.ModelRemains[0]
+	if model.CurrentIntervalTotalCount != 100 || model.CurrentIntervalUsageCount != 80 || model.CurrentIntervalStatus != 1 {
+		t.Fatalf("string quota fields = %#v", model)
+	}
+	if model.IntervalBoostPermille == nil || *model.IntervalBoostPermille != 1250 || model.WeeklyBoostPermille == nil || *model.WeeklyBoostPermille != 1500 {
+		t.Fatalf("boost aliases = %#v", model)
+	}
+	result := parseMiniMaxQuota("mini", "MiniMax Token Plan（测试）", response)
+	if result.Plan != "Token Plan Plus" || result.Extra["积分余额"] != "14000" {
+		t.Fatalf("parsed plan metadata = %#v", result)
+	}
+	if got := result.QuotaWindows[0].RemainingPercent; got != 100 {
+		t.Fatalf("interval boosted remaining = %v, want 100", got)
+	}
+	if got := result.QuotaWindows[1].RemainingPercent; got != 135 {
+		t.Fatalf("weekly boosted remaining = %v, want 135", got)
+	}
+}
+
+func TestMiniMaxQuotaResponseFallsBackAcrossMixedEnvelope(t *testing.T) {
+	var response miniMaxQuotaResp
+	err := json.Unmarshal([]byte(`{
+		"base_resp":{"status_code":"0"},
+		"current_subscribe_title":"Token Plan Pro",
+		"points_balance":"21",
+		"model_remains":[{"model_name":"general","current_interval_total_count":"10","current_interval_usage_count":"9"}],
+		"data":{"current_subscribe_title":"Token Plan Plus"}
+	}`), &response)
+	if err != nil {
+		t.Fatalf("unmarshal mixed MiniMax response: %v", err)
+	}
+	if !response.HasStatusCode || response.PlanTitle != "Token Plan Plus" || response.PointsBalance != 21 || len(response.ModelRemains) != 1 {
+		t.Fatalf("mixed MiniMax envelope = %#v", response)
 	}
 }
 

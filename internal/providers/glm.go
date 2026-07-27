@@ -265,6 +265,7 @@ func glmQuotaWindow(limit glmLimitItem) balance.QuotaWindow {
 		UsedPercent:      clampPercent(limit.Percentage),
 		RemainingPercent: clampPercent(100 - limit.Percentage),
 		ResetAt:          formatUnixTimestamp(limit.NextResetTime),
+		AggregationScope: "key",
 	}
 	if total <= 0 {
 		window.Status = "仅提供百分比"

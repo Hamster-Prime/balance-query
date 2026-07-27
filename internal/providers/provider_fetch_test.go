@@ -60,11 +60,60 @@ func TestNewAPIFetchUsesAPIKeyBillingEndpoints(t *testing.T) {
 	if window.Total != 100 || window.Used != 25 || window.Remaining != 75 {
 		t.Fatalf("New API quota = %#v", window)
 	}
-	if window.AggregationScope != "account" {
-		t.Fatalf("legacy New API scope = %q, want account", window.AggregationScope)
+	if window.AggregationScope != "unknown" {
+		t.Fatalf("legacy New API scope = %q, want unknown", window.AggregationScope)
 	}
 	if result.ResetAt == "" || result.Extra["密钥到期"] != result.ResetAt {
 		t.Fatalf("legacy New API expiry metadata = %#v", result)
+	}
+}
+
+func TestNewAPILegacyUnlimitedSentinelShowsUsedOnly(t *testing.T) {
+	useTestHTTPClient(t, func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/api/usage/token/":
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found"))}, nil
+		case "/v1/dashboard/billing/subscription":
+			return jsonResponse(`{"hard_limit_usd":100000000,"system_hard_limit_usd":100000000}`), nil
+		case "/v1/dashboard/billing/usage":
+			return jsonResponse(`{"total_usage":2500}`), nil
+		default:
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found"))}, nil
+		}
+	})
+
+	result := (NewAPI{BaseURL: "https://new-api.example/v1"}).Fetch("new", "new-api-key", "")
+	if result.Error != "" || len(result.QuotaWindows) != 1 {
+		t.Fatalf("legacy unlimited result = %#v", result)
+	}
+	window := result.QuotaWindows[0]
+	if !window.Unlimited || !window.ShowUsedWhenUnlimited || window.Used != 25 || window.Total != 0 || window.Remaining != 0 {
+		t.Fatalf("legacy unlimited window = %#v", window)
+	}
+	if result.QuotaDisplay != "不限量，已用 25.0000 站点额度" {
+		t.Fatalf("legacy unlimited display = %q", result.QuotaDisplay)
+	}
+}
+
+func TestNewAPIFetchFallsBackToLegacyBillingOnMethodNotAllowed(t *testing.T) {
+	seen := map[string]bool{}
+	useTestHTTPClient(t, func(r *http.Request) (*http.Response, error) {
+		seen[r.URL.Path] = true
+		switch r.URL.Path {
+		case "/api/usage/token/":
+			return &http.Response{StatusCode: http.StatusMethodNotAllowed, Body: io.NopCloser(strings.NewReader("method not allowed"))}, nil
+		case "/v1/dashboard/billing/subscription":
+			return jsonResponse(`{"hard_limit_usd":50}`), nil
+		case "/v1/dashboard/billing/usage":
+			return jsonResponse(`{"total_usage":1000}`), nil
+		default:
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found"))}, nil
+		}
+	})
+
+	result := (NewAPI{BaseURL: "https://new-api.example/v1"}).Fetch("new", "new-api-key", "")
+	if result.Error != "" || !seen["/v1/dashboard/billing/subscription"] || !seen["/v1/dashboard/billing/usage"] {
+		t.Fatalf("405 fallback result = %#v, paths = %#v", result, seen)
 	}
 }
 
@@ -97,6 +146,67 @@ func TestNewAPIFetchPrefersTokenUsageEndpoint(t *testing.T) {
 	}
 	if got := result.QuotaWindows[0].AggregationScope; got != "key" {
 		t.Fatalf("token usage scope = %q, want key", got)
+	}
+}
+
+func TestMiniMaxGlobalRetriesBusinessFailureWithXAPIKey(t *testing.T) {
+	requests := 0
+	useTestHTTPClient(t, func(r *http.Request) (*http.Response, error) {
+		requests++
+		if r.URL.String() != "https://api.minimax.io/v1/token_plan/remains" {
+			t.Fatalf("request URL = %q", r.URL.String())
+		}
+		if requests == 1 {
+			if got := r.Header.Get("Authorization"); got != "Bearer minimax-key" {
+				t.Fatalf("Authorization = %q", got)
+			}
+			return jsonResponse(`{"base_resp":{"status_code":1004,"status_msg":"credential style rejected"}}`), nil
+		}
+		if got := r.Header.Get("x-api-key"); got != "minimax-key" {
+			t.Fatalf("x-api-key = %q", got)
+		}
+		return jsonResponse(`{"base_resp":{"status_code":0},"model_remains":[{"model_name":"general","current_interval_total_count":100,"current_interval_usage_count":0,"current_interval_status":2,"current_weekly_total_count":1000,"current_weekly_usage_count":0,"current_weekly_status":2}]}`), nil
+	})
+
+	result := (MiniMaxCodingGlobal{}).Fetch("minimax-global", "minimax-key", "")
+	if result.Error != "" || requests != 2 {
+		t.Fatalf("result = %#v, requests = %d", result, requests)
+	}
+	if len(result.QuotaWindows) != 2 || result.QuotaWindows[0].Status != "已用尽" || result.QuotaWindows[0].Remaining != 0 {
+		t.Fatalf("depleted MiniMax quota = %#v", result.QuotaWindows)
+	}
+}
+
+func TestMiniMaxEmptyQuotaResponseIsSuccessful(t *testing.T) {
+	useTestHTTPClient(t, func(*http.Request) (*http.Response, error) {
+		return jsonResponse(`{"base_resp":{"status_code":0},"data":{"current_subscribe_title":"Token Plan Plus","points_balance":"42","model_remains":[]}}`), nil
+	})
+
+	result := (MiniMaxCodingGlobal{}).Fetch("minimax-global", "minimax-key", "")
+	if result.Error != "" || len(result.QuotaWindows) != 1 || !result.QuotaWindows[0].Unavailable {
+		t.Fatalf("empty MiniMax quota result = %#v", result)
+	}
+	if result.Plan != "Token Plan Plus" || result.Extra["积分余额"] != "42" {
+		t.Fatalf("empty MiniMax metadata = %#v", result)
+	}
+}
+
+func TestMiniMaxMissingBusinessStatusRetriesXAPIKey(t *testing.T) {
+	requests := 0
+	useTestHTTPClient(t, func(r *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			return jsonResponse(`{"error":"unauthorized"}`), nil
+		}
+		if got := r.Header.Get("x-api-key"); got != "minimax-key" {
+			t.Fatalf("x-api-key = %q", got)
+		}
+		return jsonResponse(`{"base_resp":{"status_code":0},"model_remains":[{"model_name":"general","current_interval_total_count":100,"current_interval_usage_count":80,"current_interval_status":1,"current_weekly_total_count":1000,"current_weekly_usage_count":900,"current_weekly_status":1}]}`), nil
+	})
+
+	result := (MiniMaxCodingGlobal{}).Fetch("minimax-global", "minimax-key", "")
+	if result.Error != "" || requests != 2 || len(result.QuotaWindows) != 2 {
+		t.Fatalf("missing-status fallback result = %#v, requests = %d", result, requests)
 	}
 }
 
