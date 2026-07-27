@@ -6,7 +6,7 @@
       "name": "余额与配额",
       "description": "查询 CPA OpenAI 兼容提供商的余额、多周期配额、重置时间和用量明细，支持 DeepSeek、GLM、Kimi、Sub2API、New API、MiniMax 等类型。",
       "author": "Hamster-Prime",
-      "version": "0.3.1",
+      "version": "0.4.0",
       "repository": "https://github.com/Hamster-Prime/balance-query",
       "logo": "https://raw.githubusercontent.com/Hamster-Prime/balance-query/main/assets/logo.png",
       "homepage": "https://github.com/Hamster-Prime/balance-query",
