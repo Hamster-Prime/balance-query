@@ -12,7 +12,7 @@ func Build(p balance.ProviderType, baseURL string) balance.Fetcher {
 	case balance.ProviderSub2API:
 		return Sub2API{BaseURL: baseURL}
 	case balance.ProviderDeepSeek:
-		return DeepSeek{}
+		return DeepSeek{BaseURL: baseURL}
 	case balance.ProviderGLMZAI:
 		return GLMZai{}
 	case balance.ProviderGLMZhipu:
@@ -20,7 +20,7 @@ func Build(p balance.ProviderType, baseURL string) balance.Fetcher {
 	case balance.ProviderNewAPI:
 		return NewAPI{BaseURL: baseURL}
 	case balance.ProviderKimiAPI:
-		return KimiAPI{}
+		return KimiAPI{BaseURL: baseURL}
 	case balance.ProviderKimiCode:
 		return KimiCode{}
 	case balance.ProviderLongcat:

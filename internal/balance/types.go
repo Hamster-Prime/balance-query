@@ -33,10 +33,41 @@ type Result struct {
 	// Additional provider-specific key-value pairs rendered in the card.
 	Extra map[string]string `json:"extra,omitempty"`
 
+	// QuotaWindows contains every independent allowance window returned by the
+	// provider (for example 5 hours, 7 days, weekly, or monthly).  Float values
+	// are intentional: some compatible services account in money/credits rather
+	// than integer tokens.
+	QuotaWindows []QuotaWindow `json:"quota_windows,omitempty"`
+
 	// Non-empty means this entry failed to fetch.
 	Error string `json:"error,omitempty"`
 
 	FetchedAt time.Time `json:"fetched_at"`
+}
+
+// QuotaWindow is one independently-resetting quota bucket. Providers often
+// expose several of these at once, so flattening them into Result's legacy
+// token fields loses important information.
+type QuotaWindow struct {
+	// Group separates windows belonging to different models or resources.
+	Group string `json:"group,omitempty"`
+	Label string `json:"label"`
+
+	Used      float64 `json:"used,omitempty"`
+	Total     float64 `json:"total,omitempty"`
+	Remaining float64 `json:"remaining,omitempty"`
+	Unit      string  `json:"unit,omitempty"`
+
+	// Percent fields are used when an API reports only percentages. Values are
+	// in the 0-100 range.
+	UsedPercent      float64 `json:"used_percent,omitempty"`
+	RemainingPercent float64 `json:"remaining_percent,omitempty"`
+
+	ResetAt        string `json:"reset_at,omitempty"`
+	ResetInSeconds int64  `json:"reset_in_seconds,omitempty"`
+	Unlimited      bool   `json:"unlimited,omitempty"`
+	Unavailable    bool   `json:"unavailable,omitempty"`
+	Status         string `json:"status,omitempty"`
 }
 
 // ── Fetcher ──────────────────────────────────────────────────────────────────
@@ -78,11 +109,11 @@ var ProviderLabel = map[ProviderType]string{
 	ProviderNewAPI:              "New API",
 	ProviderKimiAPI:             "Kimi 官方 API",
 	ProviderKimiCode:            "Kimi Coding Plan",
-	ProviderLongcat:             "Longcat",
-	ProviderMiniMaxAPI:          "MiniMax 官方 API（国内）",
-	ProviderMiniMaxCodingCN:     "MiniMax Coding Plan（国内）",
-	ProviderMiniMaxCodingGlobal: "MiniMax Coding Plan（海外）",
-	ProviderOpenCode:            "Open Code",
+	ProviderLongcat:             "LongCat",
+	ProviderMiniMaxAPI:          "MiniMax 官方 API（按量）",
+	ProviderMiniMaxCodingCN:     "MiniMax Token Plan（国内）",
+	ProviderMiniMaxCodingGlobal: "MiniMax Token Plan（海外）",
+	ProviderOpenCode:            "OpenCode",
 	ProviderVolcengine:          "火山引擎 Coding Plan",
 	ProviderXiaomiAPI:           "小米 MiMo API",
 	ProviderXiaomiToken:         "小米 Token Plan",

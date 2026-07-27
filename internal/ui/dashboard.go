@@ -10,8 +10,10 @@ import (
 )
 
 type providerDefinition struct {
-	Value string `json:"value"`
-	Label string `json:"label"`
+	Value       string `json:"value"`
+	Label       string `json:"label"`
+	Status      string `json:"status,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // RenderDashboard renders a self-contained page for OpenAI-compatible provider
@@ -20,10 +22,18 @@ type providerDefinition struct {
 func RenderDashboard(ttlSeconds int) []byte {
 	definitions := make([]providerDefinition, 0, len(balance.AllProviders()))
 	for _, providerType := range balance.AllProviders() {
-		definitions = append(definitions, providerDefinition{
-			Value: string(providerType),
-			Label: balance.ProviderLabel[providerType],
-		})
+		definition := providerDefinition{
+			Value:  string(providerType),
+			Label:  balance.ProviderLabel[providerType],
+			Status: "available",
+		}
+		switch providerType {
+		case balance.ProviderMiniMaxAPI, balance.ProviderXiaomiAPI, balance.ProviderXiaomiToken,
+			balance.ProviderLongcat, balance.ProviderOpenCode, balance.ProviderVolcengine:
+			definition.Status = "console_only"
+			definition.Description = "官方未提供模型 API Key 余额查询接口，仅能在官网登录控制台查看。"
+		}
+		definitions = append(definitions, definition)
 	}
 	definitionsJSON, _ := json.Marshal(definitions)
 
@@ -40,6 +50,7 @@ const dashboardHTML = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark">
+<meta id="theme-color" name="theme-color" content="#faf9f5">
 <title>余额与配额</title>
 <script>
 (function () {
@@ -60,14 +71,18 @@ const dashboardHTML = `<!doctype html>
     "--amber-10","--amber-30","--destructive-color","--destructive-10",
     "--destructive-30","--muted-bg","--muted-foreground","--accent-bg",
     "--glass-blur","--glass-backdrop-filter","--glass-filter","--glass-bg",
-    "--glass-bg-secondary","--glass-border"
+    "--glass-bg-secondary","--glass-border","--motion-fast","--motion-normal",
+    "--motion-enter"
   ];
   var root = document.documentElement;
   var media = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  var parentOrigin = "";
+  try { parentOrigin = document.referrer ? new URL(document.referrer).origin : ""; } catch (_) {}
 
   function normalizeTheme(value) {
-    if (value === "dark" || value === "white") return value;
-    if (value === "auto") return media && media.matches ? "dark" : "white";
+    value = String(value || "").toLowerCase();
+    if (value === "dark" || value === "white" || value === "light") return value;
+    if (value === "auto" || value === "system") return media && media.matches ? "dark" : "white";
     return "light";
   }
 
@@ -76,6 +91,9 @@ const dashboardHTML = `<!doctype html>
     if (theme === "light") root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", theme);
     root.style.colorScheme = theme === "dark" ? "dark" : "light";
+    root.dataset.resolvedTheme = theme === "dark" ? "dark" : "light";
+    var themeColor = document.getElementById("theme-color");
+    if (themeColor) themeColor.setAttribute("content", theme === "dark" ? "#151412" : theme === "white" ? "#ffffff" : "#faf9f5");
   }
 
   function readStoredTheme() {
@@ -98,28 +116,61 @@ const dashboardHTML = `<!doctype html>
     return null;
   }
 
+  function inferredParentTheme(parentRoot, parentBody, computed, bodyComputed) {
+    var explicit = parentRoot.getAttribute("data-theme");
+    if (!explicit && parentBody) explicit = parentBody.getAttribute("data-theme");
+    if (explicit === "dark" || explicit === "white" || explicit === "light") return explicit;
+    var className = String(parentRoot.className || "") + " " + String(parentBody && parentBody.className || "");
+    className = className.toLowerCase();
+    if (className.indexOf("dark") !== -1) return "dark";
+    if (className.indexOf("white") !== -1) return "white";
+    var surface = computed && computed.getPropertyValue("--bg-secondary").trim().toLowerCase();
+    if (!surface && bodyComputed) surface = bodyComputed.getPropertyValue("--bg-secondary").trim().toLowerCase();
+    if (surface === "#151412" || surface === "rgb(21, 20, 18)") return "dark";
+    if (surface === "#ffffff" || surface === "rgb(255, 255, 255)") return "white";
+    return "light";
+  }
+
   function copyParentTheme(parentRoot) {
     if (!parentRoot) return false;
-    var parentTheme = parentRoot.getAttribute("data-theme");
-    applyTheme(parentTheme === "dark" || parentTheme === "white" ? parentTheme : "light");
     try {
+      var parentBody = window.parent.document.body;
       var computed = window.parent.getComputedStyle(parentRoot);
+      var bodyComputed = parentBody ? window.parent.getComputedStyle(parentBody) : null;
+      applyTheme(inferredParentTheme(parentRoot, parentBody, computed, bodyComputed));
       TOKENS.forEach(function (token) {
         var value = computed.getPropertyValue(token);
+        if ((!value || !value.trim()) && bodyComputed) value = bodyComputed.getPropertyValue(token);
         if (value && value.trim()) root.style.setProperty(token, value.trim());
       });
-    } catch (_) {}
+    } catch (_) {
+      applyTheme(parentRoot.getAttribute("data-theme") || "light");
+    }
     return true;
   }
 
   var parentRoot = sameOriginParentRoot();
-  if (!copyParentTheme(parentRoot)) applyTheme(readStoredTheme());
+  var queryTheme = "";
+  try {
+    var query = new URLSearchParams(window.location.search);
+    queryTheme = query.get("theme") || query.get("data-theme") || "";
+  } catch (_) {}
+  if (!copyParentTheme(parentRoot)) applyTheme(queryTheme || readStoredTheme());
 
   if (parentRoot && window.MutationObserver) {
-    new MutationObserver(function () { copyParentTheme(parentRoot); }).observe(parentRoot, {
+    var syncTheme = function () { copyParentTheme(parentRoot); };
+    var observer = new MutationObserver(syncTheme);
+    observer.observe(parentRoot, {
       attributes: true,
       attributeFilter: ["data-theme", "class", "style"]
     });
+    try {
+      observer.observe(window.parent.document.body, {
+        attributes: true,
+        attributeFilter: ["data-theme", "class", "style"]
+      });
+    } catch (_) {}
+    window.setInterval(syncTheme, 1000);
   }
 
   function onMediaChange() {
@@ -132,7 +183,7 @@ const dashboardHTML = `<!doctype html>
   });
 
   window.addEventListener("message", function (event) {
-    if (event.origin !== window.location.origin || event.source !== window.parent) return;
+    if (event.source !== window.parent || (event.origin !== window.location.origin && event.origin !== parentOrigin)) return;
     var data = event.data;
     if (!data || typeof data !== "object") return;
     var payload = data.detail || data.payload || data;
@@ -148,6 +199,12 @@ const dashboardHTML = `<!doctype html>
       });
     }
   });
+
+  try {
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: "balance-query:theme-request" }, parentOrigin || window.location.origin);
+    }
+  } catch (_) {}
 })();
 </script>
 <style>
@@ -212,6 +269,9 @@ const dashboardHTML = `<!doctype html>
   --glass-bg:color-mix(in srgb,var(--bg-primary) 82%,transparent);
   --glass-bg-secondary:color-mix(in srgb,var(--bg-secondary) 82%,transparent);
   --glass-border:color-mix(in srgb,var(--border-color) 60%,transparent);
+  --motion-fast:150ms ease;
+  --motion-normal:300ms ease;
+  --motion-enter:360ms cubic-bezier(.25,1,.5,1);
 }
 [data-theme="white"] {
   --bg-secondary:#fff;
@@ -327,29 +387,33 @@ const dashboardHTML = `<!doctype html>
   --glass-border:color-mix(in srgb,var(--border-color) 55%,transparent);
 }
 *{box-sizing:border-box;letter-spacing:0}
-html,body{margin:0;min-width:280px;min-height:100%;background:var(--bg-secondary);color:var(--text-primary)}
+html,body{margin:0;min-width:280px;min-height:100%;background:var(--bg-secondary);color:var(--text-primary);transition:background-color var(--motion-normal),color var(--motion-normal)}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Roboto","Oxygen","Ubuntu","Cantarell","Helvetica Neue",sans-serif;font-size:14px;line-height:1.5}
 button,input,select{font:inherit;letter-spacing:0}
 button{color:inherit}
 [hidden]{display:none!important}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:var(--bg-secondary)}
+::-webkit-scrollbar-thumb{background:var(--border-color);border-radius:9999px}
+::-webkit-scrollbar-thumb:hover{background:var(--border-hover)}
 .icon{width:16px;height:16px;display:block;flex:0 0 auto;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.app{width:100%;max-width:1220px;margin:0 auto;padding:24px clamp(16px,3vw,36px) 40px;animation:page-in 300ms ease-out both}
-.masthead{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding-bottom:18px;border-bottom:1px solid var(--border-color)}
+.app{width:100%;max-width:1440px;margin:0 auto;padding:28px clamp(18px,3vw,44px) 48px;animation:page-in var(--motion-enter) both}
+.masthead{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:20px 22px;border:1px solid var(--glass-border);border-radius:12px;background:linear-gradient(145deg,color-mix(in srgb,var(--bg-primary) 88%,transparent),color-mix(in srgb,var(--bg-secondary) 72%,transparent));backdrop-filter:var(--glass-backdrop-filter);-webkit-backdrop-filter:var(--glass-backdrop-filter);box-shadow:var(--shadow)}
 .brand{display:flex;align-items:center;gap:12px;min-width:0}
-.brand-mark{width:38px;height:38px;display:grid;place-items:center;flex:0 0 auto;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-primary);color:var(--text-primary);box-shadow:var(--shadow)}
+.brand-mark{width:42px;height:42px;display:grid;place-items:center;flex:0 0 auto;border:1px solid var(--primary-30);border-radius:10px;background:var(--primary-8);color:var(--text-primary);box-shadow:var(--shadow)}
 .brand-mark .icon{width:20px;height:20px}
 h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-primary)}
 .subtitle{margin:3px 0 0;color:var(--text-secondary);font-size:13px}
 .head-state{display:flex;align-items:center;gap:8px;color:var(--text-secondary);font-size:13px;white-space:nowrap;padding-top:8px}
 .state-dot{width:7px;height:7px;border-radius:50%;background:var(--success-color);box-shadow:0 0 0 3px color-mix(in srgb,var(--success-color) 14%,transparent)}
 .state-dot.pending{background:var(--quota-medium-color);box-shadow:0 0 0 3px var(--amber-10)}
-.workspace-nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 0 14px}
+.workspace-nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 0 16px}
 .segments{display:inline-grid;grid-template-columns:repeat(2,minmax(116px,1fr));padding:3px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-tertiary)}
-.segment{height:34px;border:0;border-radius:6px;background:transparent;color:var(--text-secondary);padding:0 12px;display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;font-weight:600;font-size:13px;transition:background 150ms ease,color 150ms ease,box-shadow 150ms ease}
+.segment{height:34px;border:0;border-radius:6px;background:transparent;color:var(--text-secondary);padding:0 12px;display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;font-weight:600;font-size:13px;transition:background var(--motion-fast),color var(--motion-fast),box-shadow var(--motion-fast)}
 .segment:hover{color:var(--text-primary)}
 .segment[aria-selected="true"]{background:var(--bg-primary);color:var(--text-primary);box-shadow:var(--shadow)}
 .toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-.btn{height:36px;border:1px solid transparent;border-radius:8px;padding:0 12px;display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;font-weight:600;font-size:13px;transition:background 150ms ease,border-color 150ms ease,color 150ms ease,transform 150ms ease,box-shadow 150ms ease}
+.btn{height:36px;border:1px solid transparent;border-radius:8px;padding:0 12px;display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;font-weight:600;font-size:13px;transition:background var(--motion-fast),border-color var(--motion-fast),color var(--motion-fast),transform var(--motion-fast),box-shadow var(--motion-fast)}
 .btn:hover:not(:disabled){transform:translateY(-1px)}
 .btn:active:not(:disabled){transform:translateY(0)}
 .btn:focus-visible,.segment:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}
@@ -361,37 +425,65 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .btn-ghost:hover:not(:disabled){background:var(--bg-tertiary);color:var(--text-primary)}
 .btn:disabled{opacity:.55;cursor:not-allowed}
 .spinner{width:15px;height:15px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .9s linear infinite}
-.summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid var(--border-color);border-bottom:1px solid var(--border-color);margin-bottom:18px}
-.summary-item{padding:14px 18px;min-width:0}
-.summary-item+ .summary-item{border-left:1px solid var(--border-color)}
+.summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:20px}
+.summary-item{padding:15px 17px;min-width:0;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);box-shadow:var(--shadow);transition:border-color var(--motion-fast),transform var(--motion-fast),box-shadow var(--motion-fast)}
+.summary-item:hover{border-color:var(--border-hover);transform:translateY(-1px);box-shadow:var(--shadow-lg)}
 .summary-value{display:block;color:var(--text-primary);font-size:20px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.2}
 .summary-label{display:block;color:var(--text-tertiary);font-size:12px;margin-top:4px}
 .section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:0 0 12px}
 .section-title{font-size:15px;font-weight:650;margin:0;color:var(--text-primary)}
 .section-meta{font-size:12px;color:var(--text-tertiary);margin:2px 0 0}
-.result-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
-.result-card{min-width:0;min-height:176px;padding:16px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-primary);box-shadow:var(--shadow);animation:item-in 300ms ease-out both;transition:border-color 150ms ease,box-shadow 150ms ease,transform 150ms ease}
-.result-card:hover{border-color:var(--border-hover);box-shadow:var(--shadow-lg);transform:translateY(-1px)}
+.result-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:14px;align-items:start}
+.result-card{min-width:0;padding:18px;border:1px solid var(--glass-border);border-radius:12px;background:linear-gradient(145deg,color-mix(in srgb,var(--bg-primary) 92%,transparent),color-mix(in srgb,var(--bg-secondary) 70%,transparent));backdrop-filter:var(--glass-backdrop-filter);-webkit-backdrop-filter:var(--glass-backdrop-filter);box-shadow:var(--shadow);animation:item-in 400ms ease-out both;transition:border-color var(--motion-fast),box-shadow var(--motion-fast),transform var(--motion-fast),background-color var(--motion-normal)}
+.result-card:hover{border-color:var(--border-hover);box-shadow:var(--shadow-lg);transform:translateY(-2px)}
 .result-card.error{border-color:var(--failure-badge-border)}
+.result-card.limited{border-color:var(--amber-30)}
 .result-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0}
 .result-name{font-weight:650;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .result-url{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;color:var(--text-tertiary);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
 .badge{display:inline-flex;align-items:center;gap:5px;border-radius:9999px;border:1px solid var(--border-color);padding:3px 8px;font-size:11px;font-weight:600;white-space:nowrap}
 .badge.success{color:var(--success-badge-text);background:var(--success-badge-bg);border-color:var(--success-badge-border)}
 .badge.failure{color:var(--failure-badge-text);background:var(--failure-badge-bg);border-color:var(--failure-badge-border)}
+.badge.warning{color:var(--amber-text);background:var(--amber-10);border-color:var(--amber-30)}
 .badge.muted{color:var(--text-secondary);background:var(--bg-tertiary)}
-.quota-main{font-size:21px;line-height:1.25;font-weight:680;color:var(--text-primary);margin-top:18px;overflow-wrap:anywhere}
+.quota-main{font-size:20px;line-height:1.3;font-weight:680;color:var(--text-primary);margin-top:17px;overflow-wrap:anywhere}
 .quota-main.failure{font-size:14px;color:var(--warning-text);font-weight:600;line-height:1.45}
 .error-detail{margin-top:6px;color:var(--text-secondary);font-size:12px;line-height:1.45;overflow-wrap:anywhere}
-.progress-track{height:6px;border-radius:9999px;background:var(--bg-tertiary);overflow:hidden;margin-top:12px}
+.progress-track{height:7px;border-radius:9999px;background:var(--bg-tertiary);overflow:hidden;margin-top:12px}
 .progress-bar{height:100%;width:0;border-radius:inherit;background:var(--success-color);transition:width 300ms ease}
 .progress-bar.medium{background:var(--quota-medium-color)}
 .progress-bar.high{background:var(--error-color)}
 .result-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:13px;color:var(--text-tertiary);font-size:11px}
 .key-preview{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;color:var(--text-secondary)}
-.detail-list{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
-.detail{display:inline-flex;gap:4px;border-radius:5px;background:var(--bg-tertiary);color:var(--text-secondary);padding:3px 6px;font-size:11px;max-width:100%;overflow-wrap:anywhere}
+.account-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.detail{display:inline-flex;gap:4px;border-radius:6px;border:1px solid color-mix(in srgb,var(--border-color) 75%,transparent);background:var(--bg-tertiary);color:var(--text-secondary);padding:4px 7px;font-size:11px;max-width:100%;overflow-wrap:anywhere}
 .detail-label{color:var(--text-tertiary)}
+.quota-groups{display:flex;flex-direction:column;gap:12px;margin-top:15px}
+.quota-group{border-top:1px solid var(--border-color);padding-top:12px}
+.quota-group-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.quota-group-title{font-size:12px;font-weight:650;color:var(--text-secondary);margin:0;overflow-wrap:anywhere}
+.quota-group-count{font-size:10px;color:var(--text-tertiary);border:1px solid var(--border-color);border-radius:9999px;padding:1px 6px;white-space:nowrap}
+.quota-window-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.quota-window{min-width:0;padding:11px 12px;border:1px solid var(--border-color);border-radius:9px;background:color-mix(in srgb,var(--bg-primary) 78%,var(--bg-secondary));transition:border-color var(--motion-fast),background-color var(--motion-normal)}
+.quota-window.unlimited{border-color:color-mix(in srgb,var(--success-color) 38%,var(--border-color));background:color-mix(in srgb,var(--success-color) 6%,var(--bg-primary))}
+.quota-window.unavailable{opacity:.72;background:var(--bg-tertiary)}
+.quota-window-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+.quota-window-label{font-size:12px;font-weight:650;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.quota-status{font-size:10px;color:var(--text-tertiary);white-space:nowrap}
+.quota-status.good{color:var(--success-color)}
+.quota-status.warn{color:var(--amber-text)}
+.quota-window-value{display:flex;align-items:baseline;gap:5px;flex-wrap:wrap;margin-top:8px;color:var(--text-primary);font-variant-numeric:tabular-nums}
+.quota-window-value strong{font-size:18px;line-height:1.2;font-weight:680}
+.quota-window-value span{font-size:11px;color:var(--text-secondary)}
+.quota-window .progress-track{height:5px;margin-top:9px}
+.quota-window-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:17px;margin-top:7px;color:var(--text-tertiary);font-size:10px;line-height:1.35}
+.quota-window-meta span{overflow-wrap:anywhere}
+.detail-section{border-top:1px solid var(--border-color);margin-top:13px;padding-top:11px}
+.detail-section-title{font-size:11px;font-weight:650;color:var(--text-secondary);margin:0 0 7px}
+.detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.detail-row{min-width:0;padding:6px 8px;border-radius:7px;background:var(--bg-tertiary)}
+.detail-row dt{font-size:10px;color:var(--text-tertiary);margin:0}
+.detail-row dd{font-size:11px;color:var(--text-secondary);margin:2px 0 0;overflow-wrap:anywhere}
 .notice{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:1px solid var(--warning-border);border-radius:8px;background:var(--warning-bg);color:var(--warning-text);font-size:13px;margin-bottom:14px;animation:item-in 300ms ease-out both}
 .notice .icon{margin-top:1px}
 .empty-state{min-height:260px;border:1px dashed var(--border-color);border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px;color:var(--text-secondary)}
@@ -419,6 +511,8 @@ tbody tr:hover{background:var(--bg-hover)}
 .key-chip{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;border:1px solid var(--border-color);border-radius:5px;background:var(--bg-tertiary);color:var(--text-secondary);font-size:10px;padding:2px 5px}
 select{width:100%;height:36px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);color:var(--text-primary);padding:0 30px 0 10px;transition:border-color 150ms ease,box-shadow 150ms ease}
 select:hover{border-color:var(--border-hover)}
+.query-help{display:flex;align-items:flex-start;gap:5px;margin-top:6px;color:var(--amber-text);font-size:10px;line-height:1.4}
+.query-help .icon{width:12px;height:12px;margin-top:1px}
 .save-state{min-height:18px;color:var(--text-tertiary);font-size:12px}
 .connection-shell{min-height:calc(100vh - 48px);display:grid;place-items:center;padding:24px}
 .connection-card{width:min(100%,430px);border:1px solid var(--border-color);border-radius:8px;background:var(--bg-primary);box-shadow:var(--shadow-lg);padding:22px;animation:item-in 300ms ease-out both}
@@ -432,8 +526,8 @@ select:hover{border-color:var(--border-hover)}
 .field input:focus,.ttl-field input:focus,select:focus{border-color:var(--primary-color);box-shadow:0 0 0 3px var(--primary-10);outline:0}
 .connection-actions{display:flex;justify-content:flex-end;margin-top:18px}
 .form-error{min-height:20px;margin:10px 0 0;color:var(--warning-text);font-size:12px}
-.skeleton-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
-.skeleton-card{height:176px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-primary);padding:16px;overflow:hidden}
+.skeleton-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:14px}
+.skeleton-card{height:264px;border:1px solid var(--border-color);border-radius:12px;background:var(--bg-primary);padding:18px;overflow:hidden}
 .skeleton{position:relative;overflow:hidden;background:var(--bg-tertiary);border-radius:5px}
 .skeleton::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--text-primary) 7%,transparent),transparent);animation:skeleton 1.5s ease-in-out infinite}
 .skeleton-line{height:12px;margin-bottom:10px}.skeleton-line.short{width:42%}.skeleton-line.medium{width:68%}.skeleton-line.value{width:54%;height:24px;margin-top:25px}
@@ -442,19 +536,20 @@ select:hover{border-color:var(--border-hover)}
 .toast.error{border-color:var(--failure-badge-border)}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes skeleton{100%{transform:translateX(100%)}}
-@keyframes page-in{from{opacity:0}to{opacity:1}}
+@keyframes page-in{from{opacity:0;transform:translate3d(0,28px,0)}to{opacity:1;transform:translate3d(0,0,0)}}
 @keyframes item-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 @media (max-width:760px){
   .app{padding:16px 14px 28px}.masthead{align-items:center}.subtitle{max-width:230px}.head-state{display:none}
   .workspace-nav{align-items:stretch;flex-direction:column}.segments{width:100%}.toolbar{justify-content:stretch}.toolbar .btn{flex:1}
-  .summary{grid-template-columns:repeat(2,minmax(0,1fr))}.summary-item:nth-child(3){border-left:0;border-top:1px solid var(--border-color)}.summary-item:nth-child(4){border-top:1px solid var(--border-color)}
+  .summary{grid-template-columns:repeat(2,minmax(0,1fr))}
   .result-grid,.skeleton-grid{grid-template-columns:1fr}
+  .quota-window-grid,.detail-grid{grid-template-columns:1fr}
   .settings-toolbar{align-items:flex-start;flex-direction:column}.ttl-field{width:100%;justify-content:space-between}
   table,thead,tbody,tr,th,td{display:block}thead{display:none}table{table-layout:auto}tbody tr{padding:13px 14px;border-bottom:1px solid var(--border-color)}tbody tr:last-child{border-bottom:0}td{padding:0;border:0}td+td{margin-top:10px}.provider-base{white-space:normal;overflow-wrap:anywhere}.query-cell::before{content:"余额查询类型";display:block;color:var(--text-tertiary);font-size:11px;margin-bottom:5px}
 }
-@media (max-width:420px){.btn-label.optional{display:none}.summary-item{padding:12px}.result-card{padding:14px}.connection-shell{padding:14px}.connection-card{padding:18px}}
-@media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}.btn:hover:not(:disabled),.result-card:hover{transform:none}}
+@media (max-width:420px){.btn-label.optional{display:none}.summary-item{padding:12px}.result-card{padding:14px}.masthead{padding:16px}.connection-shell{padding:14px}.connection-card{padding:18px}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}.btn:hover:not(:disabled),.result-card:hover,.summary-item:hover{transform:none}}
 @media (max-width:768px),(prefers-reduced-motion:reduce),(prefers-reduced-transparency:reduce){:root{--glass-backdrop-filter:none;--glass-filter:none;--glass-bg:var(--bg-primary);--glass-bg-secondary:var(--bg-secondary);--glass-border:var(--border-color)}}
 </style>
 </head>
@@ -571,7 +666,11 @@ select:hover{border-color:var(--border-hover)}
     dirty: false
   };
   var providerLabels = Object.create(null);
-  PROVIDER_DEFINITIONS.forEach(function (item) { providerLabels[item.value] = item.label; });
+  var providerDefinitions = Object.create(null);
+  PROVIDER_DEFINITIONS.forEach(function (item) {
+    providerLabels[item.value] = item.label;
+    providerDefinitions[item.value] = item;
+  });
 
   function byID(id) { return document.getElementById(id); }
   function setText(node, value) { if (node) node.textContent = value == null ? "" : String(value); }
@@ -876,24 +975,143 @@ select:hover{border-color:var(--border-hover)}
     return new Intl.DateTimeFormat("zh-CN", { hour:"2-digit", minute:"2-digit", second:"2-digit" }).format(date);
   }
 
+  function formatDateTime(value) {
+    if (!value) return "";
+    var date = new Date(value);
+    if (Number.isNaN(date.getTime())) return redactSecrets(value);
+    return new Intl.DateTimeFormat("zh-CN", {
+      month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit"
+    }).format(date);
+  }
+
+  function owns(object, key) { return Boolean(object) && Object.prototype.hasOwnProperty.call(object, key); }
+  function finiteNumber(value) {
+    var number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+  function clampPercent(value) { return Math.max(0, Math.min(100, value)); }
+
+  function unitLabel(unit) {
+    var raw = String(unit || "").trim();
+    var labels = {
+      usd:"美元",cny:"元",rmb:"元",dollar:"美元",dollars:"美元",
+      token:"令牌",tokens:"令牌",request:"次",requests:"次",call:"次",calls:"次",
+      percent:"%",percentage:"%",count:"次",times:"次",credit:"额度",credits:"额度"
+    };
+    return labels[raw.toLowerCase()] || raw || "额度";
+  }
+
+  function formatAmount(value, unit) {
+    var number = finiteNumber(value);
+    if (number == null) return "—";
+    var normalizedUnit = String(unit || "").trim().toLowerCase();
+    var maximumFractionDigits = Math.abs(number) >= 100 ? 2 : 4;
+    var formatted = number.toLocaleString("zh-CN", { maximumFractionDigits:maximumFractionDigits });
+    if (normalizedUnit === "usd" || normalizedUnit === "dollar" || normalizedUnit === "dollars") return "$" + formatted;
+    if (normalizedUnit === "cny" || normalizedUnit === "rmb") return "¥" + formatted;
+    if (normalizedUnit === "%" || normalizedUnit === "percent" || normalizedUnit === "percentage") return formatted + "%";
+    return formatted;
+  }
+
+  function translateWindowLabel(value) {
+    var raw = String(value || "").trim();
+    if (!raw) return "配额周期";
+    var lower = raw.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+    var hour = lower.match(/^(\d+(?:\.\d+)?)\s*h(?:our)?s?(?:\s+(?:limit|window|quota))?$/);
+    if (hour) return hour[1] + " 小时配额";
+    var day = lower.match(/^(\d+(?:\.\d+)?)\s*d(?:ay)?s?(?:\s+(?:limit|window|quota))?$/);
+    if (day) return day[1] === "1" ? "日配额" : day[1] + " 天配额";
+    var labels = {
+      daily:"日配额",day:"日配额","daily limit":"日配额","daily quota":"日配额",
+      weekly:"周配额",week:"周配额","weekly limit":"周配额","weekly quota":"周配额","7d":"周配额","7 day":"周配额","7 days":"周配额",
+      monthly:"月配额",month:"月配额","monthly limit":"月配额","monthly quota":"月配额",
+      hourly:"小时配额",primary:"主要配额",secondary:"次级配额",rolling:"滚动周期",interval:"当前周期",
+      "current interval":"当前周期","current window":"当前周期"
+    };
+    return labels[lower] || raw
+      .replace(/\bweekly\b/ig, "周")
+      .replace(/\bmonthly\b/ig, "月")
+      .replace(/\bdaily\b/ig, "日")
+      .replace(/\bhourly\b/ig, "小时")
+      .replace(/\blimit\b/ig, "配额")
+      .replace(/\bquota\b/ig, "配额")
+      .replace(/\bwindow\b/ig, "周期");
+  }
+
+  function translateDisplayText(value) {
+    var raw = String(value || "").trim();
+    var labels = {
+      "coding plan":"编程套餐","token plan":"令牌套餐","subscription plan":"订阅套餐",
+      "free plan":"免费套餐","professional plan":"专业套餐","enterprise plan":"企业套餐",
+      "pay as you go":"按量付费","unrestricted":"不限量","wallet balance":"钱包余额"
+    };
+    return labels[raw.toLowerCase()] || raw;
+  }
+
+  function translateStatus(value) {
+    var raw = String(value || "").trim();
+    if (!raw) return "";
+    var labels = {
+      active:"可用",available:"可用",normal:"正常",ok:"正常",success:"正常",
+      unlimited:"不限量",inactive:"未启用",unavailable:"不可用",disabled:"已停用",
+      exhausted:"已用尽",depleted:"已用尽",expired:"已过期",unsupported:"暂不支持",
+      outside_plan:"不在套餐内","outside plan":"不在套餐内",boosted:"已加成"
+    };
+    return labels[raw.toLowerCase()] || raw;
+  }
+
+  function durationText(seconds) {
+    var remaining = Math.max(0, Math.floor(Number(seconds) || 0));
+    if (!remaining) return "";
+    var days = Math.floor(remaining / 86400);
+    var hours = Math.floor(remaining % 86400 / 3600);
+    var minutes = Math.floor(remaining % 3600 / 60);
+    if (days) return days + " 天 " + hours + " 小时";
+    if (hours) return hours + " 小时 " + minutes + " 分";
+    if (minutes) return minutes + " 分";
+    return remaining + " 秒";
+  }
+
   function formatBalance(result) {
     if (result.quota_display) return redactSecrets(result.quota_display);
-    if (Object.prototype.hasOwnProperty.call(result, "balance_usd")) {
+    if (owns(result, "balance_usd")) {
       var amount = Number(result.balance_usd);
       if (Number.isFinite(amount)) return "$" + amount.toFixed(amount >= 100 ? 2 : 4);
     }
     if (Number(result.tokens_total) > 0) {
       return Number(result.tokens_remaining || 0).toLocaleString("zh-CN") + " 可用令牌";
     }
-    return "已获取账户信息";
+    var windowCount = Array.isArray(result.quota_windows) ? result.quota_windows.length : 0;
+    if (windowCount) return windowCount + " 个配额周期";
+    var detailCount = result.extra && typeof result.extra === "object" ? Object.keys(result.extra).length : 0;
+    if (detailCount) return detailCount + " 项账户详情";
+    return "暂无可展示的配额数值";
   }
 
   function detailLabel(key) {
     var labels = {
       plan:"套餐",reset:"重置时间",currency:"币种",remaining:"剩余",used:"已使用",
-      total:"总量",limit:"额度",requests:"请求次数",window:"统计周期",expires:"到期时间"
+      total:"总量",limit:"额度",requests:"请求次数",window:"统计周期",expires:"到期时间",
+      expires_at:"到期时间",balance:"余额",status:"状态",mode:"计费模式",plan_name:"套餐名称",
+      today_requests:"今日请求数",total_requests:"累计请求数",today_tokens:"今日令牌数",total_tokens:"累计令牌数",
+      input_tokens:"输入令牌",output_tokens:"输出令牌",cache_creation_tokens:"缓存写入令牌",cache_read_tokens:"缓存读取令牌",
+      today_cost:"今日费用",total_cost:"累计费用",actual_cost:"实际费用",average_duration_ms:"平均耗时",
+      rpm:"每分钟请求数",tpm:"每分钟令牌数",daily_usage:"日用量",weekly_usage:"周用量",monthly_usage:"月用量",
+      daily_limit:"日额度",weekly_limit:"周额度",monthly_limit:"月额度",booster_balance:"加量包余额",
+      monthly_charge_limit:"月度扣费上限",monthly_used:"本月已扣费",days_until_expiry:"距到期天数"
     };
-    return labels[String(key || "").toLowerCase()] || "详情";
+    var normalized = String(key || "").replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase();
+    if (labels[normalized]) return labels[normalized];
+    var segments = {
+      today:"今日",daily:"日",weekly:"周",monthly:"月",total:"累计",average:"平均",
+      input:"输入",output:"输出",cache:"缓存",creation:"写入",read:"读取",actual:"实际",
+      usage:"用量",used:"已用",remaining:"剩余",limit:"额度",quota:"配额",balance:"余额",
+      request:"请求",requests:"请求数",token:"令牌",tokens:"令牌数",cost:"费用",duration:"耗时",
+      expires:"到期",expiry:"到期",days:"天数",status:"状态",count:"数量",amount:"金额",
+      model:"模型",name:"名称",window:"周期",start:"开始",end:"结束",time:"时间"
+    };
+    var translated = normalized.split(/[_\s-]+/).map(function (part) { return segments[part] || part.toUpperCase(); }).join("");
+    return translated || "详情";
   }
 
   function redactSecrets(value) {
@@ -908,29 +1126,238 @@ select:hover{border-color:var(--border-hover)}
     return text;
   }
 
+  function localizedError(value) {
+    return redactSecrets(value)
+      .replace(/unauthorized/ig, "认证失败")
+      .replace(/forbidden/ig, "权限不足")
+      .replace(/invalid api[ -]?key/ig, "接口密钥无效")
+      .replace(/not found/ig, "接口不存在")
+      .replace(/request timeout|timed out/ig, "请求超时")
+      .replace(/connection refused/ig, "连接被拒绝");
+  }
+
+  function quotaPercent(item) {
+    var explicitUsed = finiteNumber(item.used_percent);
+    if (owns(item, "used_percent") && explicitUsed != null) return clampPercent(explicitUsed);
+    var explicitRemaining = finiteNumber(item.remaining_percent);
+    if (owns(item, "remaining_percent") && explicitRemaining != null) return clampPercent(100 - explicitRemaining);
+    var total = finiteNumber(item.total);
+    var used = finiteNumber(item.used);
+    var remaining = finiteNumber(item.remaining);
+    if (total != null && total > 0 && owns(item, "used") && used != null) return clampPercent(used / total * 100);
+    if (total != null && total > 0 && owns(item, "remaining") && remaining != null) return clampPercent((total - remaining) / total * 100);
+    return null;
+  }
+
+  function quotaRemaining(item) {
+    var remaining = finiteNumber(item.remaining);
+    if (owns(item, "remaining") && remaining != null) return remaining;
+    var total = finiteNumber(item.total);
+    var used = finiteNumber(item.used);
+    if (total != null && used != null && owns(item, "used")) return Math.max(0, total - used);
+    return null;
+  }
+
+  function quotaWindowRank(item) {
+    var label = String(item && item.label || "").toLowerCase();
+    if (/\b\d+(?:\.\d+)?\s*h/.test(label) || label.indexOf("小时") !== -1) return 10;
+    if (label === "1d" || label.indexOf("daily") !== -1 || label.indexOf("日配额") !== -1) return 20;
+    if (label === "7d" || label.indexOf("weekly") !== -1 || label.indexOf("周配额") !== -1) return 30;
+    if (label.indexOf("monthly") !== -1 || label.indexOf("月配额") !== -1) return 40;
+    return 50;
+  }
+
+  function quotaResetNode(item) {
+    var resetIn = finiteNumber(item.reset_in_seconds);
+    var resetAt = item.reset_at;
+    var textValue = "";
+    var absolute = 0;
+    if (resetIn != null && resetIn > 0) {
+      textValue = durationText(resetIn) + "后重置";
+      absolute = Date.now() + resetIn * 1000;
+    } else if (resetAt) {
+      var parsed = new Date(resetAt);
+      if (!Number.isNaN(parsed.getTime()) && parsed.getTime() > Date.now()) {
+        absolute = parsed.getTime();
+        textValue = durationText((absolute - Date.now()) / 1000) + "后重置";
+      } else {
+        textValue = "重置于 " + formatDateTime(resetAt);
+      }
+    }
+    if (!textValue) return null;
+    var node = element("span", "quota-reset", textValue);
+    if (absolute) node.setAttribute("data-reset-at", String(absolute));
+    return node;
+  }
+
+  function quotaWindowCard(item) {
+    var unavailable = Boolean(item.unavailable);
+    var unlimited = Boolean(item.unlimited);
+    var box = element("div", "quota-window" + (unlimited ? " unlimited" : "") + (unavailable ? " unavailable" : ""));
+    var head = element("div", "quota-window-head");
+    head.appendChild(element("span", "quota-window-label", translateWindowLabel(item.label)));
+    var status = unlimited ? "不限量" : unavailable ? "不可用" : translateStatus(item.status);
+    if (status) head.appendChild(element("span", "quota-status" + (unlimited ? " good" : unavailable ? " warn" : ""), status));
+    box.appendChild(head);
+
+    var value = element("div", "quota-window-value");
+    var unit = unitLabel(item.unit);
+    var total = finiteNumber(item.total);
+    var used = finiteNumber(item.used);
+    var remaining = quotaRemaining(item);
+    var remainingPercent = finiteNumber(item.remaining_percent);
+    var usedPercent = quotaPercent(item);
+    if (unlimited) {
+      value.appendChild(element("strong", "", "不限量"));
+      value.appendChild(element("span", "", "当前周期"));
+    } else if (unavailable) {
+      value.appendChild(element("strong", "", "—"));
+      value.appendChild(element("span", "", "当前套餐不可用"));
+    } else if (remaining != null) {
+      value.appendChild(element("strong", "", formatAmount(remaining, item.unit)));
+      value.appendChild(element("span", "", total != null && total > 0 ? "/ " + formatAmount(total, item.unit) + " " + unit + "剩余" : unit + "剩余"));
+    } else if (owns(item, "remaining_percent") && remainingPercent != null) {
+      value.appendChild(element("strong", "", formatAmount(remainingPercent, "%")));
+      value.appendChild(element("span", "", "剩余"));
+    } else if (usedPercent != null) {
+      value.appendChild(element("strong", "", formatAmount(100 - usedPercent, "%")));
+      value.appendChild(element("span", "", "剩余"));
+    } else {
+      value.appendChild(element("strong", "", "—"));
+      value.appendChild(element("span", "", "暂无数值"));
+    }
+    box.appendChild(value);
+
+    if (!unlimited && !unavailable && usedPercent != null) {
+      var track = element("div", "progress-track");
+      track.setAttribute("role", "progressbar");
+      track.setAttribute("aria-label", translateWindowLabel(item.label) + "使用进度");
+      track.setAttribute("aria-valuemin", "0");
+      track.setAttribute("aria-valuemax", "100");
+      track.setAttribute("aria-valuenow", String(Math.round(usedPercent)));
+      var bar = element("div", "progress-bar" + (usedPercent >= 85 ? " high" : usedPercent >= 60 ? " medium" : ""));
+      track.appendChild(bar);
+      box.appendChild(track);
+      window.requestAnimationFrame(function () { bar.style.width = usedPercent.toFixed(1) + "%"; });
+    }
+
+    var meta = element("div", "quota-window-meta");
+    var usageText = "";
+    if (owns(item, "used") && used != null) usageText = "已用 " + formatAmount(used, item.unit) + (unit === "%" ? "" : " " + unit);
+    else if (usedPercent != null) usageText = "已用 " + formatAmount(usedPercent, "%");
+    meta.appendChild(element("span", "", usageText));
+    var resetNode = quotaResetNode(item);
+    if (resetNode) meta.appendChild(resetNode);
+    if (usageText || resetNode) box.appendChild(meta);
+    return box;
+  }
+
+  function renderQuotaGroups(card, result) {
+    var windows = Array.isArray(result.quota_windows) ? result.quota_windows.filter(function (item) { return item && typeof item === "object"; }) : [];
+    if (!windows.length) return false;
+    var groups = [];
+    var groupByName = Object.create(null);
+    windows.forEach(function (item) {
+      var name = String(item.group || "").trim() || "配额周期";
+      if (!groupByName[name]) {
+        groupByName[name] = { name:name, windows:[] };
+        groups.push(groupByName[name]);
+      }
+      groupByName[name].windows.push(item);
+    });
+    var shell = element("div", "quota-groups");
+    groups.forEach(function (group) {
+      group.windows.sort(function (left, right) {
+        var rank = quotaWindowRank(left) - quotaWindowRank(right);
+        return rank || translateWindowLabel(left.label).localeCompare(translateWindowLabel(right.label), "zh-CN");
+      });
+      var section = element("section", "quota-group");
+      var heading = element("div", "quota-group-head");
+      heading.appendChild(element("h3", "quota-group-title", redactSecrets(translateDisplayText(group.name))));
+      heading.appendChild(element("span", "quota-group-count", group.windows.length + " 个周期"));
+      section.appendChild(heading);
+      var grid = element("div", "quota-window-grid");
+      group.windows.forEach(function (item) { grid.appendChild(quotaWindowCard(item)); });
+      section.appendChild(grid);
+      shell.appendChild(section);
+    });
+    card.appendChild(shell);
+    return true;
+  }
+
+  function refreshCountdowns() {
+    document.querySelectorAll("[data-reset-at]").forEach(function (node) {
+      var resetAt = finiteNumber(node.getAttribute("data-reset-at"));
+      if (resetAt == null) return;
+      var seconds = Math.max(0, (resetAt - Date.now()) / 1000);
+      node.textContent = seconds > 0 ? durationText(seconds) + "后重置" : "即将重置";
+    });
+  }
+
+  function renderAccountMeta(card, result) {
+    var details = element("div", "account-meta");
+    if (result.plan) {
+      var plan = element("span", "detail");
+      plan.appendChild(element("span", "detail-label", "套餐"));
+      plan.appendChild(element("span", "", redactSecrets(translateDisplayText(result.plan))));
+      details.appendChild(plan);
+    }
+    if (result.reset_at) {
+      var reset = element("span", "detail");
+      reset.appendChild(element("span", "detail-label", "重置"));
+      reset.appendChild(element("span", "", formatDateTime(result.reset_at)));
+      details.appendChild(reset);
+    }
+    if (details.childNodes.length) card.appendChild(details);
+  }
+
+  function renderExtraDetails(card, result) {
+    if (!result.extra || typeof result.extra !== "object") return;
+    var keys = Object.keys(result.extra).sort(function (left, right) {
+      var labelOrder = detailLabel(left).localeCompare(detailLabel(right), "zh-CN");
+      return labelOrder || left.localeCompare(right, "zh-CN");
+    });
+    if (!keys.length) return;
+    var section = element("section", "detail-section");
+    section.appendChild(element("h3", "detail-section-title", "账户明细"));
+    var list = element("dl", "detail-grid");
+    keys.forEach(function (key) {
+      var row = element("div", "detail-row");
+      row.appendChild(element("dt", "", detailLabel(key)));
+      row.appendChild(element("dd", "", redactSecrets(result.extra[key])));
+      list.appendChild(row);
+    });
+    section.appendChild(list);
+    card.appendChild(section);
+  }
+
   function resultCard(result, index) {
-    var failed = Boolean(result.error);
-    var card = element("article", "result-card" + (failed ? " error" : ""));
+    var consoleOnly = Boolean(result.error) && /控制台|官网登录|订阅管理页/.test(String(result.error));
+    var failed = Boolean(result.error) && !consoleOnly;
+    var card = element("article", "result-card" + (failed ? " error" : consoleOnly ? " limited" : ""));
     card.style.animationDelay = Math.min(index * 35, 210) + "ms";
     var head = element("div", "result-head");
     var identity = element("div", "provider-cell");
     identity.appendChild(element("div", "result-name", result.account_name || result.provider || "余额账户"));
     identity.appendChild(element("div", "result-url", result.base_url || ""));
     head.appendChild(identity);
-    var badge = element("span", "badge " + (failed ? "failure" : "success"));
-    badge.appendChild(icon(failed ? "alert" : "check"));
-    badge.appendChild(element("span", "", failed ? "查询失败" : "查询成功"));
+    var badge = element("span", "badge " + (failed ? "failure" : consoleOnly ? "warning" : "success"));
+    badge.appendChild(icon(failed || consoleOnly ? "alert" : "check"));
+    var hasWindows = Array.isArray(result.quota_windows) && result.quota_windows.length > 0;
+    badge.appendChild(element("span", "", failed ? "查询失败" : consoleOnly ? "仅控制台可查" : hasWindows ? "配额已更新" : "查询成功"));
     head.appendChild(badge);
     card.appendChild(head);
 
-    if (failed) {
-      card.appendChild(element("div", "quota-main failure", "查询失败，请检查密钥、接口地址或账户状态"));
-      card.appendChild(element("div", "error-detail", redactSecrets(result.error)));
+    if (failed || consoleOnly) {
+      card.appendChild(element("div", "quota-main failure", consoleOnly ? "当前模型密钥不能直接查询余额" : "查询失败，请检查密钥、接口地址或账户状态"));
+      card.appendChild(element("div", "error-detail", localizedError(result.error)));
     } else {
       card.appendChild(element("div", "quota-main", formatBalance(result)));
+      renderAccountMeta(card, result);
+      var renderedWindows = renderQuotaGroups(card, result);
       var total = Number(result.tokens_total || 0);
       var used = Number(result.tokens_used || 0);
-      if (total > 0) {
+      if (!renderedWindows && total > 0) {
         var percent = Math.max(0, Math.min(100, used / total * 100));
         var track = element("div", "progress-track");
         track.setAttribute("role", "progressbar");
@@ -943,33 +1370,12 @@ select:hover{border-color:var(--border-hover)}
         card.appendChild(track);
         window.requestAnimationFrame(function () { bar.style.width = percent.toFixed(1) + "%"; });
       }
-      var details = element("div", "detail-list");
-      if (result.plan) {
-        var plan = element("span", "detail");
-        plan.appendChild(element("span", "detail-label", "套餐"));
-        plan.appendChild(element("span", "", redactSecrets(result.plan)));
-        details.appendChild(plan);
-      }
-      if (result.reset_at) {
-        var reset = element("span", "detail");
-        reset.appendChild(element("span", "detail-label", "重置"));
-        reset.appendChild(element("span", "", redactSecrets(result.reset_at)));
-        details.appendChild(reset);
-      }
-      if (result.extra && typeof result.extra === "object") {
-        Object.keys(result.extra).slice(0, 3).forEach(function (key) {
-          var detail = element("span", "detail");
-          detail.appendChild(element("span", "detail-label", detailLabel(key)));
-          detail.appendChild(element("span", "", redactSecrets(result.extra[key])));
-          details.appendChild(detail);
-        });
-      }
-      if (details.childNodes.length) card.appendChild(details);
+      renderExtraDetails(card, result);
     }
 
     var foot = element("div", "result-foot");
     foot.appendChild(element("span", "key-preview", result.key_preview || "密钥已隐藏"));
-    foot.appendChild(element("span", "", formatTime(result.fetched_at)));
+    foot.appendChild(element("span", "", formatTime(result.fetched_at) ? "更新于 " + formatTime(result.fetched_at) : "刚刚更新"));
     card.appendChild(foot);
     return card;
   }
@@ -1019,6 +1425,7 @@ select:hover{border-color:var(--border-hover)}
     var grid = element("div", "result-grid");
     state.results.forEach(function (result, index) { grid.appendChild(resultCard(result, index)); });
     target.appendChild(grid);
+    refreshCountdowns();
   }
 
   function queryBalances(refresh) {
@@ -1056,6 +1463,18 @@ select:hover{border-color:var(--border-hover)}
     return wrap;
   }
 
+  function updateQueryHelp(target, value) {
+    target.textContent = "";
+    var definition = providerDefinitions[value];
+    if (!definition || definition.status !== "console_only") {
+      target.hidden = true;
+      return;
+    }
+    target.hidden = false;
+    target.appendChild(icon("alert"));
+    target.appendChild(element("span", "", definition.description || "该平台仅能在官网登录控制台查看余额。"));
+  }
+
   function renderSettings() {
     var body = byID("settings-body");
     var empty = byID("settings-empty");
@@ -1089,17 +1508,21 @@ select:hover{border-color:var(--border-hover)}
       PROVIDER_DEFINITIONS.forEach(function (definition) {
         var option = document.createElement("option");
         option.value = definition.value;
-        option.textContent = definition.label;
+        option.textContent = definition.label + (definition.status === "console_only" ? "（仅控制台可查）" : "");
         select.appendChild(option);
       });
       select.value = state.draftMappings[provider.mappingKey] || "";
+      var queryHelp = element("div", "query-help");
+      updateQueryHelp(queryHelp, select.value);
       select.addEventListener("change", function () {
         if (select.value) state.draftMappings[provider.mappingKey] = select.value;
         else delete state.draftMappings[provider.mappingKey];
+        updateQueryHelp(queryHelp, select.value);
         state.dirty = true;
         setText(byID("save-state"), "有未保存的更改");
       });
       queryCell.appendChild(select);
+      queryCell.appendChild(queryHelp);
       row.appendChild(queryCell);
       body.appendChild(row);
     });
@@ -1199,6 +1622,7 @@ select:hover{border-color:var(--border-hover)}
     event.preventDefault();
     event.returnValue = "";
   });
+  window.setInterval(refreshCountdowns, 30000);
 
   var restored = restoreCredentials();
   if (restored) {

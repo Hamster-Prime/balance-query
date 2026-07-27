@@ -36,6 +36,12 @@ func TestServiceEndpointFromOpenAICompatibleBaseURL(t *testing.T) {
 			endpoint: "/v1/usage",
 			want:     "https://host.example/relay/v1/usage",
 		},
+		{
+			name:     "endpoint trailing slash is preserved",
+			baseURL:  "https://host.example/v1",
+			endpoint: "/api/usage/token/",
+			want:     "https://host.example/api/usage/token/",
+		},
 	}
 
 	for _, test := range tests {

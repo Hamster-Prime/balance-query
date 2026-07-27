@@ -1,48 +1,13 @@
 package providers
 
-import (
-	"fmt"
-	"time"
+import "github.com/Hamster-Prime/balance-query/internal/balance"
 
-	"github.com/Hamster-Prime/balance-query/internal/balance"
-)
-
-// VolcengineCodingPlan queries the Volcengine (火山引擎) Ark Coding Plan quota.
-// API base: https://ark.cn-beijing.volces.com/api/v3
+// Volcengine documents the Coding Plan inference base URL and API key, but no
+// API-key-authenticated quota endpoint. The old /user/coding_plan/quota path was
+// inferred and is deliberately no longer called.
 type VolcengineCodingPlan struct{}
 
-type volcengineQuotaResp struct {
-	Data struct {
-		TokensRemaining int64  `json:"tokens_remaining"`
-		TokensTotal     int64  `json:"tokens_total"`
-		TokensUsed      int64  `json:"tokens_used"`
-		Plan            string `json:"plan"`
-		ExpireAt        string `json:"expire_at"`
-	} `json:"data"`
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-func (VolcengineCodingPlan) Fetch(authID, token, proxyURL string) balance.Result {
-	label := balance.ProviderLabel[balance.ProviderVolcengine]
-	var resp volcengineQuotaResp
-	if err := getJSON("https://ark.cn-beijing.volces.com/api/v3/user/coding_plan/quota", token, proxyURL, &resp); err != nil {
-		return errResult(authID, label, err.Error())
-	}
-	d := resp.Data
-	remaining := d.TokensRemaining
-	if remaining == 0 {
-		remaining = d.TokensTotal - d.TokensUsed
-	}
-	return balance.Result{
-		Provider:        label,
-		AuthID:          authID,
-		TokensTotal:     d.TokensTotal,
-		TokensUsed:      d.TokensUsed,
-		TokensRemaining: remaining,
-		Plan:            d.Plan,
-		ResetAt:         d.ExpireAt,
-		QuotaDisplay:    fmt.Sprintf("剩余 %d / %d 令牌", remaining, d.TokensTotal),
-		FetchedAt:       time.Now(),
-	}
+func (VolcengineCodingPlan) Fetch(authID, _, _ string) balance.Result {
+	return errResult(authID, balance.ProviderLabel[balance.ProviderVolcengine],
+		"火山引擎官方尚未公开 Coding Plan API Key 的配额查询接口，请在方舟控制台查看套餐用量")
 }

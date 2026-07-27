@@ -320,6 +320,10 @@ func TestRedactResultSecret(t *testing.T) {
 		Plan:         secret,
 		ResetAt:      "稍后 " + secret,
 		Extra:        map[string]string{"响应": "包含 " + secret},
+		QuotaWindows: []balance.QuotaWindow{{
+			Group: secret, Label: "周期 " + secret, Unit: secret,
+			ResetAt: "稍后 " + secret, Status: "状态 " + secret,
+		}},
 	}
 	redactResultSecret(&result, secret)
 	raw, err := json.Marshal(result)
@@ -331,6 +335,13 @@ func TestRedactResultSecret(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), maskAPIKey(secret)) {
 		t.Fatalf("redacted result does not contain masked key: %s", raw)
+	}
+}
+
+func TestLocalizeFetchErrorPreservesAuditedConsoleOnlyReason(t *testing.T) {
+	message := "小米官方未提供模型 API Key 的余额查询接口；按量余额只能在 MiMo 控制台登录后查看"
+	if got := localizeFetchError(message); got != message {
+		t.Fatalf("localizeFetchError() = %q, want audited reason %q", got, message)
 	}
 }
 

@@ -172,7 +172,7 @@ jobs:
           body: |
             ## 余额与配额 ${{ github.ref_name }}
 
-            CLIProxyAPI 插件：查询“AI 提供商”中 OpenAI 兼容提供商的余额与套餐配额。
+            CLIProxyAPI 插件：查询“AI 提供商”中 OpenAI 兼容提供商的余额、多周期套餐配额、重置时间和用量明细。
 
             ### 从 CPA 插件商店安装
             在 CPA `config.yaml` 中加入：
@@ -224,7 +224,7 @@ jobs:
               {
                 "id": "balance-query",
                 "name": "余额与配额",
-                "description": "查询 CPA OpenAI 兼容提供商的余额与套餐配额，支持 DeepSeek、GLM、Kimi、Sub2API、New API、MiniMax 等类型。",
+                "description": "查询 CPA OpenAI 兼容提供商的余额、多周期配额、重置时间和用量明细，支持 DeepSeek、GLM、Kimi、Sub2API、New API、MiniMax 等类型。",
                 "author": "Hamster-Prime",
                 "version": "${VERSION}",
                 "repository": "${REPO}",
@@ -263,7 +263,7 @@ jobs:
               "plugins": [{
                   "id": "balance-query",
                   "name": "余额与配额",
-                  "description": "查询 CPA OpenAI 兼容提供商的余额与套餐配额，支持 DeepSeek、GLM、Kimi、Sub2API、New API、MiniMax 等类型。",
+                  "description": "查询 CPA OpenAI 兼容提供商的余额、多周期配额、重置时间和用量明细，支持 DeepSeek、GLM、Kimi、Sub2API、New API、MiniMax 等类型。",
                   "author": "Hamster-Prime",
                   "version": version,
                   "repository": repo,

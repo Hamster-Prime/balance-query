@@ -1,51 +1,14 @@
 package providers
 
-import (
-	"fmt"
-	"time"
+import "github.com/Hamster-Prime/balance-query/internal/balance"
 
-	"github.com/Hamster-Prime/balance-query/internal/balance"
-)
-
-// Longcat queries the Longcat (meituan) API platform.
-// Docs: https://longcat.chat/platform/docs
+// Longcat model API keys only authenticate inference endpoints. The official
+// PAYG and Token Pack summary endpoints are console APIs requiring a LongCat
+// browser session cookie, so a CPA OpenAI-compatible provider key cannot query
+// them safely.
 type Longcat struct{}
 
-type longcatUserResp struct {
-	Data struct {
-		AvailableBalance float64 `json:"available_balance"`
-		UsedBalance      float64 `json:"used_balance"`
-		TokensRemaining  int64   `json:"tokens_remaining"`
-		TokensTotal      int64   `json:"tokens_total"`
-		Plan             string  `json:"plan"`
-		ExpireAt         string  `json:"expire_at"`
-	} `json:"data"`
-	Code int    `json:"code"`
-	Msg  string `json:"msg"`
-}
-
-func (Longcat) Fetch(authID, token, proxyURL string) balance.Result {
-	label := balance.ProviderLabel[balance.ProviderLongcat]
-	var resp longcatUserResp
-	if err := getJSON("https://longcat.chat/platform/api/v1/user/me", token, proxyURL, &resp); err != nil {
-		return errResult(authID, label, err.Error())
-	}
-	d := resp.Data
-	display := ""
-	if d.TokensTotal > 0 {
-		display = fmt.Sprintf("令牌套餐：剩余 %d / %d", d.TokensRemaining, d.TokensTotal)
-	} else if d.AvailableBalance > 0 || d.UsedBalance > 0 {
-		display = fmt.Sprintf("余额 ¥%.4f（已使用 ¥%.4f）", d.AvailableBalance, d.UsedBalance)
-	}
-	return balance.Result{
-		Provider:        label,
-		AuthID:          authID,
-		BalanceUSD:      d.AvailableBalance,
-		TokensTotal:     d.TokensTotal,
-		TokensRemaining: d.TokensRemaining,
-		Plan:            d.Plan,
-		ResetAt:         d.ExpireAt,
-		QuotaDisplay:    display,
-		FetchedAt:       time.Now(),
-	}
+func (Longcat) Fetch(authID, _, _ string) balance.Result {
+	return errResult(authID, balance.ProviderLabel[balance.ProviderLongcat],
+		"LongCat 官方未提供模型 API Key 的余额/Token Pack 查询接口；余额、多个 30 天 Token 包及到期时间只能在官网登录控制台查看")
 }

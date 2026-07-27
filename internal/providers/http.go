@@ -27,7 +27,7 @@ func getJSON(url, bearerToken, proxyURL string, dest any) error {
 	if strings.TrimSpace(bearerToken) == "" {
 		return fmt.Errorf("接口密钥为空")
 	}
-	return doGet(url, "Bearer "+bearerToken, proxyURL, dest)
+	return doGet(url, map[string]string{"Authorization": "Bearer " + bearerToken}, proxyURL, dest)
 }
 
 // getJSONRawAuth performs GET with a raw Authorization value (no "Bearer " prefix).
@@ -36,16 +36,23 @@ func getJSONRawAuth(url, rawToken, proxyURL string, dest any) error {
 	if strings.TrimSpace(rawToken) == "" {
 		return fmt.Errorf("接口密钥为空")
 	}
-	return doGet(url, rawToken, proxyURL, dest)
+	return doGet(url, map[string]string{"Authorization": rawToken}, proxyURL, dest)
 }
 
-func doGet(url, authHeader, proxyURL string, dest any) error {
+// getJSONWithHeaders performs a JSON GET with provider-specific headers.
+func getJSONWithHeaders(url, proxyURL string, headers map[string]string, dest any) error {
+	return doGet(url, headers, proxyURL, dest)
+}
+
+func doGet(url string, headers map[string]string, proxyURL string, dest any) error {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("创建请求失败：%w", err)
 	}
-	if authHeader != "" {
-		req.Header.Set("Authorization", authHeader)
+	for key, value := range headers {
+		if strings.TrimSpace(value) != "" {
+			req.Header.Set(key, value)
+		}
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
@@ -123,7 +130,11 @@ func serviceEndpoint(baseURL, endpoint string) (string, error) {
 	if strings.HasSuffix(strings.ToLower(basePath), "/v1") {
 		basePath = strings.TrimSuffix(basePath, basePath[len(basePath)-3:])
 	}
+	keepTrailingSlash := strings.HasSuffix(endpoint, "/")
 	parsed.Path = path.Join(basePath, "/"+strings.TrimPrefix(endpoint, "/"))
+	if keepTrailingSlash && !strings.HasSuffix(parsed.Path, "/") {
+		parsed.Path += "/"
+	}
 	parsed.RawPath = ""
 	parsed.RawQuery = ""
 	parsed.Fragment = ""

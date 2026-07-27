@@ -40,11 +40,18 @@ func TestRenderDashboardIncludesChineseThemeAwareUI(t *testing.T) {
 		`查询设置`,
 		`接口密钥`,
 		`data-theme`,
+		`dataset.resolvedTheme`,
 		`MutationObserver`,
+		`window.parent.getComputedStyle`,
+		`window.parent.document.body`,
+		`balance-query:theme-request`,
+		`cli-proxy-theme`,
 		`prefers-color-scheme: dark`,
 		`prefers-reduced-motion:reduce`,
-		`transition:background 150ms ease`,
-		`animation:item-in 300ms ease-out`,
+		`--motion-fast:150ms ease`,
+		`--motion-normal:300ms ease`,
+		`animation:item-in 400ms ease-out`,
+		`translate3d(0,28px,0)`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("dashboard is missing localized theme or motion marker %q", want)
@@ -52,6 +59,65 @@ func TestRenderDashboardIncludesChineseThemeAwareUI(t *testing.T) {
 	}
 	if !strings.Contains(page, `var INITIAL_TTL = 180;`) {
 		t.Fatal("dashboard did not embed the configured cache TTL")
+	}
+}
+
+func TestRenderDashboardShowsAllStructuredQuotaWindows(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, want := range []string{
+		`result.quota_windows`,
+		`quota-groups`,
+		`quota-window-grid`,
+		`quota-window-value`,
+		`used_percent`,
+		`remaining_percent`,
+		`reset_in_seconds`,
+		`data-reset-at`,
+		`不限量`,
+		`日配额`,
+		`周配额`,
+		`月配额`,
+		`小时配额`,
+		`后重置`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing structured quota UI marker %q", want)
+		}
+	}
+}
+
+func TestRenderDashboardShowsEveryExtraDetailInStableOrder(t *testing.T) {
+	page := string(RenderDashboard(300))
+	if strings.Contains(page, `Object.keys(result.extra).slice`) {
+		t.Fatal("dashboard still truncates provider details")
+	}
+	for _, want := range []string{
+		`Object.keys(result.extra).sort`,
+		`detail-grid`,
+		`账户明细`,
+		`今日请求数`,
+		`累计令牌数`,
+		`每分钟请求数`,
+		`加量包余额`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing complete detail marker %q", want)
+		}
+	}
+}
+
+func TestRenderDashboardMarksConsoleOnlyProviders(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, want := range []string{
+		`"status":"console_only"`,
+		`仅控制台可查`,
+		`官方未提供模型 API Key 余额查询接口`,
+		`当前模型密钥不能直接查询余额`,
+		`query-help`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing console-only provider marker %q", want)
+		}
 	}
 }
 

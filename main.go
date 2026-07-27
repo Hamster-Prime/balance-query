@@ -57,7 +57,7 @@ import (
 
 const (
 	pluginID      = "balance-query"
-	pluginVersion = "0.2.0"
+	pluginVersion = "0.3.0"
 	abiVersion    = 1
 	schemaVersion = 1
 
@@ -535,6 +535,14 @@ func redactResultSecret(result *balance.Result, secret string) {
 	for key, value := range result.Extra {
 		result.Extra[key] = redact(value)
 	}
+	for index := range result.QuotaWindows {
+		window := &result.QuotaWindows[index]
+		window.Group = redact(window.Group)
+		window.Label = redact(window.Label)
+		window.Unit = redact(window.Unit)
+		window.ResetAt = redact(window.ResetAt)
+		window.Status = redact(window.Status)
+	}
 }
 
 func localizeFetchError(message string) string {
@@ -560,6 +568,18 @@ func localizeFetchError(message string) string {
 		return "余额接口返回了无法识别的数据"
 	case strings.Contains(lower, "请求余额接口失败"), strings.Contains(lower, "timeout"), strings.Contains(lower, "deadline"), strings.Contains(lower, "connection"), strings.Contains(lower, "dial tcp"), strings.Contains(lower, "no such host"), strings.Contains(lower, "tls"), strings.Contains(lower, "certificate"):
 		return "无法连接余额服务，请检查网络、代理或接口地址"
+	case strings.HasPrefix(trimmed, "官方未提供"),
+		strings.HasPrefix(trimmed, "官方接口未返回"),
+		strings.HasPrefix(trimmed, "小米官方未提供"),
+		strings.HasPrefix(trimmed, "小米 Token Plan"),
+		strings.HasPrefix(trimmed, "LongCat 官方未提供"),
+		strings.HasPrefix(trimmed, "OpenCode 官方未提供"),
+		strings.HasPrefix(trimmed, "火山引擎官方尚未公开"),
+		strings.HasPrefix(trimmed, "Sub2API 未返回"),
+		strings.HasPrefix(trimmed, "MiniMax 配额接口"),
+		strings.HasPrefix(trimmed, "GLM 配额接口"),
+		strings.HasPrefix(trimmed, "New API 返回"):
+		return trimmed
 	default:
 		return "余额查询未成功，请检查查询类型、接口地址和账户状态"
 	}
