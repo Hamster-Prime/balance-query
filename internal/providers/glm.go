@@ -83,7 +83,7 @@ func fetchGLMQuota(authID, token, proxyURL, baseURL, label string) balance.Resul
 	if len(resp.Data.Limits) == 0 {
 		message := firstNonEmpty(resp.Message, resp.Msg)
 		if message == "" {
-			message = "官方接口未返回 Coding Plan 配额窗口"
+			message = "官方接口未返回 Coding Plan 配额数据"
 		}
 		return errResult(authID, label, message)
 	}
@@ -126,9 +126,6 @@ func fetchGLMQuota(authID, token, proxyURL, baseURL, label string) balance.Resul
 		appendGLMToolDetails(&r, toolResp.Data)
 	} else {
 		r.Extra["24 小时工具统计"] = "暂不可用"
-	}
-	if r.QuotaDisplay == "" {
-		r.QuotaDisplay = fmt.Sprintf("已获取 %d 个配额窗口", len(r.QuotaWindows))
 	}
 	if len(r.Extra) == 0 {
 		r.Extra = nil

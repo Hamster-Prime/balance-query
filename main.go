@@ -57,7 +57,7 @@ import (
 
 const (
 	pluginID      = "balance-query"
-	pluginVersion = "0.3.1"
+	pluginVersion = "0.4.0"
 	abiVersion    = 1
 	schemaVersion = 1
 
@@ -204,7 +204,7 @@ func handleRegister(raw []byte) ([]byte, error) {
 				{
 					Name:        "provider_mappings",
 					Type:        "object",
-					Description: "OpenAI 兼容提供商与余额查询类型的映射，由插件页面维护。",
+					Description: "AI 提供商与余额查询类型的映射，由插件页面维护。",
 				},
 			},
 		},
@@ -314,7 +314,7 @@ func handleManagementRegister() ([]byte, error) {
 		Resources: []managementResource{{
 			Path:        resourcePath,
 			Menu:        "余额与配额",
-			Description: "查看 OpenAI 兼容提供商的余额与套餐配额",
+			Description: "查看 AI 提供商的余额、用量与套餐配额",
 		}},
 	})
 }

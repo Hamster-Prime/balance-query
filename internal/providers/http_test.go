@@ -1,7 +1,9 @@
 package providers
 
 import (
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -138,5 +140,20 @@ func TestClientForProxyValidation(t *testing.T) {
 				t.Fatalf("clientForProxy(%q) succeeded, want error", proxyURL)
 			}
 		})
+	}
+}
+
+func TestDoGetRejectsOversizedProviderResponse(t *testing.T) {
+	useTestHTTPClient(t, func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(strings.Repeat("x", int(maxProviderResponseBytes)+1))),
+		}, nil
+	})
+
+	var result map[string]any
+	err := getJSON("https://provider.example/usage", "test-key", "", &result)
+	if err == nil || !strings.Contains(err.Error(), "2 MiB") {
+		t.Fatalf("oversized response error = %v", err)
 	}
 }

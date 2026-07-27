@@ -62,7 +62,7 @@ type newAPIBillingUsageResp struct {
 func (n NewAPI) Fetch(authID, token, proxyURL string) balance.Result {
 	label := balance.ProviderLabel[balance.ProviderNewAPI]
 	if strings.TrimSpace(n.BaseURL) == "" {
-		return errResult(authID, label, "所选 OpenAI 兼容提供商没有配置接口地址")
+		return errResult(authID, label, "所选 AI 提供商没有配置接口地址")
 	}
 	usageURL, err := serviceEndpoint(n.BaseURL, "/api/usage/token/")
 	if err != nil {

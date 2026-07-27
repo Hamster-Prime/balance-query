@@ -62,6 +62,8 @@ func (k KimiAPI) Fetch(authID, token, proxyURL string) balance.Result {
 
 // KimiCode queries the official Kimi Coding Plan usage endpoint. The payload
 // is top-level (usage/limits/boosterWallet), not wrapped in a data object.
+// Product docs: https://www.kimi.com/code/docs/en/kimi-code/membership.html
+// CLI parser: https://github.com/MoonshotAI/kimi-code/blob/main/packages/oauth/src/managed-usage.ts
 type KimiCode struct{}
 
 type kimiUsageResp struct {
@@ -110,9 +112,6 @@ func parseKimiUsage(authID string, resp kimiUsageResp) balance.Result {
 	if len(r.QuotaWindows) == 0 && len(r.Extra) == 0 {
 		return errResult(authID, label, "官方接口未返回可识别的配额明细")
 	}
-	if r.QuotaDisplay == "" {
-		r.QuotaDisplay = fmt.Sprintf("已获取 %d 个配额窗口", len(r.QuotaWindows))
-	}
 	return r
 }
 
@@ -136,21 +135,24 @@ func kimiQuotaWindow(values map[string]any, fallbackLabel string) (balance.Quota
 	}
 	used = maxFloat(used, 0)
 	remaining = maxFloat(remaining, 0)
-	if total > 0 && remaining > total {
-		remaining = total
+	if total > 0 {
+		used = minFloat(used, total)
+		remaining = minFloat(remaining, total)
+	}
+	usedPercent := percentFromValues(used, total)
+	remainingPercent := 0.0
+	if total > 0 {
+		remainingPercent = clampPercent(100 - usedPercent)
 	}
 
 	window := balance.QuotaWindow{
-		Label:     localizedQuotaLabel(firstNonEmpty(firstString(values, "name", "title"), fallbackLabel)),
-		Used:      used,
-		Total:     total,
-		Remaining: remaining,
-		Unit:      "次",
+		Label:            localizedQuotaLabel(firstNonEmpty(firstString(values, "name", "title"), fallbackLabel)),
+		UsedPercent:      usedPercent,
+		RemainingPercent: remainingPercent,
 	}
-	window.UsedPercent = percentFromValues(used, total)
-	if total > 0 {
-		window.RemainingPercent = clampPercent(100 - window.UsedPercent)
-	}
+	// Kimi documents these values as shared membership quota rather than a
+	// literal request allowance. Its official CLI likewise renders used/limit
+	// only as a percentage, so exposing the raw ratio as "calls" is misleading.
 	window.ResetAt = firstString(values, "reset_at", "resetAt", "reset_time", "resetTime")
 	if resetIn, ok := firstNumber(values, "reset_in", "resetIn", "ttl", "window"); ok && resetIn > 0 {
 		window.ResetInSeconds = int64(resetIn)
@@ -183,7 +185,7 @@ func kimiWindowLabel(item, detail map[string]any, index int) string {
 		}
 		return durationWindowLabel(seconds)
 	}
-	return fmt.Sprintf("配额窗口 %d", index+1)
+	return fmt.Sprintf("其他配额 %d", index+1)
 }
 
 func parseKimiBoosterWallet(result *balance.Result, wallet map[string]any) {
@@ -255,13 +257,16 @@ func applyPrimaryWindow(result *balance.Result, window balance.QuotaWindow) {
 	if result == nil {
 		return
 	}
-	result.TokensTotal = int64(window.Total)
-	result.TokensUsed = int64(window.Used)
-	result.TokensRemaining = int64(window.Remaining)
 	result.ResetAt = window.ResetAt
 	if window.Total > 0 {
+		result.TokensTotal = int64(window.Total)
+		result.TokensUsed = int64(window.Used)
+		result.TokensRemaining = int64(window.Remaining)
 		result.QuotaDisplay = fmt.Sprintf("%s：剩余 %s / %s %s", window.Label,
 			formatQuotaNumber(window.Remaining), formatQuotaNumber(window.Total), window.Unit)
+	} else if window.RemainingPercent > 0 || window.UsedPercent > 0 {
+		result.QuotaDisplay = fmt.Sprintf("%s：剩余 %s%%", window.Label,
+			formatQuotaNumber(window.RemainingPercent))
 	}
 }
 
@@ -276,6 +281,13 @@ func firstNonEmpty(values ...string) string {
 
 func maxFloat(left, right float64) float64 {
 	if left > right {
+		return left
+	}
+	return right
+}
+
+func minFloat(left, right float64) float64 {
+	if left < right {
 		return left
 	}
 	return right

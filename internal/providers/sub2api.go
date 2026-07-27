@@ -18,7 +18,7 @@ type Sub2API struct {
 func (s Sub2API) Fetch(authID, token, proxyURL string) balance.Result {
 	label := balance.ProviderLabel[balance.ProviderSub2API]
 	if strings.TrimSpace(s.BaseURL) == "" {
-		return errResult(authID, label, "所选 OpenAI 兼容提供商没有配置接口地址")
+		return errResult(authID, label, "所选 AI 提供商没有配置接口地址")
 	}
 	endpoint, err := serviceEndpoint(s.BaseURL, "/v1/usage")
 	if err != nil {

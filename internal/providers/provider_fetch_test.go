@@ -174,3 +174,107 @@ func TestKimiAPIFetchRejectsAnyBusinessFailureSignal(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudeAdminFetchAggregatesUsageAndCosts(t *testing.T) {
+	seen := map[string]bool{}
+	useTestHTTPClient(t, func(r *http.Request) (*http.Response, error) {
+		if got := r.Header.Get("x-api-key"); got != "sk-ant-admin-test" {
+			t.Errorf("x-api-key = %q", got)
+		}
+		if got := r.Header.Get("anthropic-version"); got != "2023-06-01" {
+			t.Errorf("anthropic-version = %q", got)
+		}
+		if got := r.URL.Query().Get("bucket_width"); got != "1d" {
+			t.Errorf("bucket_width = %q", got)
+		}
+		if r.URL.Query().Get("starting_at") == "" || r.URL.Query().Get("ending_at") == "" {
+			t.Errorf("missing 30-day time range: %s", r.URL.RawQuery)
+		}
+		seen[r.URL.Path] = true
+		switch r.URL.Path {
+		case "/custom/v1/organizations/usage_report/messages":
+			if got := r.URL.Query()["group_by[]"]; len(got) != 1 || got[0] != "model" {
+				t.Errorf("usage group_by = %#v", got)
+			}
+			return jsonResponse(`{"data":[{"starting_at":"2026-07-01T00:00:00Z","ending_at":"2026-07-02T00:00:00Z","results":[{"uncached_input_tokens":100,"cache_read_input_tokens":20,"cache_creation":{"ephemeral_1h_input_tokens":10,"ephemeral_5m_input_tokens":5},"output_tokens":50,"model":"claude-sonnet-4-5","server_tool_use":{"web_search_requests":2}},{"uncached_input_tokens":30,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"output_tokens":10,"model":"claude-haiku-4-5","server_tool_use":{"web_search_requests":0}}]}],"has_more":false}`), nil
+		case "/custom/v1/organizations/cost_report":
+			if got := r.URL.Query()["group_by[]"]; len(got) != 1 || got[0] != "description" {
+				t.Errorf("cost group_by = %#v", got)
+			}
+			return jsonResponse(`{"data":[{"starting_at":"2026-07-01T00:00:00Z","ending_at":"2026-07-02T00:00:00Z","results":[{"amount":"123.45","currency":"USD","cost_type":"tokens","description":"tokens"},{"amount":"50","currency":"USD","cost_type":"web_search","description":"web_search"}]}],"has_more":false}`), nil
+		default:
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found"))}, nil
+		}
+	})
+
+	result := (ClaudeAdmin{BaseURL: "https://claude.example/custom/v1"}).Fetch("claude", "sk-ant-admin-test", "")
+	if result.Error != "" {
+		t.Fatalf("ClaudeAdmin.Fetch() error = %q", result.Error)
+	}
+	if !seen["/custom/v1/organizations/usage_report/messages"] || !seen["/custom/v1/organizations/cost_report"] {
+		t.Fatalf("requested paths = %#v", seen)
+	}
+	if result.QuotaDisplay != "近 30 天费用 1.73 USD" {
+		t.Fatalf("quota display = %q", result.QuotaDisplay)
+	}
+	if got := result.Extra["近 30 天总令牌"]; got != "225" {
+		t.Fatalf("total tokens = %q", got)
+	}
+	if got := result.Extra["Web 搜索请求"]; got != "2 次" {
+		t.Fatalf("web searches = %q", got)
+	}
+	if got := result.Extra["费用 令牌"]; got != "1.23 USD" {
+		t.Fatalf("token cost = %q", got)
+	}
+	if result.BalanceUSD != 0 || len(result.QuotaWindows) != 0 {
+		t.Fatalf("historical report must not become balance/quota: %#v", result)
+	}
+}
+
+func TestClaudeAdminFetchAllowsPartialSuccess(t *testing.T) {
+	useTestHTTPClient(t, func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.URL.Path, "/usage_report/messages") {
+			return jsonResponse(`{"data":[{"results":[{"uncached_input_tokens":40,"output_tokens":10,"model":"claude-sonnet-4-5"}]}],"has_more":false}`), nil
+		}
+		return &http.Response{StatusCode: http.StatusForbidden, Body: io.NopCloser(strings.NewReader("forbidden"))}, nil
+	})
+
+	result := (ClaudeAdmin{BaseURL: "https://api.anthropic.com"}).Fetch("claude", "sk-ant-admin-test", "")
+	if result.Error != "" {
+		t.Fatalf("partial success returned error = %q", result.Error)
+	}
+	if result.QuotaDisplay != "近 30 天使用 50 令牌" {
+		t.Fatalf("quota display = %q", result.QuotaDisplay)
+	}
+	if !strings.Contains(result.Extra["费用查询"], "未成功") {
+		t.Fatalf("cost query detail = %q", result.Extra["费用查询"])
+	}
+}
+
+func TestClaudeAdminFetchFailsOnlyWhenBothEndpointsFail(t *testing.T) {
+	useTestHTTPClient(t, func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusUnauthorized, Body: io.NopCloser(strings.NewReader("unauthorized"))}, nil
+	})
+
+	result := (ClaudeAdmin{BaseURL: "https://api.anthropic.com"}).Fetch("claude", "standard-key", "")
+	if result.Error == "" || !strings.Contains(result.Error, "用量查询失败") || !strings.Contains(result.Error, "费用查询失败") {
+		t.Fatalf("result error = %q", result.Error)
+	}
+}
+
+func TestClaudeCostDetailLabelsAreLocalized(t *testing.T) {
+	tests := []struct {
+		item claudeCostResult
+		want string
+	}{
+		{item: claudeCostResult{CostType: "tokens", Model: "claude-sonnet", TokenType: "uncached_input_tokens"}, want: "claude-sonnet · 输入令牌"},
+		{item: claudeCostResult{Description: "Web Search Usage"}, want: "Web 搜索"},
+		{item: claudeCostResult{Description: "Code Execution Usage"}, want: "代码执行"},
+		{item: claudeCostResult{Description: "unrecognized upstream label"}, want: "其他费用"},
+	}
+	for _, test := range tests {
+		if got := claudeCostDetailLabel(test.item); got != test.want {
+			t.Errorf("claudeCostDetailLabel(%#v) = %q, want %q", test.item, got, test.want)
+		}
+	}
+}

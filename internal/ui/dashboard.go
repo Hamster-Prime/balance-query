@@ -16,22 +16,23 @@ type providerDefinition struct {
 	Description string `json:"description,omitempty"`
 }
 
-// RenderDashboard renders a self-contained page for OpenAI-compatible provider
+// RenderDashboard renders a self-contained page for CPA AI provider
 // balance mappings and queries. Secrets are loaded by the page at runtime and
 // are never interpolated into the generated HTML.
 func RenderDashboard(ttlSeconds int) []byte {
 	definitions := make([]providerDefinition, 0, len(balance.AllProviders()))
 	for _, providerType := range balance.AllProviders() {
+		switch providerType {
+		case balance.ProviderMiniMaxAPI, balance.ProviderXiaomiAPI, balance.ProviderXiaomiToken,
+			balance.ProviderLongcat, balance.ProviderOpenCode, balance.ProviderVolcengine:
+			// These providers have no public model-API-key balance endpoint. Keeping
+			// them out of the selector avoids offering a mapping that cannot work.
+			continue
+		}
 		definition := providerDefinition{
 			Value:  string(providerType),
 			Label:  balance.ProviderLabel[providerType],
 			Status: "available",
-		}
-		switch providerType {
-		case balance.ProviderMiniMaxAPI, balance.ProviderXiaomiAPI, balance.ProviderXiaomiToken,
-			balance.ProviderLongcat, balance.ProviderOpenCode, balance.ProviderVolcengine:
-			definition.Status = "console_only"
-			definition.Description = "官方未提供模型 API Key 余额查询接口，仅能在官网登录控制台查看。"
 		}
 		definitions = append(definitions, definition)
 	}
@@ -469,7 +470,6 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .quota-group{border-top:1px solid var(--border-color);padding-top:12px}
 .quota-group-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
 .quota-group-title{font-size:12px;font-weight:650;color:var(--text-secondary);margin:0;overflow-wrap:anywhere}
-.quota-group-count{font-size:10px;color:var(--text-tertiary);border:1px solid var(--border-color);border-radius:9999px;padding:1px 6px;white-space:nowrap}
 .quota-window-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
 .quota-window{min-width:0;padding:11px 12px;border:1px solid var(--border-color);border-radius:9px;background:color-mix(in srgb,var(--bg-primary) 78%,var(--bg-secondary));transition:border-color var(--motion-fast),background-color var(--motion-normal)}
 .quota-window.unlimited{border-color:color-mix(in srgb,var(--success-color) 38%,var(--border-color));background:color-mix(in srgb,var(--success-color) 6%,var(--bg-primary))}
@@ -494,8 +494,6 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .detail-row{min-width:0;padding:6px 8px;border-radius:7px;background:var(--bg-tertiary)}
 .detail-row dt{font-size:10px;color:var(--text-tertiary);margin:0}
 .detail-row dd{font-size:11px;color:var(--text-secondary);margin:2px 0 0;overflow-wrap:anywhere}
-.notice{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:1px solid var(--warning-border);border-radius:8px;background:var(--warning-bg);color:var(--warning-text);font-size:13px;margin-bottom:14px;animation:item-in 300ms ease-out both}
-.notice .icon{margin-top:1px}
 .empty-state{min-height:260px;border:1px dashed var(--border-color);border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px;color:var(--text-secondary)}
 .empty-icon{width:42px;height:42px;display:grid;place-items:center;border-radius:8px;background:var(--bg-tertiary);color:var(--text-secondary);margin-bottom:12px}
 .empty-icon .icon{width:20px;height:20px}
@@ -512,6 +510,14 @@ td{padding:12px 14px;border-bottom:1px solid var(--border-color);vertical-align:
 tbody tr:last-child td{border-bottom:0}
 tbody tr{transition:background 150ms ease}
 tbody tr:hover{background:var(--bg-hover)}
+.provider-group-row{transition:none}
+.provider-group-row:hover{background:transparent}
+.provider-group-row td{padding:12px 14px 9px;border-bottom:1px solid var(--border-color);background:var(--bg-quinary)}
+.provider-group-row:not(:first-child) td{border-top:8px solid var(--bg-secondary)}
+.provider-group-heading{display:flex;align-items:center;gap:8px;min-width:0;color:var(--text-primary)}
+.provider-group-heading .icon{width:15px;height:15px;color:var(--text-secondary)}
+.provider-group-title{font-size:13px;font-weight:680;line-height:1.3}
+.provider-group-hint{margin-left:auto;color:var(--text-tertiary);font-size:10px;font-weight:500;white-space:nowrap}
 .provider-cell{min-width:0}
 .provider-title-line{display:flex;align-items:center;gap:7px;min-width:0}
 .provider-title{font-weight:620;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -519,10 +525,9 @@ tbody tr:hover{background:var(--bg-hover)}
 .provider-base{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;color:var(--text-tertiary);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:3px}
 .key-list{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
 .key-chip{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;border:1px solid var(--border-color);border-radius:5px;background:var(--bg-tertiary);color:var(--text-secondary);font-size:10px;padding:2px 5px}
+.key-chip.disabled{color:var(--text-tertiary);text-decoration:line-through;opacity:.72}
 select{width:100%;height:36px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);color:var(--text-primary);padding:0 30px 0 10px;transition:border-color 150ms ease,box-shadow 150ms ease}
 select:hover{border-color:var(--border-hover)}
-.query-help{display:flex;align-items:flex-start;gap:5px;margin-top:6px;color:var(--amber-text);font-size:10px;line-height:1.4}
-.query-help .icon{width:12px;height:12px;margin-top:1px}
 .save-state{min-height:18px;color:var(--text-tertiary);font-size:12px}
 .connection-shell{min-height:calc(100vh - 48px);display:grid;place-items:center;padding:24px}
 .connection-card{width:min(100%,430px);border:1px solid var(--border-color);border-radius:8px;background:var(--bg-primary);box-shadow:var(--shadow-lg);padding:22px;animation:item-in 300ms ease-out both}
@@ -557,7 +562,7 @@ select:hover{border-color:var(--border-hover)}
   .quota-window-grid,.detail-grid{grid-template-columns:1fr}
   .result-head{align-items:stretch;flex-direction:column}.result-actions{justify-content:space-between}.result-actions .badge{margin-right:auto}
   .settings-toolbar{align-items:flex-start;flex-direction:column}.ttl-field{width:100%;justify-content:space-between}
-  table,thead,tbody,tr,th,td{display:block}thead{display:none}table{table-layout:auto}tbody tr{padding:13px 14px;border-bottom:1px solid var(--border-color)}tbody tr:last-child{border-bottom:0}td{padding:0;border:0}td+td{margin-top:10px}.provider-base{white-space:normal;overflow-wrap:anywhere}.query-cell::before{content:"余额查询类型";display:block;color:var(--text-tertiary);font-size:11px;margin-bottom:5px}
+  table,thead,tbody,tr,th,td{display:block}thead{display:none}table{table-layout:auto}tbody tr{padding:13px 14px;border-bottom:1px solid var(--border-color)}tbody tr:last-child{border-bottom:0}td{padding:0;border:0}td+td{margin-top:10px}.provider-group-row{padding:0;border-bottom:0}.provider-group-row td{padding:11px 14px}.provider-group-row:not(:first-child) td{border-top:8px solid var(--bg-secondary)}.provider-group-hint{display:none}.provider-base{white-space:normal;overflow-wrap:anywhere}.query-cell::before{content:"余额查询类型";display:block;color:var(--text-tertiary);font-size:11px;margin-bottom:5px}
 }
 @media (max-width:420px){.btn-label.optional{display:none}.summary-item{padding:12px}.result-card{padding:14px}.masthead{padding:16px}.connection-shell{padding:14px}.connection-card{padding:18px}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}.btn:hover:not(:disabled),.result-card:hover,.summary-item:hover{transform:none}}
@@ -586,7 +591,7 @@ select:hover{border-color:var(--border-hover)}
       <div class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-wallet"></use></svg></div>
       <div>
         <h1>余额与配额</h1>
-        <p class="subtitle">查询 OpenAI 兼容提供商的账户余额与套餐配额</p>
+        <p class="subtitle">查询 AI 提供商的账户余额、用量与套餐配额</p>
       </div>
     </div>
     <div class="head-state" aria-live="polite"><span id="connection-dot" class="state-dot pending"></span><span id="connection-state">正在连接 CPA</span></div>
@@ -606,12 +611,11 @@ select:hover{border-color:var(--border-hover)}
 
   <section id="view-overview" role="tabpanel" aria-labelledby="tab-overview">
     <div class="summary" aria-label="余额查询概览">
-      <div class="summary-item"><span id="stat-providers" class="summary-value">0</span><span class="summary-label">兼容提供商</span></div>
+      <div class="summary-item"><span id="stat-providers" class="summary-value">0</span><span class="summary-label">AI 提供商</span></div>
       <div class="summary-item"><span id="stat-configured" class="summary-value">0</span><span class="summary-label">已配置查询</span></div>
       <div class="summary-item"><span id="stat-keys" class="summary-value">0</span><span class="summary-label">可查询密钥</span></div>
       <div class="summary-item"><span id="stat-success" class="summary-value">0</span><span class="summary-label">本次查询成功</span></div>
     </div>
-    <div id="overview-notice"></div>
     <div class="section-head">
       <div><h2 class="section-title">账户余额</h2><p id="query-meta" class="section-meta">正在读取提供商配置</p></div>
     </div>
@@ -620,7 +624,7 @@ select:hover{border-color:var(--border-hover)}
 
   <section id="view-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
     <div class="section-head">
-      <div><h2 class="section-title">查询映射</h2><p class="section-meta">为每个 OpenAI 兼容提供商手动指定余额查询类型</p></div>
+      <div><h2 class="section-title">查询映射</h2><p class="section-meta">按 AI 提供商和服务地址手动指定余额查询类型</p></div>
       <div id="save-state" class="save-state" aria-live="polite"></div>
     </div>
     <div class="settings-sheet">
@@ -631,7 +635,7 @@ select:hover{border-color:var(--border-hover)}
       <div class="table-wrap">
         <table>
           <colgroup><col style="width:38%"><col style="width:28%"><col style="width:34%"></colgroup>
-          <thead><tr><th scope="col">OpenAI 兼容提供商</th><th scope="col">接口密钥</th><th scope="col">余额查询类型</th></tr></thead>
+          <thead><tr><th scope="col">AI 提供商与服务地址</th><th scope="col">接口密钥</th><th scope="col">余额查询类型</th></tr></thead>
           <tbody id="settings-body"></tbody>
         </table>
       </div>
@@ -678,10 +682,8 @@ select:hover{border-color:var(--border-hover)}
     dirty: false
   };
   var providerLabels = Object.create(null);
-  var providerDefinitions = Object.create(null);
   PROVIDER_DEFINITIONS.forEach(function (item) {
     providerLabels[item.value] = item.label;
-    providerDefinitions[item.value] = item;
   });
 
   function byID(id) { return document.getElementById(id); }
@@ -807,11 +809,72 @@ select:hover{border-color:var(--border-hover)}
     }).finally(function () { window.clearTimeout(timer); });
   }
 
-  function normalizeBaseForKey(value) { return String(value || "").trim().replace(/\/+$/, ""); }
-  function mappingKey(provider) {
-    return encodeURIComponent(String(provider.name || "").trim()) + "|" + encodeURIComponent(normalizeBaseForKey(provider.baseUrl));
+  function optionalApiFetch(path) {
+    return apiFetch(path).catch(function (error) {
+      if (error && error.status === 404) return {};
+      throw error;
+    });
   }
-  function normalizeProvider(raw, index) {
+
+  function legacyNormalizeBaseForKey(value) { return String(value || "").trim().replace(/\/+$/, ""); }
+  function normalizeBaseForKey(value) {
+    var raw = String(value || "").trim();
+    if (!raw) return "";
+    try {
+      var parsed = new URL(raw);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return legacyNormalizeBaseForKey(raw);
+      if (parsed.username || parsed.password) return legacyNormalizeBaseForKey(raw);
+      parsed.search = "";
+      parsed.hash = "";
+      var normalizedPath = parsed.pathname.replace(/\/+$/, "");
+      return parsed.origin + normalizedPath;
+    } catch (_) {
+      return legacyNormalizeBaseForKey(raw);
+    }
+  }
+  function providerCategoryLabel(value) {
+    var raw = String(value || "").trim();
+    var normalized = raw.toLowerCase().replace(/[_\s]+/g, "-");
+    var labels = {
+      "openai-compatibility":"OpenAI 兼容",
+      "openai-compatible":"OpenAI 兼容",
+      "openai":"OpenAI 兼容",
+      "claude":"Claude",
+      "claude-api-key":"Claude",
+      "anthropic":"Claude",
+      "xai":"xAI",
+      "xai-api-key":"xAI",
+      "grok":"xAI",
+      "codex":"Codex",
+      "codex-api-key":"Codex",
+      "gemini":"Gemini",
+      "gemini-api-key":"Gemini",
+      "google":"Gemini"
+    };
+    return labels[normalized] || raw || "OpenAI 兼容";
+  }
+  function providerCategoryRank(value) {
+    var order = { "OpenAI 兼容":10, "Claude":20, "xAI":30, "Codex":40, "Gemini":50 };
+    return owns(order, value) ? order[value] : 100;
+  }
+  function providerMappingKey(provider, normalizeBase) {
+    var identity = encodeURIComponent(String(provider.name || "").trim()) + "|" + encodeURIComponent(normalizeBase(provider.baseUrl));
+    var category = providerCategoryLabel(provider.category);
+    // Preserve existing OpenAI-compatible mapping keys while keeping native
+    // provider categories with the same name/address independent.
+    return category === "OpenAI 兼容" ? identity : encodeURIComponent(category) + "|" + identity;
+  }
+  function mappingKey(provider) { return providerMappingKey(provider, normalizeBaseForKey); }
+  function legacyMappingKey(provider) { return providerMappingKey(provider, legacyNormalizeBaseForKey); }
+  function mappedQueryType(provider, mappings) {
+    mappings = mappings || {};
+    return mappings[provider.mappingKey] || mappings[provider.legacyMappingKey] || "";
+  }
+  function keyEntryDisabled(entry) {
+    var excluded = entry && Array.isArray(entry["excluded-models"]) ? entry["excluded-models"] : [];
+    return excluded.some(function (model) { return String(model || "").trim() === "*"; });
+  }
+  function normalizeProvider(raw, index, source) {
     var entries = Array.isArray(raw && raw["api-key-entries"]) ? raw["api-key-entries"] : [];
     var keys = entries.reduce(function (list, entry) {
       var apiKey = entry && typeof entry["api-key"] === "string" ? entry["api-key"] : "";
@@ -819,19 +882,92 @@ select:hover{border-color:var(--border-hover)}
       list.push({
         apiKey: apiKey,
         authIndex: String(entry["auth-index"] || ""),
-        proxyUrl: String(entry["proxy-url"] || "")
+        proxyUrl: String(entry["proxy-url"] || ""),
+        disabled: keyEntryDisabled(entry)
       });
       return list;
     }, []);
+    var sourceName = typeof source === "string" ? source : String(raw && (raw.category || raw.source || raw["provider-type"]) || "openai-compatibility");
     var provider = {
       name: String(raw && raw.name || ("未命名提供商 " + (index + 1))),
       baseUrl: String(raw && raw["base-url"] || ""),
+      category: providerCategoryLabel(sourceName),
       disabled: Boolean(raw && raw.disabled),
       keys: keys,
       index: index
     };
     provider.mappingKey = mappingKey(provider);
+    provider.legacyMappingKey = legacyMappingKey(provider);
     return provider;
+  }
+
+  function nativeDefaultBase(source) {
+    var defaults = {
+      "claude-api-key":"https://api.anthropic.com",
+      "xai-api-key":"https://api.x.ai/v1",
+      "codex-api-key":"https://api.openai.com/v1",
+      "gemini-api-key":"https://generativelanguage.googleapis.com"
+    };
+    return defaults[source] || "";
+  }
+
+  function serviceName(category, baseURL) {
+    try {
+      var parsed = new URL(baseURL);
+      return category + " · " + parsed.host;
+    } catch (_) {
+      return category + " · 默认服务";
+    }
+  }
+
+  function normalizeNativeProviders(payload, source) {
+    var list = payload && Array.isArray(payload[source]) ? payload[source] : [];
+    var category = providerCategoryLabel(source);
+    var grouped = Object.create(null);
+    list.forEach(function (entry) {
+      if (!entry || typeof entry !== "object") return;
+      var apiKey = String(entry["api-key"] || "").trim();
+      if (!apiKey) return;
+      var baseURL = normalizeBaseForKey(entry["base-url"] || nativeDefaultBase(source));
+      var groupKey = baseURL || "__default__";
+      if (!grouped[groupKey]) {
+        grouped[groupKey] = {
+          name:serviceName(category, baseURL),
+          "base-url":baseURL,
+          "api-key-entries":[]
+        };
+      }
+      grouped[groupKey]["api-key-entries"].push({
+        "api-key":apiKey,
+        "auth-index":String(entry["auth-index"] || ""),
+        "proxy-url":String(entry["proxy-url"] || ""),
+        "excluded-models":Array.isArray(entry["excluded-models"]) ? entry["excluded-models"] : []
+      });
+    });
+    return Object.keys(grouped).sort(function (left, right) {
+      return left.localeCompare(right, "zh-CN");
+    }).map(function (key, index) {
+      return normalizeProvider(grouped[key], index, source);
+    });
+  }
+
+  function groupedProviders() {
+    var groups = Object.create(null);
+    state.providers.forEach(function (provider) {
+      var category = providerCategoryLabel(provider.category);
+      if (!groups[category]) groups[category] = [];
+      groups[category].push(provider);
+    });
+    return Object.keys(groups).sort(function (left, right) {
+      var rank = providerCategoryRank(left) - providerCategoryRank(right);
+      return rank || left.localeCompare(right, "zh-CN");
+    }).map(function (category) {
+      groups[category].sort(function (left, right) {
+        var addressOrder = normalizeBaseForKey(left.baseUrl).localeCompare(normalizeBaseForKey(right.baseUrl), "zh-CN");
+        return addressOrder || left.name.localeCompare(right.name, "zh-CN");
+      });
+      return { category:category, providers:groups[category] };
+    });
   }
 
   function normalizeConfig(raw) {
@@ -948,9 +1084,10 @@ select:hover{border-color:var(--border-hover)}
     var accounts = [];
     state.providers.forEach(function (provider) {
       if (provider.disabled) return;
-      var queryType = state.config.provider_mappings[provider.mappingKey];
+      var queryType = mappedQueryType(provider, state.config.provider_mappings);
       if (!providerLabels[queryType]) return;
       provider.keys.forEach(function (keyEntry, index) {
+        if (keyEntry.disabled) return;
         accounts.push({
           id: keyEntry.authIndex || ("compat-" + tinyHash(provider.mappingKey) + "-" + (index + 1)),
           provider_key: provider.mappingKey,
@@ -967,12 +1104,15 @@ select:hover{border-color:var(--border-hover)}
 
   function configuredProviderCount() {
     return state.providers.filter(function (provider) {
-      return !provider.disabled && Boolean(providerLabels[state.config.provider_mappings[provider.mappingKey]]);
+      return !provider.disabled && Boolean(providerLabels[mappedQueryType(provider, state.config.provider_mappings)]);
     }).length;
   }
 
   function updateSummary() {
-    var keyCount = state.providers.reduce(function (sum, provider) { return sum + (provider.disabled ? 0 : provider.keys.length); }, 0);
+    var keyCount = state.providers.reduce(function (sum, provider) {
+      if (provider.disabled) return sum;
+      return sum + provider.keys.filter(function (entry) { return !entry.disabled; }).length;
+    }, 0);
     var successCount = state.results.filter(function (result) { return !result.error; }).length;
     setText(byID("stat-providers"), state.providers.length);
     setText(byID("stat-configured"), configuredProviderCount());
@@ -1085,7 +1225,11 @@ select:hover{border-color:var(--border-hover)}
   }
 
   function formatBalance(result) {
-    if (result.quota_display) return redactSecrets(result.quota_display);
+    if (result.quota_display) {
+      var display = redactSecrets(result.quota_display);
+      var countSummary = /(?:已获取\s*)?\d+\s*(?:个|项)?(?:资源|配额窗口|配额周期|账户详情)|共\s*\d+\s*个?配额窗口/.test(display);
+      if (!countSummary) return display;
+    }
     if (owns(result, "balance_usd")) {
       var amount = Number(result.balance_usd);
       if (Number.isFinite(amount)) return "$" + amount.toFixed(amount >= 100 ? 2 : 4);
@@ -1093,11 +1237,7 @@ select:hover{border-color:var(--border-hover)}
     if (Number(result.tokens_total) > 0) {
       return Number(result.tokens_remaining || 0).toLocaleString("zh-CN") + " 可用令牌";
     }
-    var windowCount = Array.isArray(result.quota_windows) ? result.quota_windows.length : 0;
-    if (windowCount) return windowCount + " 个配额周期";
-    var detailCount = result.extra && typeof result.extra === "object" ? Object.keys(result.extra).length : 0;
-    if (detailCount) return detailCount + " 项账户详情";
-    return "暂无可展示的配额数值";
+    return "";
   }
 
   function detailLabel(key) {
@@ -1286,7 +1426,6 @@ select:hover{border-color:var(--border-hover)}
       var section = element("section", "quota-group");
       var heading = element("div", "quota-group-head");
       heading.appendChild(element("h3", "quota-group-title", redactSecrets(translateDisplayText(group.name))));
-      heading.appendChild(element("span", "quota-group-count", group.windows.length + " 个周期"));
       section.appendChild(heading);
       var grid = element("div", "quota-window-grid");
       group.windows.forEach(function (item) { grid.appendChild(quotaWindowCard(item)); });
@@ -1349,21 +1488,20 @@ select:hover{border-color:var(--border-hover)}
   }
 
   function resultCard(result, index) {
-    var consoleOnly = Boolean(result.error) && /控制台|官网登录|订阅管理页/.test(String(result.error));
-    var failed = Boolean(result.error) && !consoleOnly;
+    var failed = Boolean(result.error);
     var detailKeys = !result.error ? extraDetailKeys(result) : [];
     var detailsID = "account-details-" + index + "-" + tinyHash(String(result.account_name || "") + "|" + String(result.base_url || ""));
-    var card = element("article", "result-card" + (failed ? " error" : consoleOnly ? " limited" : ""));
+    var card = element("article", "result-card" + (failed ? " error" : ""));
     card.style.animationDelay = Math.min(index * 35, 210) + "ms";
     var head = element("div", "result-head");
     var identity = element("div", "provider-cell");
     identity.appendChild(element("div", "result-name", result.account_name || result.provider || "余额账户"));
     identity.appendChild(element("div", "result-url", result.base_url || ""));
     head.appendChild(identity);
-    var badge = element("span", "badge " + (failed ? "failure" : consoleOnly ? "warning" : "success"));
-    badge.appendChild(icon(failed || consoleOnly ? "alert" : "check"));
+    var badge = element("span", "badge " + (failed ? "failure" : "success"));
+    badge.appendChild(icon(failed ? "alert" : "check"));
     var hasWindows = Array.isArray(result.quota_windows) && result.quota_windows.length > 0;
-    badge.appendChild(element("span", "", failed ? "查询失败" : consoleOnly ? "仅控制台可查" : hasWindows ? "配额已更新" : "查询成功"));
+    badge.appendChild(element("span", "", failed ? "查询失败" : hasWindows ? "配额已更新" : "查询成功"));
     var actions = element("div", "result-actions");
     actions.appendChild(badge);
     var detailButton = null;
@@ -1381,12 +1519,13 @@ select:hover{border-color:var(--border-hover)}
     card.appendChild(head);
 
     var overview = element("div", "result-overview");
-    if (failed || consoleOnly) {
-      overview.appendChild(element("div", "quota-main failure", consoleOnly ? "当前模型密钥不能直接查询余额" : "查询失败，请检查密钥、接口地址或账户状态"));
+    if (failed) {
+      overview.appendChild(element("div", "quota-main failure", "查询失败，请检查密钥、接口地址或账户状态"));
       overview.appendChild(element("div", "error-detail", localizedError(result.error)));
       card.appendChild(overview);
     } else {
-      overview.appendChild(element("div", "quota-main", formatBalance(result)));
+      var balanceText = formatBalance(result);
+      if (balanceText) overview.appendChild(element("div", "quota-main", balanceText));
       renderAccountMeta(overview, result);
       card.appendChild(overview);
       var renderedWindows = renderQuotaGroups(card, result);
@@ -1435,33 +1574,19 @@ select:hover{border-color:var(--border-hover)}
     return card;
   }
 
-  function renderNotice() {
-    var target = byID("overview-notice");
-    target.textContent = "";
-    var unconfigured = state.providers.filter(function (provider) {
-      return !provider.disabled && !providerLabels[state.config.provider_mappings[provider.mappingKey]];
-    });
-    if (!unconfigured.length || !state.providers.length) return;
-    var notice = element("div", "notice");
-    notice.appendChild(icon("alert"));
-    notice.appendChild(element("span", "", unconfigured.length + " 个提供商尚未选择余额查询类型，可在“查询设置”中配置。"));
-    target.appendChild(notice);
-  }
-
   function renderResults() {
     var target = byID("results");
     target.setAttribute("aria-busy", "false");
-    renderNotice();
     updateSummary();
     if (!state.providers.length) {
-      setText(byID("query-meta"), "未发现 OpenAI 兼容提供商");
-      emptyState(target, "暂无兼容提供商", "请先在 CPA 的 AI 提供商页面添加 OpenAI 兼容提供商。", null, null);
+      setText(byID("query-meta"), "未发现 AI 提供商");
+      emptyState(target, "暂无 AI 提供商", "请先在 CPA 的 AI 提供商页面添加提供商和接口密钥。", null, null);
       return;
     }
     var activeProviders = state.providers.filter(function (provider) { return !provider.disabled; });
     if (!activeProviders.length) {
-      setText(byID("query-meta"), "没有启用的兼容提供商");
-      emptyState(target, "所有兼容提供商均已停用", "请先在 CPA 的 AI 提供商页面启用至少一个 OpenAI 兼容提供商。", null, null);
+      setText(byID("query-meta"), "没有启用的 AI 提供商");
+      emptyState(target, "所有 AI 提供商均已停用", "请先在 CPA 的 AI 提供商页面启用至少一个提供商。", null, null);
       return;
     }
     var accounts = buildAccounts();
@@ -1513,21 +1638,13 @@ select:hover{border-color:var(--border-hover)}
       wrap.appendChild(element("span", "badge muted", "未配置密钥"));
       return wrap;
     }
-    provider.keys.slice(0, 3).forEach(function (entry) { wrap.appendChild(element("span", "key-chip", maskKey(entry.apiKey))); });
+    provider.keys.slice(0, 3).forEach(function (entry) {
+      var chip = element("span", "key-chip" + (entry.disabled ? " disabled" : ""), maskKey(entry.apiKey) + (entry.disabled ? "（停用）" : ""));
+      if (entry.disabled) chip.title = "该密钥已在 CPA 中停用";
+      wrap.appendChild(chip);
+    });
     if (provider.keys.length > 3) wrap.appendChild(element("span", "badge muted", "另有 " + (provider.keys.length - 3) + " 个"));
     return wrap;
-  }
-
-  function updateQueryHelp(target, value) {
-    target.textContent = "";
-    var definition = providerDefinitions[value];
-    if (!definition || definition.status !== "console_only") {
-      target.hidden = true;
-      return;
-    }
-    target.hidden = false;
-    target.appendChild(icon("alert"));
-    target.appendChild(element("span", "", definition.description || "该平台仅能在官网登录控制台查看余额。"));
   }
 
   function renderSettings() {
@@ -1537,49 +1654,58 @@ select:hover{border-color:var(--border-hover)}
     byID("ttl-input").value = String(state.config.cache_ttl_seconds);
     if (!state.providers.length) {
       empty.hidden = false;
-      emptyState(empty, "暂无兼容提供商", "请先在 CPA 的 AI 提供商页面添加 OpenAI 兼容提供商。", null, null);
+      emptyState(empty, "暂无 AI 提供商", "请先在 CPA 的 AI 提供商页面添加提供商和接口密钥。", null, null);
       return;
     }
     empty.hidden = true;
-    state.providers.forEach(function (provider) {
-      var row = document.createElement("tr");
-      var providerCell = element("td", "provider-cell");
-      var titleLine = element("div", "provider-title-line");
-      titleLine.appendChild(element("span", "provider-title", provider.name));
-      if (provider.disabled) titleLine.appendChild(element("span", "provider-disabled", "已停用"));
-      providerCell.appendChild(titleLine);
-      providerCell.appendChild(element("div", "provider-base", provider.baseUrl || "未设置接口地址"));
-      row.appendChild(providerCell);
-      var keysCell = document.createElement("td");
-      keysCell.appendChild(keyChips(provider));
-      row.appendChild(keysCell);
-      var queryCell = element("td", "query-cell");
-      var select = document.createElement("select");
-      select.setAttribute("aria-label", provider.name + " 的余额查询类型");
-      var blank = document.createElement("option");
-      blank.value = "";
-      blank.textContent = "不查询";
-      select.appendChild(blank);
-      PROVIDER_DEFINITIONS.forEach(function (definition) {
-        var option = document.createElement("option");
-        option.value = definition.value;
-        option.textContent = definition.label + (definition.status === "console_only" ? "（仅控制台可查）" : "");
-        select.appendChild(option);
+    groupedProviders().forEach(function (group) {
+      var groupRow = element("tr", "provider-group-row");
+      var groupCell = document.createElement("td");
+      groupCell.colSpan = 3;
+      var groupHeading = element("div", "provider-group-heading");
+      groupHeading.appendChild(icon("server"));
+      groupHeading.appendChild(element("span", "provider-group-title", group.category));
+      groupHeading.appendChild(element("span", "provider-group-hint", "按服务地址分别配置"));
+      groupCell.appendChild(groupHeading);
+      groupRow.appendChild(groupCell);
+      body.appendChild(groupRow);
+      group.providers.forEach(function (provider) {
+        var row = document.createElement("tr");
+        var providerCell = element("td", "provider-cell");
+        var titleLine = element("div", "provider-title-line");
+        titleLine.appendChild(element("span", "provider-title", provider.name));
+        if (provider.disabled) titleLine.appendChild(element("span", "provider-disabled", "已停用"));
+        providerCell.appendChild(titleLine);
+        providerCell.appendChild(element("div", "provider-base", provider.baseUrl || "官方默认服务地址"));
+        row.appendChild(providerCell);
+        var keysCell = document.createElement("td");
+        keysCell.appendChild(keyChips(provider));
+        row.appendChild(keysCell);
+        var queryCell = element("td", "query-cell");
+        var select = document.createElement("select");
+        select.setAttribute("aria-label", provider.name + " 的余额查询类型");
+        var blank = document.createElement("option");
+        blank.value = "";
+        blank.textContent = "不查询";
+        select.appendChild(blank);
+        PROVIDER_DEFINITIONS.forEach(function (definition) {
+          var option = document.createElement("option");
+          option.value = definition.value;
+          option.textContent = definition.label;
+          select.appendChild(option);
+        });
+        select.value = mappedQueryType(provider, state.draftMappings);
+        select.addEventListener("change", function () {
+          delete state.draftMappings[provider.legacyMappingKey];
+          if (select.value) state.draftMappings[provider.mappingKey] = select.value;
+          else delete state.draftMappings[provider.mappingKey];
+          state.dirty = true;
+          setText(byID("save-state"), "有未保存的更改");
+        });
+        queryCell.appendChild(select);
+        row.appendChild(queryCell);
+        body.appendChild(row);
       });
-      select.value = state.draftMappings[provider.mappingKey] || "";
-      var queryHelp = element("div", "query-help");
-      updateQueryHelp(queryHelp, select.value);
-      select.addEventListener("change", function () {
-        if (select.value) state.draftMappings[provider.mappingKey] = select.value;
-        else delete state.draftMappings[provider.mappingKey];
-        updateQueryHelp(queryHelp, select.value);
-        state.dirty = true;
-        setText(byID("save-state"), "有未保存的更改");
-      });
-      queryCell.appendChild(select);
-      queryCell.appendChild(queryHelp);
-      row.appendChild(queryCell);
-      body.appendChild(row);
     });
   }
 
@@ -1595,7 +1721,7 @@ select:hover{border-color:var(--border-hover)}
     if (ttl == null) { toast("缓存时长应为 0，或 10 至 86400 之间的整数", true); byID("ttl-input").focus(); return; }
     var nextMappings = {};
     state.providers.forEach(function (provider) {
-      var selected = state.draftMappings[provider.mappingKey];
+      var selected = mappedQueryType(provider, state.draftMappings);
       if (providerLabels[selected]) nextMappings[provider.mappingKey] = selected;
     });
     state.saving = true;
@@ -1626,16 +1752,27 @@ select:hover{border-color:var(--border-hover)}
   function loadData() {
     showApp();
     showSkeletons();
-    setText(byID("query-meta"), "正在读取 OpenAI 兼容提供商");
+    setText(byID("query-meta"), "正在读取 AI 提供商");
     return Promise.all([
       apiFetch("/openai-compatibility"),
+      optionalApiFetch("/claude-api-key"),
+      optionalApiFetch("/xai-api-key"),
+      optionalApiFetch("/codex-api-key"),
+      optionalApiFetch("/gemini-api-key"),
       apiFetch("/plugins/balance-query/config"),
       apiFetch("/proxy-url")
     ]).then(function (responses) {
       var list = responses[0] && responses[0]["openai-compatibility"];
-      state.providers = (Array.isArray(list) ? list : []).map(normalizeProvider);
-      state.config = normalizeConfig(responses[1]);
-      state.globalProxyUrl = String(responses[2] && responses[2]["proxy-url"] || "").trim();
+      state.providers = (Array.isArray(list) ? list : []).map(function (entry, index) {
+        return normalizeProvider(entry, index, "openai-compatibility");
+      });
+      state.providers = state.providers
+        .concat(normalizeNativeProviders(responses[1], "claude-api-key"))
+        .concat(normalizeNativeProviders(responses[2], "xai-api-key"))
+        .concat(normalizeNativeProviders(responses[3], "codex-api-key"))
+        .concat(normalizeNativeProviders(responses[4], "gemini-api-key"));
+      state.config = normalizeConfig(responses[5]);
+      state.globalProxyUrl = String(responses[6] && responses[6]["proxy-url"] || "").trim();
       state.draftMappings = Object.assign({}, state.config.provider_mappings);
       state.results = [];
       state.dirty = false;

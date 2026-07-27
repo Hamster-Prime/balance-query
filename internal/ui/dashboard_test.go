@@ -6,10 +6,14 @@ import (
 	"testing"
 )
 
-func TestRenderDashboardUsesOpenAICompatibilityManagementAPIs(t *testing.T) {
+func TestRenderDashboardUsesAIProviderManagementAPIs(t *testing.T) {
 	page := string(RenderDashboard(300))
 	for _, want := range []string{
 		`/openai-compatibility`,
+		`/claude-api-key`,
+		`/xai-api-key`,
+		`/codex-api-key`,
+		`/gemini-api-key`,
 		`/plugins/balance-query/config`,
 		`/proxy-url`,
 		`/balance-query/query`,
@@ -37,7 +41,7 @@ func TestRenderDashboardIncludesChineseThemeAwareUI(t *testing.T) {
 	for _, want := range []string{
 		`lang="zh-CN"`,
 		`余额与配额`,
-		`OpenAI 兼容提供商`,
+		`AI 提供商`,
 		`查询设置`,
 		`接口密钥`,
 		`data-theme`,
@@ -87,6 +91,30 @@ func TestRenderDashboardShowsAllStructuredQuotaWindows(t *testing.T) {
 	}
 }
 
+func TestRenderDashboardDoesNotShowQuotaWindowCounts(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, unwanted := range []string{
+		`group.windows.length + " 个周期"`,
+		`windowCount + " 个配额周期"`,
+		`detailCount + " 项账户详情"`,
+		`个提供商尚未选择余额查询类型`,
+		`id="overview-notice"`,
+	} {
+		if strings.Contains(page, unwanted) {
+			t.Fatalf("dashboard still renders unwanted count or notice marker %q", unwanted)
+		}
+	}
+	for _, want := range []string{
+		`var countSummary =`,
+		`if (!countSummary) return display;`,
+		`if (balanceText) overview.appendChild`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing count-summary suppression marker %q", want)
+		}
+	}
+}
+
 func TestRenderDashboardShowsEveryExtraDetailInStableOrder(t *testing.T) {
 	page := string(RenderDashboard(300))
 	if strings.Contains(page, `Object.keys(result.extra).slice`) {
@@ -119,9 +147,9 @@ func TestRenderDashboardFailureCardsStayCompactWithoutDetailContent(t *testing.T
 		}
 	}
 
-	failedBranch := regexp.MustCompile(`(?s)if\s*\(failed\s*\|\|\s*consoleOnly\).*?\}\s*else\s*\{.*?renderQuotaGroups`)
+	failedBranch := regexp.MustCompile(`(?s)if\s*\(failed\).*?\}\s*else\s*\{.*?renderQuotaGroups`)
 	if !failedBranch.MatchString(page) {
-		t.Fatal("dashboard should keep quota groups out of the failed/console-only card branch")
+		t.Fatal("dashboard should keep quota groups out of the failed card branch")
 	}
 }
 
@@ -151,18 +179,70 @@ func TestRenderDashboardUsesSingleColumnCollapsibleAccountDetails(t *testing.T) 
 	}
 }
 
-func TestRenderDashboardMarksConsoleOnlyProviders(t *testing.T) {
+func TestRenderDashboardGroupsProvidersByCategoryAndServiceAddress(t *testing.T) {
 	page := string(RenderDashboard(300))
 	for _, want := range []string{
-		`"status":"console_only"`,
-		`仅控制台可查`,
-		`官方未提供模型 API Key 余额查询接口`,
-		`当前模型密钥不能直接查询余额`,
-		`query-help`,
+		`providerCategoryLabel`,
+		`groupedProviders`,
+		`"openai-compatibility":"OpenAI 兼容"`,
+		`"claude-api-key":"Claude"`,
+		`"xai-api-key":"xAI"`,
+		`"codex-api-key":"Codex"`,
+		`"gemini-api-key":"Gemini"`,
+		`"xai-api-key":"https://api.x.ai/v1"`,
+		`provider-group-row`,
+		`provider-group-title`,
+		`按服务地址分别配置`,
+		`provider.baseUrl || "官方默认服务地址"`,
+		`normalizeBaseForKey(left.baseUrl).localeCompare`,
+		`category === "OpenAI 兼容" ? identity`,
+		`var normalizedPath = parsed.pathname.replace`,
+		`mappedQueryType`,
+		`legacyMappingKey`,
 	} {
 		if !strings.Contains(page, want) {
-			t.Fatalf("dashboard is missing console-only provider marker %q", want)
+			t.Fatalf("dashboard is missing provider grouping marker %q", want)
 		}
+	}
+	if strings.Contains(page, `var groupKey = baseURL.toLowerCase()`) {
+		t.Fatal("dashboard must preserve case-sensitive URL paths while grouping services")
+	}
+}
+
+func TestRenderDashboardSkipsNativeKeysDisabledInCPA(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, want := range []string{
+		`keyEntryDisabled`,
+		`entry["excluded-models"]`,
+		`if (keyEntry.disabled) return;`,
+		`entry.disabled ? " disabled"`,
+		`该密钥已在 CPA 中停用`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing disabled-key behavior %q", want)
+		}
+	}
+}
+
+func TestRenderDashboardOmitsConsoleOnlyQueryOptions(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, unavailable := range []string{
+		`"value":"minimax_api"`,
+		`"value":"xiaomi_api"`,
+		`"value":"xiaomi_token"`,
+		`"value":"longcat"`,
+		`"value":"opencode"`,
+		`"value":"volcengine"`,
+		`仅控制台可查`,
+		`definition.label + (definition.status === "console_only"`,
+		`class="query-help"`,
+	} {
+		if strings.Contains(page, unavailable) {
+			t.Fatalf("dashboard still offers console-only query option %q", unavailable)
+		}
+	}
+	if !strings.Contains(page, `"value":"claude_admin"`) {
+		t.Fatal("dashboard is missing the official Claude Admin query option")
 	}
 }
 

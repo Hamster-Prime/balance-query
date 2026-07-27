@@ -84,6 +84,7 @@ type ProviderType string
 
 const (
 	ProviderSub2API             ProviderType = "sub2api"
+	ProviderClaudeAdmin         ProviderType = "claude_admin"
 	ProviderDeepSeek            ProviderType = "deepseek"
 	ProviderGLMZAI              ProviderType = "glm_zai"
 	ProviderGLMZhipu            ProviderType = "glm_zhipu"
@@ -103,6 +104,7 @@ const (
 // ProviderLabel maps each ProviderType to a human-readable display name.
 var ProviderLabel = map[ProviderType]string{
 	ProviderSub2API:             "Sub2API",
+	ProviderClaudeAdmin:         "Claude 用量与成本（管理员密钥）",
 	ProviderDeepSeek:            "DeepSeek 官方 API",
 	ProviderGLMZAI:              "GLM Coding Plan（Z.AI）",
 	ProviderGLMZhipu:            "GLM Coding Plan（智谱 BigModel）",
@@ -123,6 +125,7 @@ var ProviderLabel = map[ProviderType]string{
 func AllProviders() []ProviderType {
 	return []ProviderType{
 		ProviderSub2API,
+		ProviderClaudeAdmin,
 		ProviderDeepSeek,
 		ProviderGLMZAI,
 		ProviderGLMZhipu,

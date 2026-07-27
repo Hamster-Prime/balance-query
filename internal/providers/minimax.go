@@ -120,9 +120,6 @@ func parseMiniMaxQuota(authID, label string, resp miniMaxQuotaResp) balance.Resu
 	if len(r.Extra) == 0 {
 		r.Extra = nil
 	}
-	if r.QuotaDisplay == "" {
-		r.QuotaDisplay = fmt.Sprintf("%d 个资源，共 %d 个配额窗口", len(resp.ModelRemains), len(r.QuotaWindows))
-	}
 	return r
 }
 

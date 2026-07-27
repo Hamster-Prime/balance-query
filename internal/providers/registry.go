@@ -5,12 +5,14 @@ import (
 )
 
 // Build returns a Fetcher for the given ProviderType. baseURL is inherited
-// from the selected CPA OpenAI-compatible provider and is used by self-hosted
-// Sub2API and New API instances.
+// from the selected CPA AI provider and is used by self-hosted services and
+// official endpoints that expose account data.
 func Build(p balance.ProviderType, baseURL string) balance.Fetcher {
 	switch p {
 	case balance.ProviderSub2API:
 		return Sub2API{BaseURL: baseURL}
+	case balance.ProviderClaudeAdmin:
+		return ClaudeAdmin{BaseURL: baseURL}
 	case balance.ProviderDeepSeek:
 		return DeepSeek{BaseURL: baseURL}
 	case balance.ProviderGLMZAI:

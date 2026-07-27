@@ -40,11 +40,14 @@ func TestParseKimiUsageTopLevelWindowsAndBooster(t *testing.T) {
 	if len(result.QuotaWindows) != 3 {
 		t.Fatalf("quota windows = %d, want 3: %#v", len(result.QuotaWindows), result.QuotaWindows)
 	}
-	if got := result.QuotaWindows[0]; got.Label != "每周配额" || got.Remaining != 960 || got.Used != 40 {
+	if got := result.QuotaWindows[0]; got.Label != "每周配额" || got.RemainingPercent != 96 || got.UsedPercent != 4 || got.Unit != "" {
 		t.Fatalf("weekly window = %#v", got)
 	}
-	if got := result.QuotaWindows[1]; got.Label != "5 小时配额" || got.Used != 20 || got.Remaining != 80 {
+	if got := result.QuotaWindows[1]; got.Label != "5 小时配额" || got.UsedPercent != 20 || got.RemainingPercent != 80 || got.Unit != "" {
 		t.Fatalf("short window = %#v", got)
+	}
+	if got := result.QuotaDisplay; got != "每周配额：剩余 96%" {
+		t.Fatalf("quota display = %q", got)
 	}
 	if got := result.QuotaWindows[2]; got.Label != "每月付费上限" || got.Total != 200 || got.Used != 50 {
 		t.Fatalf("booster monthly window = %#v", got)
@@ -63,11 +66,38 @@ func TestKimiQuotaWindowClampsDerivedValuesAndReadsWindowReset(t *testing.T) {
 	if !ok {
 		t.Fatal("kimiQuotaWindow() did not recognize quota")
 	}
-	if window.Used != 0 || window.Remaining != 100 {
+	if window.Used != 0 || window.Remaining != 0 || window.UsedPercent != 0 || window.RemainingPercent != 100 {
 		t.Fatalf("clamped quota = %#v", window)
 	}
 	if window.ResetInSeconds != 3600 {
 		t.Fatalf("reset seconds = %d, want 3600", window.ResetInSeconds)
+	}
+}
+
+func TestKimiQuotaIsPercentageNotRequestCount(t *testing.T) {
+	result := parseKimiUsage("kimi", kimiUsageResp{
+		Usage: map[string]any{
+			"name": "Weekly limit", "used": float64(250), "limit": float64(1000),
+		},
+		Limits: []map[string]any{{
+			"detail": map[string]any{"used": float64(3), "limit": float64(10)},
+			"window": map[string]any{"duration": float64(300), "timeUnit": "TIME_UNIT_MINUTE"},
+		}},
+	})
+
+	if len(result.QuotaWindows) != 2 {
+		t.Fatalf("quota windows = %#v", result.QuotaWindows)
+	}
+	for _, window := range result.QuotaWindows {
+		if window.Unit != "" || window.Total != 0 || window.Used != 0 || window.Remaining != 0 {
+			t.Fatalf("Kimi quota leaked raw ratio as a count: %#v", window)
+		}
+	}
+	if got := result.QuotaWindows[0]; got.UsedPercent != 25 || got.RemainingPercent != 75 {
+		t.Fatalf("weekly percentage = %#v", got)
+	}
+	if got := result.QuotaWindows[1]; got.Label != "5 小时配额" || got.UsedPercent != 30 || got.RemainingPercent != 70 {
+		t.Fatalf("rolling percentage = %#v", got)
 	}
 }
 

@@ -22,6 +22,8 @@ var directTransport = func() *http.Transport {
 
 var httpClient = &http.Client{Timeout: 10 * time.Second, Transport: directTransport}
 
+const maxProviderResponseBytes int64 = 2 << 20
+
 // getJSON performs GET with Bearer auth and decodes JSON into dest.
 func getJSON(url, bearerToken, proxyURL string, dest any) error {
 	if strings.TrimSpace(bearerToken) == "" {
@@ -72,9 +74,12 @@ func doGet(url string, headers map[string]string, proxyURL string, dest any) err
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 128*1024))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxProviderResponseBytes+1))
 	if err != nil {
 		return fmt.Errorf("读取余额接口响应失败：%w", err)
+	}
+	if int64(len(body)) > maxProviderResponseBytes {
+		return fmt.Errorf("余额接口响应超过 2 MiB 安全上限")
 	}
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("余额接口返回 HTTP %d：%s", resp.StatusCode, truncate(string(body), 200))
