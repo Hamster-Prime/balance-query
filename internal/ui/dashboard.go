@@ -418,7 +418,7 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .btn{height:36px;border:1px solid transparent;border-radius:8px;padding:0 12px;display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;font-weight:600;font-size:13px;transition:background var(--motion-fast),border-color var(--motion-fast),color var(--motion-fast),transform var(--motion-fast),box-shadow var(--motion-fast)}
 .btn:hover:not(:disabled){transform:translateY(-1px)}
 .btn:active:not(:disabled){transform:translateY(0)}
-.btn:focus-visible,.segment:focus-visible,.provider-jump-link:focus-visible,.category-toggle:focus-visible,.bundle-toggle:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}
+.btn:focus-visible,.segment:focus-visible,.provider-jump-link:focus-visible,.bundle-toggle:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}
 .btn-primary{background:var(--primary-color);border-color:var(--primary-color);color:var(--primary-contrast)}
 .btn-primary:hover:not(:disabled){background:var(--primary-hover);border-color:var(--primary-hover)}
 .btn-secondary{background:var(--bg-primary);border-color:var(--border-color);color:var(--text-primary)}
@@ -437,31 +437,30 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .section-meta{font-size:12px;color:var(--text-tertiary);margin:2px 0 0}
 .provider-jump-nav{display:flex;align-items:center;gap:6px;margin:0 0 16px;padding:3px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-tertiary);overflow-x:auto;scrollbar-width:none;scroll-snap-type:x proximity}
 .provider-jump-nav::-webkit-scrollbar{display:none}
-.provider-jump-link{min-height:34px;display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:0 0 auto;padding:0 11px;border:0;border-radius:6px;background:transparent;color:var(--text-secondary);font-size:12px;font-weight:620;text-decoration:none;white-space:nowrap;scroll-snap-align:start;cursor:pointer;transition:background var(--motion-fast),color var(--motion-fast),box-shadow var(--motion-fast)}
+.provider-jump-link{min-width:100px;min-height:34px;display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:1 1 0;padding:0 11px;border:0;border-radius:6px;background:transparent;color:var(--text-secondary);font-size:12px;font-weight:620;text-decoration:none;white-space:nowrap;scroll-snap-align:start;cursor:pointer;transition:background var(--motion-fast),color var(--motion-fast),box-shadow var(--motion-fast)}
 .provider-jump-link:hover{color:var(--text-primary);background:var(--bg-hover)}
-.provider-jump-link[aria-current="location"]{color:var(--text-primary);background:var(--bg-primary);box-shadow:var(--shadow)}
+.provider-jump-link[aria-selected="true"]{color:var(--text-primary);background:var(--bg-primary);box-shadow:var(--shadow)}
 .provider-jump-link .icon{width:14px;height:14px}
-.overview-category-list{display:flex;flex-direction:column;gap:20px}
-.overview-category{min-width:0;scroll-margin-top:16px;animation:item-in 350ms ease-out both}
-.category-header{margin:0;border-bottom:1px solid var(--border-color);font-size:inherit;font-weight:inherit}
-.category-toggle{width:100%;min-height:50px;display:flex;align-items:center;gap:10px;padding:9px 2px;border:0;background:transparent;color:var(--text-primary);text-align:left;cursor:pointer}
-.category-toggle:hover .category-title{color:var(--primary-color)}
+.overview-category-list{display:block}
+.overview-category{min-width:0}
+.overview-category.category-enter{animation:item-in var(--motion-enter) both}
+.category-header{min-height:50px;display:flex;align-items:center;gap:10px;margin:0;padding:9px 2px;border-bottom:1px solid var(--border-color)}
 .category-mark{width:30px;height:30px;display:grid;place-items:center;flex:0 0 auto;border-radius:8px;background:var(--bg-tertiary);color:var(--text-secondary)}
 .category-mark .icon{width:15px;height:15px}
 .category-copy{min-width:0;flex:1}
-.category-title{display:block;font-size:15px;font-weight:680;line-height:1.3;transition:color var(--motion-fast)}
+.category-title{display:block;margin:0;font-size:15px;font-weight:680;line-height:1.3;color:var(--text-primary)}
 .category-meta{display:block;margin-top:2px;color:var(--text-tertiary);font-size:11px;font-weight:500}
-.category-toggle>.icon{width:16px;height:16px;color:var(--text-tertiary);transition:transform var(--motion-normal)}
-.category-toggle[aria-expanded="false"]>.icon{transform:rotate(-90deg)}
-.category-collapse,.bundle-collapse{display:grid;grid-template-rows:1fr;opacity:1;visibility:visible;pointer-events:auto;transition:grid-template-rows var(--motion-normal),opacity var(--motion-fast),visibility 0s linear 0s}
-.category-collapse[aria-hidden="true"],.bundle-collapse[aria-hidden="true"]{grid-template-rows:0fr;opacity:0;visibility:hidden;pointer-events:none;transition:grid-template-rows var(--motion-normal),opacity var(--motion-fast),visibility 0s linear var(--motion-normal)}
-.category-inner,.bundle-inner{min-height:0;overflow:hidden}
+.bundle-collapse{display:grid;grid-template-rows:0fr;opacity:0;visibility:hidden;pointer-events:none;transition:grid-template-rows var(--motion-normal),opacity var(--motion-fast),visibility 0s linear var(--motion-normal)}
+.bundle-inner{min-height:0;overflow:hidden}
 .category-content{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;padding-top:12px}
-.provider-bundle{min-width:0;padding:3px 0 14px;border-bottom:1px solid var(--border-color)}
-.provider-bundle:last-child{border-bottom:0;padding-bottom:0}
+.provider-bundle{min-width:0;padding:15px;border:1px solid var(--glass-border);border-radius:12px;background:linear-gradient(145deg,color-mix(in srgb,var(--bg-primary) 92%,transparent),color-mix(in srgb,var(--bg-secondary) 70%,transparent));box-shadow:var(--shadow);animation:item-in 400ms ease-out both;transition:border-color var(--motion-fast),box-shadow var(--motion-fast),background-color var(--motion-normal)}
+.provider-bundle:hover{border-color:var(--border-hover);box-shadow:var(--shadow-lg)}
 .provider-bundle-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0}
 .bundle-identity{min-width:0;flex:1}
+.bundle-title-row,.result-title-row{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
 .bundle-title{margin:0;font-size:14px;font-weight:660;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.title-meta{display:inline-flex;align-items:center;gap:5px;min-width:0;flex-wrap:wrap}
+.title-meta-chip{display:inline-flex;align-items:center;min-height:20px;padding:1px 6px;border:1px solid color-mix(in srgb,var(--border-color) 78%,transparent);border-radius:6px;background:var(--bg-tertiary);color:var(--text-tertiary);font-size:10px;font-weight:520;white-space:nowrap;font-variant-numeric:tabular-nums}
 .bundle-url{margin-top:2px;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;color:var(--text-tertiary);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bundle-actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex:0 0 auto;flex-wrap:wrap}
 .bundle-toggle{min-height:30px;display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:0 8px;border:1px solid var(--border-color);border-radius:7px;background:var(--bg-primary);color:var(--text-secondary);font-size:11px;font-weight:620;white-space:nowrap;cursor:pointer;transition:background var(--motion-fast),border-color var(--motion-fast),color var(--motion-fast)}
@@ -469,13 +468,16 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .bundle-toggle .icon{width:13px;height:13px;transition:transform var(--motion-normal)}
 .bundle-toggle[aria-expanded="true"] .icon{transform:rotate(180deg)}
 .bundle-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:7px;margin-top:10px}
+.bundle-summary:empty{display:none}
 .bundle-metric{min-width:0;padding:9px 10px;border-radius:8px;background:var(--bg-tertiary)}
 .bundle-metric-label{display:block;color:var(--text-tertiary);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bundle-metric-value{display:block;margin-top:3px;color:var(--text-primary);font-size:13px;font-weight:650;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 .bundle-metric-meta{display:block;margin-top:2px;color:var(--text-tertiary);font-size:10px;overflow-wrap:anywhere}
-.bundle-collapse{grid-template-rows:0fr;opacity:0;visibility:hidden;pointer-events:none;transition:grid-template-rows var(--motion-normal),opacity var(--motion-fast),visibility 0s linear var(--motion-normal)}
 .bundle-collapse[aria-hidden="false"]{grid-template-rows:1fr;opacity:1;visibility:visible;pointer-events:auto;transition:grid-template-rows var(--motion-normal),opacity var(--motion-fast),visibility 0s linear 0s}
-.bundle-result-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding-top:12px}
+.bundle-result-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:0;padding-top:12px}
+.provider-bundle .result-card{padding:14px 0;border:0;border-top:1px solid var(--border-color);border-radius:0;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none;animation:none}
+.provider-bundle .result-card:hover{border-color:var(--border-color);box-shadow:none}
+.provider-bundle .result-card:last-child{padding-bottom:0}
 .result-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-items:start}
 .result-card{min-width:0;padding:18px;border:1px solid var(--glass-border);border-radius:12px;background:linear-gradient(145deg,color-mix(in srgb,var(--bg-primary) 92%,transparent),color-mix(in srgb,var(--bg-secondary) 70%,transparent));backdrop-filter:var(--glass-backdrop-filter);-webkit-backdrop-filter:var(--glass-backdrop-filter);box-shadow:var(--shadow);animation:item-in 400ms ease-out both;transition:border-color var(--motion-fast),box-shadow var(--motion-fast),transform var(--motion-fast),background-color var(--motion-normal)}
 .result-card:hover{border-color:var(--border-hover);box-shadow:var(--shadow-lg)}
@@ -500,14 +502,11 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .quota-main.failure{font-size:14px;color:var(--warning-text);font-weight:600;line-height:1.45}
 .error-detail{color:var(--text-secondary);font-size:12px;line-height:1.45;overflow-wrap:anywhere}
 .progress-track{height:7px;border-radius:9999px;background:var(--bg-tertiary);overflow:hidden;margin-top:12px}
-.progress-bar{height:100%;width:0;border-radius:inherit;background:var(--success-color);transition:width 300ms ease}
-.progress-bar.medium{background:var(--quota-medium-color)}
-.progress-bar.high{background:var(--error-color)}
+.progress-bar{height:100%;width:0;border-radius:inherit;background:var(--success-color);transition:width var(--motion-normal),background-color var(--motion-normal)}
+.progress-bar.warning{background:var(--quota-medium-color)}
+.progress-bar.critical{background:var(--error-color)}
 .result-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:13px;color:var(--text-tertiary);font-size:11px}
 .key-preview{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;color:var(--text-secondary)}
-.account-meta{display:flex;gap:6px;flex-wrap:wrap;margin:0}
-.detail{display:inline-flex;gap:4px;border-radius:6px;border:1px solid color-mix(in srgb,var(--border-color) 75%,transparent);background:var(--bg-tertiary);color:var(--text-secondary);padding:4px 7px;font-size:11px;max-width:100%;overflow-wrap:anywhere}
-.detail-label{color:var(--text-tertiary)}
 .quota-groups{display:flex;flex-direction:column;gap:12px;margin-top:15px}
 .quota-group{border-top:1px solid var(--border-color);padding-top:12px}
 .quota-group-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
@@ -516,8 +515,9 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .quota-window{min-width:0;padding:11px 12px;border:1px solid var(--border-color);border-radius:9px;background:color-mix(in srgb,var(--bg-primary) 78%,var(--bg-secondary));transition:border-color var(--motion-fast),background-color var(--motion-normal)}
 .quota-window.unlimited{border-color:color-mix(in srgb,var(--success-color) 38%,var(--border-color));background:color-mix(in srgb,var(--success-color) 6%,var(--bg-primary))}
 .quota-window.unavailable{opacity:.72;background:var(--bg-tertiary)}
-.quota-window-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
-.quota-window-label{font-size:12px;font-weight:650;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.quota-window-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;min-width:0}
+.quota-window-label{min-width:0;flex:1;font-size:12px;font-weight:650;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.quota-window-head-meta{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex:0 0 auto;flex-wrap:wrap}
 .quota-status{font-size:10px;color:var(--text-tertiary);white-space:nowrap}
 .quota-status.good{color:var(--success-color)}
 .quota-status.warn{color:var(--amber-text)}
@@ -525,8 +525,7 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .quota-window-value strong{font-size:18px;line-height:1.2;font-weight:680}
 .quota-window-value span{font-size:11px;color:var(--text-secondary)}
 .quota-window .progress-track{height:5px;margin-top:9px}
-.quota-window-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:17px;margin-top:7px;color:var(--text-tertiary);font-size:10px;line-height:1.35}
-.quota-window-meta span{overflow-wrap:anywhere}
+.quota-reset{color:var(--text-tertiary);font-size:10px;white-space:nowrap}
 .account-detail-collapse{display:grid;grid-template-rows:0fr;opacity:0;visibility:hidden;pointer-events:none;transition:grid-template-rows var(--motion-normal),opacity var(--motion-fast),visibility 0s linear var(--motion-normal)}
 .account-detail-collapse[aria-hidden="false"]{grid-template-rows:1fr;opacity:1;visibility:visible;pointer-events:auto;transition:grid-template-rows var(--motion-normal),opacity var(--motion-fast),visibility 0s linear 0s}
 .account-detail-inner{min-height:0;overflow:hidden}
@@ -600,7 +599,7 @@ select:hover{border-color:var(--border-hover)}
   .app{padding:16px 14px 28px}.masthead{align-items:center}.subtitle{max-width:230px}.head-state{display:none}
   .workspace-nav{align-items:stretch;flex-direction:column}.segments{width:100%}.toolbar{justify-content:stretch}.toolbar .btn{flex:1}
   .summary{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .provider-jump-nav{margin-left:-2px;margin-right:-2px;flex-wrap:wrap;overflow:visible;scroll-snap-type:none}.provider-jump-link{flex:1 1 calc(33.333% - 6px);min-width:100px}.category-toggle{min-height:48px}.provider-bundle-head{align-items:stretch;flex-direction:column}.bundle-actions{justify-content:space-between}.bundle-actions .badge{margin-right:auto}.bundle-url{white-space:normal;overflow-wrap:anywhere}.bundle-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .provider-jump-nav{margin-left:-2px;margin-right:-2px;flex-wrap:wrap;overflow:visible;scroll-snap-type:none}.provider-jump-link{flex:1 1 calc(33.333% - 6px);min-width:100px}.provider-bundle-head{align-items:stretch;flex-direction:column}.bundle-actions{justify-content:space-between}.bundle-actions .badge:first-child{margin-right:auto}.bundle-url{white-space:normal;overflow-wrap:anywhere}.bundle-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
   .result-grid,.skeleton-grid{grid-template-columns:1fr}
   .quota-window-grid,.detail-grid{grid-template-columns:1fr}
   .result-head{align-items:stretch;flex-direction:column}.result-actions{justify-content:space-between}.result-actions .badge{margin-right:auto}
@@ -725,10 +724,8 @@ select:hover{border-color:var(--border-hover)}
     querying: false,
     saving: false,
     dirty: false,
-    expandedCategories: Object.create(null),
-    expandedProviders: Object.create(null),
-    categoryObserver: null,
-    navigationLockUntil: 0
+    activeOverviewCategory: "",
+    expandedProviders: Object.create(null)
   };
   var providerLabels = Object.create(null);
   PROVIDER_DEFINITIONS.forEach(function (item) {
@@ -1276,15 +1273,29 @@ select:hover{border-color:var(--border-hover)}
   }
 
   function formatBalance(result) {
+    var genericBalancePresent = Boolean(result.has_balance_amount) || owns(result, "balance_amount");
+    if (genericBalancePresent) {
+      var genericAmount = owns(result, "balance_amount") ? finiteNumber(result.balance_amount) : 0;
+      if (genericAmount != null) return "钱包余额 " + amountWithUnit(genericAmount, result.balance_currency || "credits");
+    }
+    var balancePresent = Boolean(result.has_balance) || owns(result, "balance_usd");
+    if (balancePresent) {
+      var balanceAmount = owns(result, "balance_usd") ? finiteNumber(result.balance_usd) : 0;
+      if (balanceAmount != null) return "钱包余额 " + amountWithUnit(balanceAmount, "usd");
+    }
+    var costPresent = Boolean(result.has_cost) || owns(result, "cost_usd");
+    if (costPresent) {
+      var costAmount = owns(result, "cost_usd") ? finiteNumber(result.cost_usd) : 0;
+      if (costAmount != null) return "近 30 天费用 " + amountWithUnit(costAmount, "usd");
+    }
     if (result.quota_display) {
       var display = redactSecrets(result.quota_display);
       var countSummary = /(?:已获取\s*)?\d+\s*(?:个|项)?(?:资源|配额窗口|配额周期|账户详情)|共\s*\d+\s*个?配额窗口/.test(display);
-      if (!countSummary) return display;
+      var hasWindows = Array.isArray(result.quota_windows) && result.quota_windows.length > 0;
+      var isWalletSummary = /^钱包余额(?:\s|：|:)/.test(display);
+      if (!countSummary && (!hasWindows || isWalletSummary)) return display;
     }
-    if (owns(result, "balance_usd")) {
-      var amount = Number(result.balance_usd);
-      if (Number.isFinite(amount)) return "$" + amount.toFixed(amount >= 100 ? 2 : 4);
-    }
+    if (Array.isArray(result.quota_windows) && result.quota_windows.length > 0) return "";
     if (Number(result.tokens_total) > 0) {
       return Number(result.tokens_remaining || 0).toLocaleString("zh-CN") + " 可用令牌";
     }
@@ -1352,6 +1363,20 @@ select:hover{border-color:var(--border-hover)}
     return null;
   }
 
+  function quotaRemainingPercent(item) {
+    var explicitRemaining = finiteNumber(item.remaining_percent);
+    if (owns(item, "remaining_percent") && explicitRemaining != null) return explicitRemaining;
+    var usedPercent = quotaPercent(item);
+    if (usedPercent != null) return 100 - usedPercent;
+    return null;
+  }
+
+  function remainingProgressClass(percent) {
+    if (percent <= 15) return " critical";
+    if (percent <= 50) return " warning";
+    return "";
+  }
+
   function quotaRemaining(item) {
     var remaining = finiteNumber(item.remaining);
     if (owns(item, "remaining") && remaining != null) return remaining;
@@ -1394,23 +1419,28 @@ select:hover{border-color:var(--border-hover)}
     return node;
   }
 
-  function quotaWindowCard(item, fetchedAt) {
+  function quotaWindowCard(item, fetchedAt, accountResetAt) {
     var unavailable = Boolean(item.unavailable);
     var unlimited = Boolean(item.unlimited);
     var box = element("div", "quota-window" + (unlimited ? " unlimited" : "") + (unavailable ? " unavailable" : ""));
     var head = element("div", "quota-window-head");
     head.appendChild(element("span", "quota-window-label", translateWindowLabel(item.label)));
+    var headMeta = element("span", "quota-window-head-meta");
     var status = unlimited ? "不限量" : unavailable ? "不可用" : translateStatus(item.status);
-    if (status) head.appendChild(element("span", "quota-status" + (unlimited ? " good" : unavailable ? " warn" : ""), status));
+    if (status) headMeta.appendChild(element("span", "quota-status" + (unlimited ? " good" : unavailable ? " warn" : ""), status));
+    var duplicateReset = Boolean(item.reset_at && accountResetAt && String(item.reset_at) === String(accountResetAt));
+    var resetNode = duplicateReset ? null : quotaResetNode(item, fetchedAt);
+    if (resetNode) headMeta.appendChild(resetNode);
+    if (headMeta.childNodes.length) head.appendChild(headMeta);
     box.appendChild(head);
 
     var value = element("div", "quota-window-value");
     var unit = unitLabel(item.unit);
     var total = finiteNumber(item.total);
-    var used = finiteNumber(item.used);
     var remaining = quotaRemaining(item);
     var remainingPercent = finiteNumber(item.remaining_percent);
     var usedPercent = quotaPercent(item);
+    var progressRemaining = quotaRemainingPercent(item);
     if (unlimited) {
       value.appendChild(element("strong", "", "不限量"));
       value.appendChild(element("span", "", "当前周期"));
@@ -1432,27 +1462,20 @@ select:hover{border-color:var(--border-hover)}
     }
     box.appendChild(value);
 
-    if (!unlimited && !unavailable && usedPercent != null) {
+    if (!unlimited && !unavailable && progressRemaining != null) {
+      var visualRemaining = clampPercent(progressRemaining);
       var track = element("div", "progress-track");
       track.setAttribute("role", "progressbar");
-      track.setAttribute("aria-label", translateWindowLabel(item.label) + "使用进度");
+      track.setAttribute("aria-label", translateWindowLabel(item.label) + "剩余额度");
       track.setAttribute("aria-valuemin", "0");
       track.setAttribute("aria-valuemax", "100");
-      track.setAttribute("aria-valuenow", String(Math.round(usedPercent)));
-      var bar = element("div", "progress-bar" + (usedPercent >= 85 ? " high" : usedPercent >= 60 ? " medium" : ""));
+      track.setAttribute("aria-valuenow", String(Math.round(visualRemaining)));
+      track.setAttribute("aria-valuetext", formatAmount(progressRemaining, "%") + " 剩余");
+      var bar = element("div", "progress-bar" + remainingProgressClass(visualRemaining));
       track.appendChild(bar);
       box.appendChild(track);
-      window.requestAnimationFrame(function () { bar.style.width = usedPercent.toFixed(1) + "%"; });
+      window.requestAnimationFrame(function () { bar.style.width = visualRemaining.toFixed(1) + "%"; });
     }
-
-    var meta = element("div", "quota-window-meta");
-    var usageText = "";
-    if (owns(item, "used") && used != null) usageText = "已用 " + formatAmount(used, item.unit) + (unit === "%" ? "" : " " + unit);
-    else if (usedPercent != null) usageText = "已用 " + formatAmount(usedPercent, "%");
-    meta.appendChild(element("span", "", usageText));
-    var resetNode = quotaResetNode(item, fetchedAt);
-    if (resetNode) meta.appendChild(resetNode);
-    if (usageText || resetNode) box.appendChild(meta);
     return box;
   }
 
@@ -1480,7 +1503,7 @@ select:hover{border-color:var(--border-hover)}
       heading.appendChild(element("h3", "quota-group-title", redactSecrets(translateDisplayText(group.name))));
       section.appendChild(heading);
       var grid = element("div", "quota-window-grid");
-      group.windows.forEach(function (item) { grid.appendChild(quotaWindowCard(item, result.fetched_at)); });
+      group.windows.forEach(function (item) { grid.appendChild(quotaWindowCard(item, result.fetched_at, result.reset_at)); });
       section.appendChild(grid);
       shell.appendChild(section);
     });
@@ -1497,26 +1520,54 @@ select:hover{border-color:var(--border-hover)}
     });
   }
 
-  function renderAccountMeta(card, result) {
-    var details = element("div", "account-meta");
-    if (result.plan) {
-      var plan = element("span", "detail");
-      plan.appendChild(element("span", "detail-label", "套餐"));
-      plan.appendChild(element("span", "", redactSecrets(translateDisplayText(result.plan))));
-      details.appendChild(plan);
-    }
-    if (result.reset_at) {
-      var reset = element("span", "detail");
-      reset.appendChild(element("span", "detail-label", "重置"));
-      reset.appendChild(element("span", "", formatDateTime(result.reset_at)));
-      details.appendChild(reset);
-    }
-    if (details.childNodes.length) card.appendChild(details);
+  function titlePlanText(result) {
+    var plan = redactSecrets(translateDisplayText(result && result.plan));
+    if (!plan) return "";
+    if (plan === "钱包余额") return "";
+    var hasWindows = Array.isArray(result.quota_windows) && result.quota_windows.length > 0;
+    if (hasWindows && (plan === "账户额度" || plan === "密钥独立额度")) return "";
+    return /套餐$/.test(plan) ? plan : "套餐 " + plan;
+  }
+
+  function titleDateText(result) {
+    if (!result || !result.reset_at) return "";
+    var extra = result.extra && typeof result.extra === "object" ? result.extra : {};
+    var label = owns(extra, "密钥到期") || owns(extra, "套餐到期") ? "到期 " : "重置 ";
+    return label + formatDateTime(result.reset_at);
+  }
+
+  function resultTitleMetadata(result) {
+    return [titlePlanText(result), titleDateText(result)].filter(Boolean);
+  }
+
+  function commonTitleMetadata(results) {
+    var successful = results.filter(function (result) { return !result.error; });
+    if (successful.length !== results.length) return [];
+    var planValues = successful.map(titlePlanText);
+    var dateValues = successful.map(titleDateText);
+    var plans = planValues.filter(function (value, index, list) { return value && list.indexOf(value) === index; });
+    var dates = dateValues.filter(function (value, index, list) { return value && list.indexOf(value) === index; });
+    var values = [];
+    if (plans.length === 1 && planValues.every(Boolean)) values.push(plans[0]);
+    if (dates.length === 1 && dateValues.every(Boolean)) values.push(dates[0]);
+    return values;
+  }
+
+  function appendTitleMetadata(row, values) {
+    if (!values.length) return;
+    var meta = element("span", "title-meta");
+    values.forEach(function (value) { meta.appendChild(element("span", "title-meta-chip", value)); });
+    row.appendChild(meta);
   }
 
   function extraDetailKeys(result) {
     if (!result.extra || typeof result.extra !== "object") return [];
-    return Object.keys(result.extra).sort(function (left, right) {
+    return Object.keys(result.extra).filter(function (key) {
+      var value = String(result.extra[key] == null ? "" : result.extra[key]);
+      if ((key === "密钥到期" || key === "套餐到期") && result.reset_at && value === String(result.reset_at)) return false;
+      if (key === "套餐名称" && result.plan && value === String(result.plan)) return false;
+      return true;
+    }).sort(function (left, right) {
       var labelOrder = detailLabel(left).localeCompare(detailLabel(right), "zh-CN");
       return labelOrder || left.localeCompare(right, "zh-CN");
     });
@@ -1812,30 +1863,33 @@ select:hover{border-color:var(--border-hover)}
 
   function bundleSummaryMetrics(results) {
     var successful = results.filter(function (result) { return !result.error; });
-    var failedCount = results.length - successful.length;
-    var metrics = [{
-      label:"查询状态",
-      value:successful.length + "/" + results.length + " 成功",
-      meta:failedCount ? failedCount + " 个密钥查询失败" : "全部密钥已更新"
-    }];
+    var metrics = [];
     if (!successful.length) return metrics;
 
-    var balances = successful.reduce(function (values, result) {
-      var present = Boolean(result.has_balance) || owns(result, "balance_usd");
-      var value = owns(result, "balance_usd") ? finiteNumber(result.balance_usd) : (result.has_balance ? 0 : null);
-      if (present && value != null && value >= 0) values.push({ value:value, scope:String(result.balance_scope || "unknown") });
-      return values;
-    }, []);
-    if (balances.length) {
+    var balanceBuckets = Object.create(null);
+    successful.forEach(function (result) {
+      var genericPresent = Boolean(result.has_balance_amount) || owns(result, "balance_amount");
+      var usdPresent = Boolean(result.has_balance) || owns(result, "balance_usd");
+      var value = genericPresent ? (owns(result, "balance_amount") ? finiteNumber(result.balance_amount) : 0) :
+        usdPresent ? (owns(result, "balance_usd") ? finiteNumber(result.balance_usd) : 0) : null;
+      if (value == null || value < 0) return;
+      var unit = canonicalQuotaUnit(genericPresent ? result.balance_currency : "usd");
+      if (!balanceBuckets[unit]) balanceBuckets[unit] = [];
+      balanceBuckets[unit].push({ value:value, scope:String(result.balance_scope || "unknown") });
+    });
+    var balanceUnits = Object.keys(balanceBuckets).sort();
+    balanceUnits.forEach(function (unit) {
+      var balances = balanceBuckets[unit];
       var balanceValues = balances.map(function (entry) { return entry.value; });
       var balanceCoverage = balances.length + "/" + results.length + " 个密钥返回余额";
+      var label = balanceUnits.length === 1 ? "钱包余额" : "钱包余额 · " + unitLabel(unit);
       if (balances.every(function (entry) { return entry.scope === "key"; })) {
         var totalBalance = balanceValues.reduce(function (sum, value) { return sum + value; }, 0);
-        metrics.push({ label:"美元余额", value:(balances.length === results.length ? "按密钥合计 " : "已返回合计 ") + amountWithUnit(totalBalance, "usd"), meta:balances.length === results.length ? "" : balanceCoverage });
+        metrics.push({ label:label, value:(balances.length === results.length ? "按密钥合计 " : "已返回合计 ") + amountWithUnit(totalBalance, unit), meta:balances.length === results.length ? "" : balanceCoverage });
       } else {
-        metrics.push({ label:"美元余额", value:"最低 " + amountWithUnit(Math.min.apply(Math, balanceValues), "usd"), meta:"余额范围 " + numericRange(balanceValues, "usd") + (balances.length === results.length ? "" : " · " + balanceCoverage) });
+        metrics.push({ label:label, value:"最低 " + amountWithUnit(Math.min.apply(Math, balanceValues), unit), meta:"余额范围 " + numericRange(balanceValues, unit) + (balances.length === results.length ? "" : " · " + balanceCoverage) });
       }
-    }
+    });
 
     var costs = successful.reduce(function (values, result) {
       var present = Boolean(result.has_cost) || owns(result, "cost_usd");
@@ -1877,10 +1931,10 @@ select:hover{border-color:var(--border-hover)}
       }
     }
 
-    if (metrics.length === 1) {
-      var summaries = successful.map(formatBalance).filter(Boolean).filter(function (value, index, list) { return list.indexOf(value) === index; });
-      if (summaries.length === 1) metrics.push({ label:"额度摘要", value:summaries[0], meta:"各密钥返回一致" });
-      else metrics.push({ label:"额度摘要", value:"各密钥数据已更新", meta:"展开后查看单个密钥" });
+    if (metrics.length === 0) {
+      var summaryValues = successful.map(formatBalance);
+      var summaries = summaryValues.filter(function (value, index, list) { return value && list.indexOf(value) === index; });
+      if (summaries.length === 1 && summaryValues.every(Boolean)) metrics.push({ label:"额度摘要", value:summaries[0], meta:"各密钥返回一致" });
     }
     return metrics;
   }
@@ -1893,9 +1947,12 @@ select:hover{border-color:var(--border-hover)}
     section.setAttribute("aria-labelledby", bundleTitleID);
     var head = element("div", "provider-bundle-head");
     var identity = element("div", "bundle-identity");
+    var titleRow = element("div", "bundle-title-row");
     var bundleTitle = element("h4", "bundle-title", provider.name);
     bundleTitle.id = bundleTitleID;
-    identity.appendChild(bundleTitle);
+    titleRow.appendChild(bundleTitle);
+    appendTitleMetadata(titleRow, commonTitleMetadata(results));
+    identity.appendChild(titleRow);
     identity.appendChild(element("div", "bundle-url", provider.baseUrl || "官方默认服务地址"));
     head.appendChild(identity);
     var actions = element("div", "bundle-actions");
@@ -1940,118 +1997,105 @@ select:hover{border-color:var(--border-hover)}
     return section;
   }
 
-  function setCurrentCategoryNavigation(targetID) {
-    document.querySelectorAll("#provider-jump-nav .provider-jump-link").forEach(function (link) {
-      if (link.getAttribute("data-target-id") === targetID) link.setAttribute("aria-current", "location");
-      else link.removeAttribute("aria-current");
-    });
-  }
-
   function clearOverviewNavigation() {
-    if (state.categoryObserver) {
-      state.categoryObserver.disconnect();
-      state.categoryObserver = null;
-    }
     var nav = byID("provider-jump-nav");
     if (!nav) return;
     nav.textContent = "";
     nav.hidden = true;
   }
 
+  function overviewTabID(category) { return "overview-tab-" + tinyHash(category); }
+  function overviewPanelID(category) { return "overview-category-" + tinyHash(category); }
+
+  function activateOverviewCategory(category, focusTab) {
+    state.activeOverviewCategory = category;
+    document.querySelectorAll("#provider-jump-nav .provider-jump-link").forEach(function (tab) {
+      var selected = tab.getAttribute("data-category") === category;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      if (selected && focusTab) tab.focus();
+    });
+    document.querySelectorAll("#results .overview-category").forEach(function (section) {
+      var selected = section.getAttribute("data-category") === category;
+      section.hidden = !selected;
+      if (selected) {
+        section.classList.remove("category-enter");
+        window.requestAnimationFrame(function () { section.classList.add("category-enter"); });
+      }
+    });
+  }
+
   function renderOverviewNavigation(groups) {
     clearOverviewNavigation();
     var nav = byID("provider-jump-nav");
     if (!groups.length) return;
-    nav.hidden = false;
-    groups.forEach(function (group, index) {
-      var targetID = "overview-category-" + tinyHash(group.category);
-      var link = element("a", "provider-jump-link");
-      link.href = "#" + targetID;
-      link.setAttribute("data-target-id", targetID);
-      if (index === 0) link.setAttribute("aria-current", "location");
-      link.appendChild(icon("server"));
-      link.appendChild(element("span", "", group.category));
-      link.addEventListener("click", function (event) {
-        event.preventDefault();
-        var section = byID(targetID);
-        if (!section) return;
-        var toggle = section.querySelector(".category-toggle");
-        var collapse = section.querySelector(".category-collapse");
-        if (toggle && collapse && toggle.getAttribute("aria-expanded") !== "true") {
-          state.expandedCategories[group.category] = true;
-          setDisclosureState(toggle, collapse, true);
-        }
-        setCurrentCategoryNavigation(targetID);
-        state.navigationLockUntil = Date.now() + 1200;
-        if (toggle) {
-          try { toggle.focus({ preventScroll:true }); } catch (_) { toggle.focus(); }
-        }
-        window.requestAnimationFrame(function () {
-          var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-          section.scrollIntoView({ behavior:reduced ? "auto" : "smooth", block:"start" });
-        });
-      });
-      nav.appendChild(link);
-    });
-    if ("IntersectionObserver" in window) {
-      state.categoryObserver = new IntersectionObserver(function (entries) {
-        if (Date.now() < state.navigationLockUntil) return;
-        var visible = entries.filter(function (entry) { return entry.isIntersecting; }).sort(function (left, right) {
-          return Math.abs(left.boundingClientRect.top) - Math.abs(right.boundingClientRect.top);
-        });
-        if (visible.length) setCurrentCategoryNavigation(visible[0].target.id);
-      }, { rootMargin:"-8% 0px -68% 0px", threshold:[0, 0.05] });
-      groups.forEach(function (group) {
-        var section = byID("overview-category-" + tinyHash(group.category));
-        if (section) state.categoryObserver.observe(section);
-      });
+    if (!groups.some(function (group) { return group.category === state.activeOverviewCategory; })) {
+      state.activeOverviewCategory = groups[0].category;
     }
+    nav.setAttribute("role", "tablist");
+    nav.hidden = false;
+    groups.forEach(function (group) {
+      var selected = group.category === state.activeOverviewCategory;
+      var tab = element("button", "provider-jump-link");
+      tab.type = "button";
+      tab.id = overviewTabID(group.category);
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", overviewPanelID(group.category));
+      tab.setAttribute("aria-selected", String(selected));
+      tab.setAttribute("data-category", group.category);
+      tab.tabIndex = selected ? 0 : -1;
+      tab.appendChild(icon("server"));
+      tab.appendChild(element("span", "", group.category));
+      tab.addEventListener("click", function () {
+        activateOverviewCategory(group.category, false);
+      });
+      tab.addEventListener("keydown", function (event) {
+        var tabs = Array.prototype.slice.call(nav.querySelectorAll('[role="tab"]'));
+        var current = tabs.indexOf(event.currentTarget);
+        var next = current;
+        if (event.key === "ArrowRight" || event.key === "ArrowDown") next = (current + 1) % tabs.length;
+        else if (event.key === "ArrowLeft" || event.key === "ArrowUp") next = (current - 1 + tabs.length) % tabs.length;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = tabs.length - 1;
+        else return;
+        event.preventDefault();
+        activateOverviewCategory(tabs[next].getAttribute("data-category"), true);
+      });
+      nav.appendChild(tab);
+    });
   }
 
   function renderOverviewGroups(target, groups) {
+    if (!groups.some(function (group) { return group.category === state.activeOverviewCategory; })) {
+      state.activeOverviewCategory = groups[0].category;
+    }
     var list = element("div", "overview-category-list");
     var renderContext = { cardIndex:0 };
-    groups.forEach(function (group, groupIndex) {
-      var categoryID = "overview-category-" + tinyHash(group.category);
-      var collapseID = categoryID + "-content";
-      var toggleID = categoryID + "-toggle";
-      var expanded = owns(state.expandedCategories, group.category) ? Boolean(state.expandedCategories[group.category]) : true;
+    groups.forEach(function (group) {
+      var categoryID = overviewPanelID(group.category);
+      var tabID = overviewTabID(group.category);
       var section = element("section", "overview-category");
       section.id = categoryID;
-      section.setAttribute("aria-labelledby", toggleID);
-      section.style.animationDelay = Math.min(groupIndex * 45, 180) + "ms";
-      var header = element("h3", "category-header");
-      var toggle = element("button", "category-toggle");
-      toggle.type = "button";
-      toggle.id = toggleID;
-      toggle.setAttribute("aria-controls", collapseID);
+      section.setAttribute("role", "tabpanel");
+      section.setAttribute("aria-labelledby", tabID);
+      section.setAttribute("data-category", group.category);
+      section.hidden = group.category !== state.activeOverviewCategory;
+      if (!section.hidden) section.classList.add("category-enter");
+      var header = element("div", "category-header");
       var mark = element("span", "category-mark");
       mark.appendChild(icon("server"));
-      toggle.appendChild(mark);
-      var copy = element("span", "category-copy");
-      copy.appendChild(element("span", "category-title", group.category));
+      header.appendChild(mark);
+      var copy = element("div", "category-copy");
+      copy.appendChild(element("h3", "category-title", group.category));
       copy.appendChild(element("span", "category-meta", group.services.length + " 个服务地址 · " + group.keyCount + " 个密钥 · " + group.successCount + " 个查询成功"));
-      toggle.appendChild(copy);
-      toggle.appendChild(icon("chevron"));
-      header.appendChild(toggle);
+      header.appendChild(copy);
       section.appendChild(header);
-      var collapse = element("div", "category-collapse");
-      collapse.id = collapseID;
-      var inner = element("div", "category-inner");
       var content = element("div", "category-content");
       group.services.forEach(function (service) {
         if (service.results.length === 1) content.appendChild(resultCard(service.results[0], renderContext.cardIndex++));
         else content.appendChild(renderProviderBundle(service.provider, service.results, renderContext));
       });
-      inner.appendChild(content);
-      collapse.appendChild(inner);
-      setDisclosureState(toggle, collapse, expanded);
-      section.appendChild(collapse);
-      toggle.addEventListener("click", function () {
-        expanded = toggle.getAttribute("aria-expanded") !== "true";
-        state.expandedCategories[group.category] = expanded;
-        setDisclosureState(toggle, collapse, expanded);
-      });
+      section.appendChild(content);
       list.appendChild(section);
     });
     target.appendChild(list);
@@ -2066,7 +2110,10 @@ select:hover{border-color:var(--border-hover)}
     card.style.animationDelay = Math.min(index * 35, 210) + "ms";
     var head = element("div", "result-head");
     var identity = element("div", "provider-cell");
-    identity.appendChild(element("div", "result-name", result.account_name || result.provider || "余额账户"));
+    var titleRow = element("div", "result-title-row");
+    titleRow.appendChild(element("div", "result-name", result.account_name || result.provider || "余额账户"));
+    appendTitleMetadata(titleRow, resultTitleMetadata(result));
+    identity.appendChild(titleRow);
     identity.appendChild(element("div", "result-url", result.base_url || ""));
     head.appendChild(identity);
     var badge = element("span", "badge " + (failed ? "failure" : "success"));
@@ -2096,21 +2143,22 @@ select:hover{border-color:var(--border-hover)}
       card.appendChild(overview);
     } else {
       var balanceText = formatBalance(result);
-      if (balanceText) overview.appendChild(element("div", "quota-main", balanceText));
-      renderAccountMeta(overview, result);
-      card.appendChild(overview);
+      if (balanceText) {
+        overview.appendChild(element("div", "quota-main", balanceText));
+        card.appendChild(overview);
+      }
       var renderedWindows = renderQuotaGroups(card, result);
       var total = Number(result.tokens_total || 0);
       var used = Number(result.tokens_used || 0);
       if (!renderedWindows && total > 0) {
-        var percent = Math.max(0, Math.min(100, used / total * 100));
+        var percent = clampPercent((total - used) / total * 100);
         var track = element("div", "progress-track");
         track.setAttribute("role", "progressbar");
-        track.setAttribute("aria-label", "令牌使用进度");
+        track.setAttribute("aria-label", "令牌剩余额度");
         track.setAttribute("aria-valuemin", "0");
         track.setAttribute("aria-valuemax", "100");
         track.setAttribute("aria-valuenow", String(Math.round(percent)));
-        var bar = element("div", "progress-bar" + (percent >= 85 ? " high" : percent >= 60 ? " medium" : ""));
+        var bar = element("div", "progress-bar" + remainingProgressClass(percent));
         track.appendChild(bar);
         card.appendChild(track);
         window.requestAnimationFrame(function () { bar.style.width = percent.toFixed(1) + "%"; });

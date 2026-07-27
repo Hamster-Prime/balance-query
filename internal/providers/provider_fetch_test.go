@@ -63,6 +63,9 @@ func TestNewAPIFetchUsesAPIKeyBillingEndpoints(t *testing.T) {
 	if window.AggregationScope != "account" {
 		t.Fatalf("legacy New API scope = %q, want account", window.AggregationScope)
 	}
+	if result.ResetAt == "" || result.Extra["密钥到期"] != result.ResetAt {
+		t.Fatalf("legacy New API expiry metadata = %#v", result)
+	}
 }
 
 func TestNewAPIFetchPrefersTokenUsageEndpoint(t *testing.T) {
@@ -145,7 +148,8 @@ func TestSub2APIFetchFallsBackToXAPIKey(t *testing.T) {
 	if result.Error != "" || requests != 2 {
 		t.Fatalf("result = %#v, requests = %d", result, requests)
 	}
-	if !result.HasBalance || result.BalanceScope != "account" || result.BalanceUSD != 12.5 {
+	if !result.HasBalance || result.BalanceScope != "account" || result.BalanceUSD != 12.5 ||
+		!result.HasBalanceAmount || result.BalanceAmount != 12.5 || result.BalanceCurrency != "USD" {
 		t.Fatalf("Sub2API balance metadata = %#v", result)
 	}
 }

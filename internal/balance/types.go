@@ -20,6 +20,12 @@ type Result struct {
 	HasBalance   bool    `json:"has_balance,omitempty"`
 	BalanceScope string  `json:"balance_scope,omitempty"`
 
+	// BalanceAmount and BalanceCurrency preserve wallets denominated in CNY or
+	// provider-defined credits. BalanceUSD remains available to older clients.
+	BalanceAmount    float64 `json:"balance_amount,omitempty"`
+	BalanceCurrency  string  `json:"balance_currency,omitempty"`
+	HasBalanceAmount bool    `json:"has_balance_amount,omitempty"`
+
 	// Historical cost is separate from wallet balance. Claude, for example,
 	// reports organization spend rather than remaining credit.
 	CostUSD   float64 `json:"cost_usd,omitempty"`

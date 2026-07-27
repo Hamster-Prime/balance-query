@@ -150,10 +150,13 @@ func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
 	}
 
 	if balanceValue, ok := firstNumber(payload, "balance"); ok {
+		r.BalanceAmount = balanceValue
+		r.BalanceCurrency = unit
+		r.HasBalanceAmount = true
+		r.BalanceScope = "account"
 		if strings.EqualFold(unit, "USD") {
 			r.BalanceUSD = balanceValue
 			r.HasBalance = true
-			r.BalanceScope = "account"
 		}
 		if r.QuotaDisplay == "" {
 			r.QuotaDisplay = fmt.Sprintf("钱包余额 %.4f %s", balanceValue, unit)

@@ -159,6 +159,26 @@ func TestSub2APIMonetarySummaryPreservesDecimals(t *testing.T) {
 	}
 }
 
+func TestSub2APINonUSDBalanceRemainsStructuredAlongsideQuota(t *testing.T) {
+	result := parseSub2APIUsage("sub", map[string]any{
+		"mode":    "quota_limited",
+		"unit":    "CNY",
+		"balance": float64(12.5),
+		"quota": map[string]any{
+			"limit": float64(100), "used": float64(20), "remaining": float64(80), "unit": "CNY",
+		},
+	})
+	if !result.HasBalanceAmount || result.BalanceAmount != 12.5 || result.BalanceCurrency != "CNY" {
+		t.Fatalf("structured non-USD balance = %#v", result)
+	}
+	if result.HasBalance || result.BalanceUSD != 0 {
+		t.Fatalf("non-USD balance leaked into USD fields: %#v", result)
+	}
+	if result.BalanceScope != "account" || len(result.QuotaWindows) != 1 {
+		t.Fatalf("balance/quota metadata = %#v", result)
+	}
+}
+
 func TestParseSub2APISubscriptionWindows(t *testing.T) {
 	result := parseSub2APIUsage("sub", map[string]any{
 		"mode":      "unrestricted",

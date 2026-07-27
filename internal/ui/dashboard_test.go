@@ -106,8 +106,8 @@ func TestRenderDashboardDoesNotShowQuotaWindowCounts(t *testing.T) {
 	}
 	for _, want := range []string{
 		`var countSummary =`,
-		`if (!countSummary) return display;`,
-		`if (balanceText) overview.appendChild`,
+		`if (!countSummary && (!hasWindows || isWalletSummary)) return display;`,
+		`if (balanceText) {`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("dashboard is missing count-summary suppression marker %q", want)
@@ -121,7 +121,7 @@ func TestRenderDashboardShowsEveryExtraDetailInStableOrder(t *testing.T) {
 		t.Fatal("dashboard still truncates provider details")
 	}
 	for _, want := range []string{
-		`Object.keys(result.extra).sort`,
+		`Object.keys(result.extra).filter`,
 		`detail-grid`,
 		`账户明细`,
 		`今日请求数`,
@@ -184,30 +184,135 @@ func TestRenderDashboardGroupsOverviewByCategoryAndMultipleKeys(t *testing.T) {
 	for _, want := range []string{
 		`id="provider-jump-nav"`,
 		`aria-label="AI 提供商分组"`,
+		`activeOverviewCategory`,
+		`nav.setAttribute("role", "tablist")`,
+		`tab.setAttribute("role", "tab")`,
+		`tab.setAttribute("aria-selected", String(selected))`,
+		`section.setAttribute("role", "tabpanel")`,
+		`section.hidden = group.category !== state.activeOverviewCategory`,
+		`activateOverviewCategory(group.category, false)`,
+		`event.key === "ArrowRight"`,
+		`event.key === "Home"`,
 		`overviewResultGroups`,
 		`result.provider_key`,
 		`provider.mappingKey`,
 		`var serviceKey = category + "\u0000" + baseURL + "\u0000" + queryType;`,
 		`if (service.names.length > 1) service.provider.name = serviceName`,
 		`overview-category-list`,
-		`category-toggle`,
-		`var expanded = owns(state.expandedCategories, group.category) ? Boolean(state.expandedCategories[group.category]) : true;`,
 		`if (service.results.length === 1) content.appendChild(resultCard`,
 		`renderProviderBundle(service.provider, service.results`,
 		`var expanded = owns(state.expandedProviders, provider.mappingKey) ? Boolean(state.expandedProviders[provider.mappingKey]) : false;`,
 		`bundle-summary`,
 		`bundle-collapse`,
 		`展开密钥`,
-		`scrollIntoView`,
-		`prefers-reduced-motion: reduce`,
-		`aria-current`,
-		`IntersectionObserver`,
-		`section.setAttribute("aria-labelledby", toggleID)`,
+		`section.setAttribute("aria-labelledby", tabID)`,
 		`section.setAttribute("aria-labelledby", bundleTitleID)`,
-		`toggle.focus({ preventScroll:true })`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("dashboard is missing grouped overview marker %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		`scrollIntoView`,
+		`IntersectionObserver`,
+		`expandedCategories`,
+		`category-toggle`,
+		`aria-current`,
+	} {
+		if strings.Contains(page, unwanted) {
+			t.Fatalf("dashboard still uses obsolete all-category navigation marker %q", unwanted)
+		}
+	}
+}
+
+func TestRenderDashboardSuppressesDuplicatedQuotaSummaries(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, want := range []string{
+		`var genericBalancePresent = Boolean(result.has_balance_amount) || owns(result, "balance_amount")`,
+		`return "钱包余额 " + amountWithUnit(genericAmount, result.balance_currency || "credits")`,
+		`var balancePresent = Boolean(result.has_balance) || owns(result, "balance_usd")`,
+		`return "钱包余额 " + amountWithUnit(balanceAmount, "usd")`,
+		`var hasWindows = Array.isArray(result.quota_windows) && result.quota_windows.length > 0`,
+		`var isWalletSummary = /^钱包余额`,
+		`if (Array.isArray(result.quota_windows) && result.quota_windows.length > 0) return ""`,
+		`if (plan === "钱包余额") return ""`,
+		`if (hasWindows && (plan === "账户额度" || plan === "密钥独立额度")) return ""`,
+		`if (balanceText) {`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing summary de-duplication marker %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		`renderAccountMeta(overview, result)`,
+		`label:"查询状态"`,
+	} {
+		if strings.Contains(page, unwanted) {
+			t.Fatalf("dashboard still renders redundant overview content %q", unwanted)
+		}
+	}
+}
+
+func TestRenderDashboardPlacesPlanAndResetInTitle(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, want := range []string{
+		`result-title-row`,
+		`bundle-title-row`,
+		`title-meta-chip`,
+		`appendTitleMetadata(titleRow, resultTitleMetadata(result))`,
+		`appendTitleMetadata(titleRow, commonTitleMetadata(results))`,
+		`owns(extra, "密钥到期") || owns(extra, "套餐到期") ? "到期 " : "重置 "`,
+		`key === "套餐名称" && result.plan`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing title metadata marker %q", want)
+		}
+	}
+	if strings.Contains(page, `class="account-meta"`) || strings.Contains(page, `function renderAccountMeta`) {
+		t.Fatal("dashboard still reserves a separate row for account plan/reset metadata")
+	}
+}
+
+func TestRenderDashboardFramesMultipleKeyBundles(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for name, pattern := range map[string]string{
+		"complete bundle frame": `(?s)\.provider-bundle\{[^}]*padding:15px[^}]*border:1px solid[^}]*border-radius:12px[^}]*background:`,
+		"flat nested key rows":  `(?s)\.provider-bundle \.result-card\{[^}]*border-top:1px solid[^}]*border-radius:0[^}]*background:transparent[^}]*box-shadow:none`,
+	} {
+		if !regexp.MustCompile(pattern).MatchString(page) {
+			t.Fatalf("dashboard is missing %s (%s)", name, pattern)
+		}
+	}
+}
+
+func TestRenderDashboardUsesRemainingQuotaForProgress(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, want := range []string{
+		`function quotaRemainingPercent(item)`,
+		`function remainingProgressClass(percent)`,
+		`if (percent <= 15) return " critical"`,
+		`if (percent <= 50) return " warning"`,
+		`track.setAttribute("aria-label", translateWindowLabel(item.label) + "剩余额度")`,
+		`track.setAttribute("aria-valuenow", String(Math.round(visualRemaining)))`,
+		`track.setAttribute("aria-valuetext", formatAmount(progressRemaining, "%") + " 剩余")`,
+		`bar.style.width = visualRemaining.toFixed(1) + "%"`,
+		`var percent = clampPercent((total - used) / total * 100)`,
+		`track.setAttribute("aria-label", "令牌剩余额度")`,
+		`.progress-bar.warning`,
+		`.progress-bar.critical`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing remaining-quota progress marker %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		`bar.style.width = usedPercent.toFixed(1)`,
+		`aria-label", translateWindowLabel(item.label) + "使用进度`,
+		`.progress-bar.medium`,
+		`.progress-bar.high`,
+	} {
+		if strings.Contains(page, unwanted) {
+			t.Fatalf("dashboard still uses consumed-quota progress marker %q", unwanted)
 		}
 	}
 }
@@ -223,7 +328,14 @@ func TestRenderDashboardUsesConservativeMultipleKeyAggregates(t *testing.T) {
 		`coverage + "/" + expectedCount`,
 		`entry.fetchedAt`,
 		`quotaResetNode(item, fetchedAt)`,
+		`var duplicateReset = Boolean(item.reset_at && accountResetAt`,
+		`var resetNode = duplicateReset ? null : quotaResetNode(item, fetchedAt)`,
 		`if (!timestamp && item.reset_at)`,
+		`Boolean(result.has_balance_amount) || owns(result, "balance_amount")`,
+		`canonicalQuotaUnit(genericPresent ? result.balance_currency : "usd")`,
+		`if (successful.length !== results.length) return []`,
+		`planValues.every(Boolean)`,
+		`summaryValues.every(Boolean)`,
 		`按密钥合计`,
 		`按密钥总额度`,
 		`最低剩余`,

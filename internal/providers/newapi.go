@@ -219,7 +219,7 @@ func (n NewAPI) fetchLegacyBilling(authID, token, proxyURL string) balance.Resul
 	if subscription.AccessUntil > 0 {
 		window.ResetAt = formatUnixTimestamp(subscription.AccessUntil)
 	}
-	return balance.Result{
+	r := balance.Result{
 		Provider:     label,
 		AuthID:       authID,
 		QuotaDisplay: fmt.Sprintf("剩余 %.4f / %.4f 站点额度", remaining, total),
@@ -231,4 +231,8 @@ func (n NewAPI) fetchLegacyBilling(authID, token, proxyURL string) balance.Resul
 		},
 		FetchedAt: time.Now(),
 	}
+	if window.ResetAt != "" {
+		r.Extra["密钥到期"] = window.ResetAt
+	}
+	return r
 }
