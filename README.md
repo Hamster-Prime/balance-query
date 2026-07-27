@@ -1,10 +1,56 @@
 # balance-query — CLIProxyAPI Plugin
 
-A [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) plugin written in Go that queries the balance / quota of multiple AI platform accounts and displays them in a unified Web dashboard or CLI table.
+[![Release](https://img.shields.io/github/v/release/Hamster-Prime/balance-query)](https://github.com/Hamster-Prime/balance-query/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## Supported Providers
+一个 [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) 插件，查询多个 AI 平台账户的余额 / 额度，并在统一的 Web 仪表盘或 CLI 表格中展示。
 
-| Provider | 说明 |
+## 通过 CPA 插件商店安装（推荐）
+
+在 CPA 的 `config.yaml` 中添加以下内容：
+
+```yaml
+plugins:
+  enabled: true
+  store-sources:
+    - "https://raw.githubusercontent.com/Hamster-Prime/balance-query/main/registry-v2.json"
+```
+
+重启 CPA 后，在 Web 管理界面的插件商店中找到 **Balance Query** 并点击安装即可。
+
+## 手动安装
+
+1. 前往 [Releases](https://github.com/Hamster-Prime/balance-query/releases) 下载对应平台的 `.zip`
+2. 解压得到共享库文件（`.so` / `.dll` / `.dylib`）
+3. 将文件放入 CPA 的 `plugins/` 目录
+4. 在 `config.yaml` 中启用：
+
+```yaml
+plugins:
+  enabled: true
+  configs:
+    balance-query:
+      enabled: true
+```
+
+## 使用方法
+
+1. 重启 CPA 后，进入 Web 管理界面 → **Balance Query**
+2. 点击右上角 **⚙ 设置**
+3. 为每个 CPA 账户从下拉菜单中选择对应的 Provider 类型
+4. 对于 Sub2API 和 New API，还需填写实例的 Base URL（因为你可能有多个实例）
+5. 点击 **保存配置**，仪表盘将自动刷新并显示余额数据
+
+CLI 用法：
+
+```bash
+cpa balance            # 打印余额表格
+cpa balance-refresh    # 强制刷新缓存后打印
+```
+
+## 支持的 Provider
+
+| Provider 类型 | 说明 |
 |---|---|
 | `sub2api` | Sub2API 实例（需填 Base URL） |
 | `newapi` | New API / One API 实例（需填 Base URL） |
@@ -22,61 +68,40 @@ A [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) plugin writt
 | `xiaomi_api` | 小米 MiMo API |
 | `xiaomi_token` | 小米 MiMo Token Plan |
 
-## Architecture
+## 项目结构
 
 ```
-main.go                  # CGo ABI entry point, method dispatch, fetch logic
+main.go                  # CGo ABI 入口、方法分发、fetch 逻辑
 internal/
-  balance/types.go       # ProviderType constants, AuthMapping, PluginConfig
-  cache/cache.go         # Generic TTL cache (Cache[K,V])
+  balance/types.go       # ProviderType 常量、AuthMapping、PluginConfig
+  cache/cache.go         # 泛型 TTL 缓存 Cache[K,V]
   providers/
-    registry.go          # providers.Build(ProviderType, baseURL) factory
-    http.go              # shared HTTP helpers
-    deepseek.go
-    glm.go
-    kimi.go
-    sub2api.go
-    newapi.go
-    minimax.go
-    longcat.go
-    opencode.go
-    volcengine.go
-    xiaomi.go
-  ui/dashboard.go        # HTML dashboard + settings page + CLI table renderer
+    registry.go          # providers.Build(ProviderType, baseURL) 工厂
+    http.go              # 共用 HTTP 工具
+    deepseek.go / glm.go / kimi.go / sub2api.go / newapi.go
+    minimax.go / longcat.go / opencode.go / volcengine.go / xiaomi.go
+  ui/dashboard.go        # HTML 仪表盘 + 设置页面 + CLI 表格渲染
+.github/workflows/
+  release.yml            # 打 tag 后自动交叉编译 6 个平台并发布 Release
+registry.json            # CPA 插件商店注册表 v1（CI 自动更新）
+registry-v2.json         # CPA 插件商店注册表 v2，含 sha256（CI 自动更新）
 ```
 
-## Building
+## 构建
 
-Requires Go 1.22 and CGo.
+需要 Go 1.22 + CGo。
 
 ```bash
 make
-# or manually:
+# 或手动：
 CGO_ENABLED=1 go build -buildmode=c-shared -trimpath -ldflags="-s -w" -o bin/balance-query.so .
 ```
 
-The output is `bin/balance-query.so` (a C-ABI shared library loaded by CPA).
+## 配置持久化
 
-## Usage
+Provider 映射存储在 `balance-query-config.json` 中，通过 CPA 的 `host.auth.save` 接口持久化，无需手动编辑文件。
 
-1. Copy `bin/balance-query.so` into your CPA plugins directory.
-2. Restart CPA.
-3. In the CPA Web UI, navigate to **Balance Query → Settings**.
-4. For each CPA account, select the corresponding provider type from the dropdown. For `sub2api` and `newapi`, also enter the instance Base URL.
-5. Click **保存配置** — the dashboard will refresh and show live balance data.
-
-CLI:
-
-```bash
-cpa balance          # print balance table
-cpa balance-refresh  # force-refresh cache first
-```
-
-## Configuration
-
-Provider mappings are stored in `balance-query-config.json` via `host.auth.save` (CPA's built-in config persistence). No manual file editing is needed.
-
-The cache TTL (default 300 s) can be adjusted in the dashboard header and is applied immediately without restart.
+缓存 TTL（默认 300 秒）可在仪表盘顶部修改，立即生效，无需重启。
 
 ## License
 
