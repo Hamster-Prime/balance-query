@@ -179,6 +179,72 @@ func TestRenderDashboardUsesSingleColumnCollapsibleAccountDetails(t *testing.T) 
 	}
 }
 
+func TestRenderDashboardGroupsOverviewByCategoryAndMultipleKeys(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, want := range []string{
+		`id="provider-jump-nav"`,
+		`aria-label="AI 提供商分组"`,
+		`overviewResultGroups`,
+		`result.provider_key`,
+		`provider.mappingKey`,
+		`var serviceKey = category + "\u0000" + baseURL + "\u0000" + queryType;`,
+		`if (service.names.length > 1) service.provider.name = serviceName`,
+		`overview-category-list`,
+		`category-toggle`,
+		`var expanded = owns(state.expandedCategories, group.category) ? Boolean(state.expandedCategories[group.category]) : true;`,
+		`if (service.results.length === 1) content.appendChild(resultCard`,
+		`renderProviderBundle(service.provider, service.results`,
+		`var expanded = owns(state.expandedProviders, provider.mappingKey) ? Boolean(state.expandedProviders[provider.mappingKey]) : false;`,
+		`bundle-summary`,
+		`bundle-collapse`,
+		`展开密钥`,
+		`scrollIntoView`,
+		`prefers-reduced-motion: reduce`,
+		`aria-current`,
+		`IntersectionObserver`,
+		`section.setAttribute("aria-labelledby", toggleID)`,
+		`section.setAttribute("aria-labelledby", bundleTitleID)`,
+		`toggle.focus({ preventScroll:true })`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing grouped overview marker %q", want)
+		}
+	}
+}
+
+func TestRenderDashboardUsesConservativeMultipleKeyAggregates(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, want := range []string{
+		`function bundleSummaryMetrics`,
+		`function quotaBucketMetrics`,
+		`item.aggregation_scope === "key"`,
+		`result.has_balance`,
+		`result.has_cost`,
+		`coverage + "/" + expectedCount`,
+		`entry.fetchedAt`,
+		`quotaResetNode(item, fetchedAt)`,
+		`if (!timestamp && item.reset_at)`,
+		`按密钥合计`,
+		`按密钥总额度`,
+		`最低剩余`,
+		`平均剩余`,
+		`剩余范围`,
+		`canonicalQuotaUnit`,
+		`result.balance_usd`,
+		`已返回合计剩余`,
+		`剩余数值覆盖`,
+		`百分比覆盖`,
+		`hasPercentOnly`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing multi-key aggregate marker %q", want)
+		}
+	}
+	if strings.Contains(page, `remainingPercents.reduce(function (sum, value) { return sum + value; }, 0)`) {
+		t.Fatal("dashboard must not present summed percentages as a quota total")
+	}
+}
+
 func TestRenderDashboardGroupsProvidersByCategoryAndServiceAddress(t *testing.T) {
 	page := string(RenderDashboard(300))
 	for _, want := range []string{

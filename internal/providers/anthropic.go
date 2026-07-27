@@ -135,6 +135,9 @@ func (c ClaudeAdmin) Fetch(authID, token, proxyURL string) balance.Result {
 		FetchedAt: time.Now(),
 	}
 	if costErr == nil {
+		result.CostUSD = costUSD
+		result.HasCost = true
+		result.CostScope = "organization"
 		result.QuotaDisplay = fmt.Sprintf("近 30 天费用 %.2f USD", costUSD)
 		result.Extra["近 30 天费用"] = fmt.Sprintf("%.2f USD", costUSD)
 		for description, amount := range costDetails {

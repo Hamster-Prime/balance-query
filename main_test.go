@@ -194,6 +194,39 @@ func TestValidateAccountQuery(t *testing.T) {
 	}
 }
 
+func TestFetchAccountsPreservesProviderKeyOnCacheHit(t *testing.T) {
+	previousState := snapshotState()
+	t.Cleanup(func() {
+		stateMu.Lock()
+		state = previousState
+		stateMu.Unlock()
+		resultCache.SetTTL(time.Duration(previousState.CacheTTLSeconds) * time.Second)
+		resultCache.Flush()
+	})
+
+	account := accountQuery{
+		ID:          "account-1",
+		ProviderKey: "OpenAI%20%E5%85%BC%E5%AE%B9|relay|https%3A%2F%2Frelay.example.com%2Fv1",
+		AccountName: "Relay · 密钥 1",
+		BaseURL:     "https://relay.example.com/v1",
+		APIKey:      "sk-provider-key-test",
+		QueryType:   balance.ProviderNewAPI,
+	}
+	resultCache.SetTTL(time.Hour)
+	resultCache.Set(accountCacheKey(account), balance.Result{Provider: "New API", FetchedAt: time.Now()})
+
+	results := fetchAccounts([]accountQuery{account}, false)
+	if len(results) != 1 {
+		t.Fatalf("fetchAccounts() returned %d results, want 1", len(results))
+	}
+	if results[0].ProviderKey != account.ProviderKey {
+		t.Fatalf("ProviderKey = %q, want %q", results[0].ProviderKey, account.ProviderKey)
+	}
+	if results[0].AccountName != account.AccountName || results[0].BaseURL != account.BaseURL {
+		t.Fatalf("cached display metadata was not refreshed: %#v", results[0])
+	}
+}
+
 func TestHandleManagementRequestValidationEnvelope(t *testing.T) {
 	tests := []struct {
 		name       string

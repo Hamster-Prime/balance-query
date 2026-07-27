@@ -176,6 +176,11 @@ func TestParseSub2APISubscriptionWindows(t *testing.T) {
 	if len(result.QuotaWindows) != 3 {
 		t.Fatalf("subscription windows = %d, want 3: %#v", len(result.QuotaWindows), result.QuotaWindows)
 	}
+	for _, window := range result.QuotaWindows {
+		if window.AggregationScope != "account" {
+			t.Fatalf("subscription scope = %q, want account: %#v", window.AggregationScope, window)
+		}
+	}
 	if result.QuotaWindows[2].Label != "每月额度" || result.QuotaWindows[2].Remaining != 42 {
 		t.Fatalf("monthly window = %#v", result.QuotaWindows[2])
 	}

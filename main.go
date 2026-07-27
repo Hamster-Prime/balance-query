@@ -57,7 +57,7 @@ import (
 
 const (
 	pluginID      = "balance-query"
-	pluginVersion = "0.4.0"
+	pluginVersion = "0.5.0"
 	abiVersion    = 1
 	schemaVersion = 1
 
@@ -456,6 +456,7 @@ func fetchAccounts(accounts []accountQuery, refresh bool) []balance.Result {
 		if refresh {
 			resultCache.Delete(cacheKey)
 		} else if cached, ok := resultCache.Get(cacheKey); ok {
+			cached.ProviderKey = account.ProviderKey
 			cached.AuthID = account.ID
 			cached.AccountName = account.AccountName
 			cached.KeyPreview = maskAPIKey(account.APIKey)
@@ -488,6 +489,7 @@ func fetchAccount(account accountQuery) balance.Result {
 	}
 	result := fetcher.Fetch(account.ID, account.APIKey, account.ProxyURL)
 	redactResultSecret(&result, account.APIKey)
+	result.ProviderKey = account.ProviderKey
 	result.AuthID = account.ID
 	result.AccountName = account.AccountName
 	result.KeyPreview = maskAPIKey(account.APIKey)
@@ -498,6 +500,7 @@ func fetchAccount(account accountQuery) balance.Result {
 func accountError(account accountQuery, message string) balance.Result {
 	return balance.Result{
 		Provider:    balance.ProviderLabel[account.QueryType],
+		ProviderKey: account.ProviderKey,
 		AuthID:      account.ID,
 		AccountName: account.AccountName,
 		KeyPreview:  maskAPIKey(account.APIKey),

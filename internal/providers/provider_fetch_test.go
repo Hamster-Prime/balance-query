@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -59,6 +60,9 @@ func TestNewAPIFetchUsesAPIKeyBillingEndpoints(t *testing.T) {
 	if window.Total != 100 || window.Used != 25 || window.Remaining != 75 {
 		t.Fatalf("New API quota = %#v", window)
 	}
+	if window.AggregationScope != "account" {
+		t.Fatalf("legacy New API scope = %q, want account", window.AggregationScope)
+	}
 }
 
 func TestNewAPIFetchPrefersTokenUsageEndpoint(t *testing.T) {
@@ -88,6 +92,9 @@ func TestNewAPIFetchPrefersTokenUsageEndpoint(t *testing.T) {
 	if got := result.QuotaWindows[0]; got.Total != 10 || got.Used != 2 || got.Remaining != 8 || got.Unit != "USD" {
 		t.Fatalf("preferred token usage window = %#v", got)
 	}
+	if got := result.QuotaWindows[0].AggregationScope; got != "key" {
+		t.Fatalf("token usage scope = %q, want key", got)
+	}
 }
 
 func TestSub2APIFetchDecodesTopLevelUsage(t *testing.T) {
@@ -114,6 +121,11 @@ func TestSub2APIFetchDecodesTopLevelUsage(t *testing.T) {
 	if result.QuotaDisplay != "总额度：剩余 12 / 20 USD" {
 		t.Fatalf("Sub2API quota display = %q", result.QuotaDisplay)
 	}
+	for _, window := range result.QuotaWindows {
+		if window.AggregationScope != "key" {
+			t.Fatalf("Sub2API key window scope = %q, want key: %#v", window.AggregationScope, window)
+		}
+	}
 }
 
 func TestSub2APIFetchFallsBackToXAPIKey(t *testing.T) {
@@ -132,6 +144,33 @@ func TestSub2APIFetchFallsBackToXAPIKey(t *testing.T) {
 	result := (Sub2API{BaseURL: "https://sub2api.example/v1"}).Fetch("sub", "sub-key", "")
 	if result.Error != "" || requests != 2 {
 		t.Fatalf("result = %#v, requests = %d", result, requests)
+	}
+	if !result.HasBalance || result.BalanceScope != "account" || result.BalanceUSD != 12.5 {
+		t.Fatalf("Sub2API balance metadata = %#v", result)
+	}
+}
+
+func TestDeepSeekFetchPreservesZeroUSDBalance(t *testing.T) {
+	useTestHTTPClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/user/balance" {
+			t.Fatalf("request path = %q", r.URL.Path)
+		}
+		return jsonResponse(`{"is_available":true,"balance_infos":[{"currency":"USD","total_balance":"0","granted_balance":"0","topped_up_balance":"0"}]}`), nil
+	})
+
+	result := (DeepSeek{BaseURL: "https://api.deepseek.com"}).Fetch("deepseek", "deepseek-key", "")
+	if result.Error != "" {
+		t.Fatalf("DeepSeek.Fetch() error = %q", result.Error)
+	}
+	if !result.HasBalance || result.BalanceUSD != 0 || result.BalanceScope != "account" {
+		t.Fatalf("zero USD balance metadata = %#v", result)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal zero balance: %v", err)
+	}
+	if !strings.Contains(string(raw), `"has_balance":true`) || !strings.Contains(string(raw), `"balance_scope":"account"`) {
+		t.Fatalf("zero balance presence metadata was lost in JSON: %s", raw)
 	}
 }
 
@@ -216,6 +255,9 @@ func TestClaudeAdminFetchAggregatesUsageAndCosts(t *testing.T) {
 	}
 	if result.QuotaDisplay != "近 30 天费用 1.73 USD" {
 		t.Fatalf("quota display = %q", result.QuotaDisplay)
+	}
+	if !result.HasCost || result.CostUSD != 1.7345 || result.CostScope != "organization" {
+		t.Fatalf("Claude cost metadata = %#v", result)
 	}
 	if got := result.Extra["近 30 天总令牌"]; got != "225" {
 		t.Fatalf("total tokens = %q", got)

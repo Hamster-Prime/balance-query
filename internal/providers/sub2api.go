@@ -85,6 +85,7 @@ func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
 
 	if quota, ok := payload["quota"].(map[string]any); ok {
 		window := quotaWindowFromMap("密钥额度", "总额度", quota, firstNonEmpty(firstString(quota, "unit"), unit))
+		window.AggregationScope = "key"
 		if window.Total > 0 || window.Used > 0 || window.Remaining > 0 {
 			r.QuotaWindows = append(r.QuotaWindows, window)
 			applyPrimaryWindow(&r, window)
@@ -105,6 +106,7 @@ func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
 				windowLabel = firstNonEmpty(windowCode, "限流额度")
 			}
 			window := quotaWindowFromMap("速率限制", windowLabel, limit, unit)
+			window.AggregationScope = "key"
 			window.ResetAt = firstString(limit, "reset_at")
 			r.QuotaWindows = append(r.QuotaWindows, window)
 		}
@@ -129,6 +131,7 @@ func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
 				Unit:             unit,
 				UsedPercent:      percentFromValues(used, total),
 				RemainingPercent: clampPercent(100 - percentFromValues(used, total)),
+				AggregationScope: "account",
 			}
 			if label == "每周额度" {
 				// The API returns the beginning of the rolling weekly window,
@@ -147,7 +150,11 @@ func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
 	}
 
 	if balanceValue, ok := firstNumber(payload, "balance"); ok {
-		r.BalanceUSD = balanceValue
+		if strings.EqualFold(unit, "USD") {
+			r.BalanceUSD = balanceValue
+			r.HasBalance = true
+			r.BalanceScope = "account"
+		}
 		if r.QuotaDisplay == "" {
 			r.QuotaDisplay = fmt.Sprintf("钱包余额 %.4f %s", balanceValue, unit)
 		}

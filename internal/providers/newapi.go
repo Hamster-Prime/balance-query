@@ -90,13 +90,14 @@ func parseNewAPITokenUsage(authID string, response newAPITokenUsageResp, status 
 	used := convert(response.Data.TotalUsed)
 	remaining := convert(response.Data.TotalAvailable)
 	window := balance.QuotaWindow{
-		Group:     "密钥额度",
-		Label:     "总额度",
-		Used:      used,
-		Total:     total,
-		Remaining: remaining,
-		Unit:      unit,
-		Unlimited: response.Data.UnlimitedQuota,
+		Group:            "密钥额度",
+		Label:            "总额度",
+		Used:             used,
+		Total:            total,
+		Remaining:        remaining,
+		Unit:             unit,
+		Unlimited:        response.Data.UnlimitedQuota,
+		AggregationScope: "key",
 	}
 	if !window.Unlimited && total > 0 {
 		window.UsedPercent = percentFromValues(used, total)
@@ -213,6 +214,7 @@ func (n NewAPI) fetchLegacyBilling(authID, token, proxyURL string) balance.Resul
 		Unit:             "站点额度",
 		UsedPercent:      percentFromValues(used, total),
 		RemainingPercent: clampPercent(100 - percentFromValues(used, total)),
+		AggregationScope: "account",
 	}
 	if subscription.AccessUntil > 0 {
 		window.ResetAt = formatUnixTimestamp(subscription.AccessUntil)

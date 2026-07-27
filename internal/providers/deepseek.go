@@ -66,6 +66,8 @@ func (d DeepSeek) Fetch(authID, token, proxyURL string) balance.Result {
 			}
 			if amount, err := strconv.ParseFloat(b.TotalBalance, 64); err == nil {
 				r.BalanceUSD = amount
+				r.HasBalance = true
+				r.BalanceScope = "account"
 			}
 		}
 	}

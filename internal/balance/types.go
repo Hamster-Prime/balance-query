@@ -8,13 +8,23 @@ import "time"
 // Result is the unified balance/quota snapshot for one provider API key.
 type Result struct {
 	Provider    string `json:"provider"`
+	ProviderKey string `json:"provider_key,omitempty"`
 	AuthID      string `json:"auth_id"`
 	AccountName string `json:"account_name,omitempty"`
 	KeyPreview  string `json:"key_preview,omitempty"`
 	BaseURL     string `json:"base_url,omitempty"`
 
-	// Monetary balance; -1 if not applicable.
-	BalanceUSD float64 `json:"balance_usd,omitempty"`
+	// HasBalance preserves a legitimate zero balance through JSON omitempty.
+	// BalanceScope identifies whether several API keys own independent wallets.
+	BalanceUSD   float64 `json:"balance_usd,omitempty"`
+	HasBalance   bool    `json:"has_balance,omitempty"`
+	BalanceScope string  `json:"balance_scope,omitempty"`
+
+	// Historical cost is separate from wallet balance. Claude, for example,
+	// reports organization spend rather than remaining credit.
+	CostUSD   float64 `json:"cost_usd,omitempty"`
+	HasCost   bool    `json:"has_cost,omitempty"`
+	CostScope string  `json:"cost_scope,omitempty"`
 
 	// Token quota (Coding Plan style).
 	TokensTotal     int64 `json:"tokens_total,omitempty"`
@@ -58,8 +68,8 @@ type QuotaWindow struct {
 	Remaining float64 `json:"remaining,omitempty"`
 	Unit      string  `json:"unit,omitempty"`
 
-	// Percent fields are used when an API reports only percentages. Values are
-	// in the 0-100 range.
+	// Percent fields are used when an API reports only percentages. UsedPercent
+	// is 0-100; boosted plans may legitimately report RemainingPercent above 100.
 	UsedPercent      float64 `json:"used_percent,omitempty"`
 	RemainingPercent float64 `json:"remaining_percent,omitempty"`
 
@@ -68,6 +78,10 @@ type QuotaWindow struct {
 	Unlimited      bool   `json:"unlimited,omitempty"`
 	Unavailable    bool   `json:"unavailable,omitempty"`
 	Status         string `json:"status,omitempty"`
+
+	// AggregationScope is "key" only when each API key owns an independent
+	// allowance. Account, organization, and unknown windows must not be summed.
+	AggregationScope string `json:"aggregation_scope,omitempty"`
 }
 
 // ── Fetcher ──────────────────────────────────────────────────────────────────
