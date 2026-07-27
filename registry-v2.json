@@ -4,7 +4,7 @@
     {
       "id": "balance-query",
       "name": "Balance Query",
-      "description": "Query balance and quota for 15 AI platform accounts (DeepSeek, GLM, Kimi, Sub2API, New API, MiniMax, Longcat, OpenCode, Volcengine, Xiaomi\u2026) in a unified Web dashboard.",
+      "description": "Query balance and quota for 15 AI platform accounts (DeepSeek, GLM, Kimi, Sub2API, New API, MiniMax, Longcat, OpenCode, Volcengine, Xiaomi…) in a unified Web dashboard.",
       "author": "Hamster-Prime",
       "version": "0.1.0",
       "repository": "https://github.com/Hamster-Prime/balance-query",
@@ -27,14 +27,14 @@
             "goos": "darwin",
             "goarch": "amd64",
             "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.1.0/balance-query_0.1.0_darwin_amd64.zip",
-            "sha256": "",
+            "sha256": "4830556694a3bfa231c1363b47fe203dc2da3fc781137c52b7a424e7bc895c83",
             "size": 2252229
           },
           {
             "goos": "darwin",
             "goarch": "arm64",
             "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.1.0/balance-query_0.1.0_darwin_arm64.zip",
-            "sha256": "",
+            "sha256": "1b5a00f6492116ce876326e0d68cdb9f0e3d62890d385e170f63601dfcaf3bb0",
             "size": 2104864
           },
           {
