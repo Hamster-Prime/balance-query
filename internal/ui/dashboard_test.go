@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -106,6 +107,50 @@ func TestRenderDashboardShowsEveryExtraDetailInStableOrder(t *testing.T) {
 	}
 }
 
+func TestRenderDashboardFailureCardsStayCompactWithoutDetailContent(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for name, pattern := range map[string]string{
+		`flat overview row`:        `(?s)\.result-overview\{[^}]*display:flex[^}]*flex-wrap:wrap[^}]*margin-top:`,
+		`marginless primary value`: `(?s)\.quota-main\{[^}]*margin:0`,
+		`no failed detail toggle`:  `var\s+detailKeys\s*=\s*!result\.error\s*\?\s*extraDetailKeys\(result\)\s*:\s*\[\]`,
+	} {
+		if !regexp.MustCompile(pattern).MatchString(page) {
+			t.Fatalf("dashboard is missing compact failed-card behavior %s (%s)", name, pattern)
+		}
+	}
+
+	failedBranch := regexp.MustCompile(`(?s)if\s*\(failed\s*\|\|\s*consoleOnly\).*?\}\s*else\s*\{.*?renderQuotaGroups`)
+	if !failedBranch.MatchString(page) {
+		t.Fatal("dashboard should keep quota groups out of the failed/console-only card branch")
+	}
+}
+
+func TestRenderDashboardUsesSingleColumnCollapsibleAccountDetails(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, want := range []string{
+		`.result-grid{display:grid;grid-template-columns:minmax(0,1fr)`,
+		`repeat(auto-fit,minmax(220px,1fr))`,
+		`repeat(auto-fit,minmax(200px,1fr))`,
+		`account-detail-collapse`,
+		`grid-template-rows:0fr`,
+		`grid-template-rows:1fr`,
+		`var detailKeys = !result.error ? extraDetailKeys(result) : [];`,
+		`detailButton.setAttribute("aria-expanded", "false")`,
+		`detailButton.setAttribute("aria-controls", detailsID)`,
+		`collapse.setAttribute("aria-hidden", "true")`,
+		`collapse.setAttribute("inert", "")`,
+		`查看账户明细`,
+		`收起账户明细`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing single-column disclosure marker %q", want)
+		}
+	}
+	if strings.Contains(page, `.result-card:hover{border-color:var(--border-hover);box-shadow:var(--shadow-lg);transform:`) {
+		t.Fatal("full-width result cards should not jump vertically on hover")
+	}
+}
+
 func TestRenderDashboardMarksConsoleOnlyProviders(t *testing.T) {
 	page := string(RenderDashboard(300))
 	for _, want := range []string{
@@ -132,7 +177,12 @@ func TestRenderDashboardDoesNotInterpolateCredentials(t *testing.T) {
 			t.Fatalf("dashboard contains unsafe credential handling marker %q", dangerous)
 		}
 	}
-	for _, want := range []string{`textContent`, `redactSecrets`, `maskKey`} {
+	for _, want := range []string{
+		`textContent`,
+		`redactSecrets`,
+		`maskKey`,
+		`row.appendChild(element("dd", "", redactSecrets(result.extra[key])))`,
+	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("dashboard is missing credential-safe rendering marker %q", want)
 		}

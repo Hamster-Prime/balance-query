@@ -433,12 +433,13 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:0 0 12px}
 .section-title{font-size:15px;font-weight:650;margin:0;color:var(--text-primary)}
 .section-meta{font-size:12px;color:var(--text-tertiary);margin:2px 0 0}
-.result-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:14px;align-items:start}
+.result-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-items:start}
 .result-card{min-width:0;padding:18px;border:1px solid var(--glass-border);border-radius:12px;background:linear-gradient(145deg,color-mix(in srgb,var(--bg-primary) 92%,transparent),color-mix(in srgb,var(--bg-secondary) 70%,transparent));backdrop-filter:var(--glass-backdrop-filter);-webkit-backdrop-filter:var(--glass-backdrop-filter);box-shadow:var(--shadow);animation:item-in 400ms ease-out both;transition:border-color var(--motion-fast),box-shadow var(--motion-fast),transform var(--motion-fast),background-color var(--motion-normal)}
-.result-card:hover{border-color:var(--border-hover);box-shadow:var(--shadow-lg);transform:translateY(-2px)}
+.result-card:hover{border-color:var(--border-hover);box-shadow:var(--shadow-lg)}
 .result-card.error{border-color:var(--failure-badge-border)}
 .result-card.limited{border-color:var(--amber-30)}
 .result-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0}
+.result-actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex:0 0 auto;flex-wrap:wrap}
 .result-name{font-weight:650;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .result-url{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;color:var(--text-tertiary);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
 .badge{display:inline-flex;align-items:center;gap:5px;border-radius:9999px;border:1px solid var(--border-color);padding:3px 8px;font-size:11px;font-weight:600;white-space:nowrap}
@@ -446,16 +447,22 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .badge.failure{color:var(--failure-badge-text);background:var(--failure-badge-bg);border-color:var(--failure-badge-border)}
 .badge.warning{color:var(--amber-text);background:var(--amber-10);border-color:var(--amber-30)}
 .badge.muted{color:var(--text-secondary);background:var(--bg-tertiary)}
-.quota-main{font-size:20px;line-height:1.3;font-weight:680;color:var(--text-primary);margin-top:17px;overflow-wrap:anywhere}
+.detail-toggle{height:28px;border:1px solid var(--border-color);border-radius:7px;background:var(--bg-primary);color:var(--text-secondary);padding:0 8px;display:inline-flex;align-items:center;justify-content:center;gap:5px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap;transition:background var(--motion-fast),border-color var(--motion-fast),color var(--motion-fast),box-shadow var(--motion-fast)}
+.detail-toggle:hover{background:var(--bg-hover);border-color:var(--border-hover);color:var(--text-primary)}
+.detail-toggle:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}
+.detail-toggle .icon{width:13px;height:13px;transition:transform var(--motion-normal)}
+.detail-toggle[aria-expanded="true"] .icon{transform:rotate(180deg)}
+.result-overview{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;margin-top:14px}
+.quota-main{font-size:20px;line-height:1.3;font-weight:680;color:var(--text-primary);margin:0;overflow-wrap:anywhere}
 .quota-main.failure{font-size:14px;color:var(--warning-text);font-weight:600;line-height:1.45}
-.error-detail{margin-top:6px;color:var(--text-secondary);font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+.error-detail{color:var(--text-secondary);font-size:12px;line-height:1.45;overflow-wrap:anywhere}
 .progress-track{height:7px;border-radius:9999px;background:var(--bg-tertiary);overflow:hidden;margin-top:12px}
 .progress-bar{height:100%;width:0;border-radius:inherit;background:var(--success-color);transition:width 300ms ease}
 .progress-bar.medium{background:var(--quota-medium-color)}
 .progress-bar.high{background:var(--error-color)}
 .result-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:13px;color:var(--text-tertiary);font-size:11px}
 .key-preview{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;color:var(--text-secondary)}
-.account-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.account-meta{display:flex;gap:6px;flex-wrap:wrap;margin:0}
 .detail{display:inline-flex;gap:4px;border-radius:6px;border:1px solid color-mix(in srgb,var(--border-color) 75%,transparent);background:var(--bg-tertiary);color:var(--text-secondary);padding:4px 7px;font-size:11px;max-width:100%;overflow-wrap:anywhere}
 .detail-label{color:var(--text-tertiary)}
 .quota-groups{display:flex;flex-direction:column;gap:12px;margin-top:15px}
@@ -463,7 +470,7 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .quota-group-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
 .quota-group-title{font-size:12px;font-weight:650;color:var(--text-secondary);margin:0;overflow-wrap:anywhere}
 .quota-group-count{font-size:10px;color:var(--text-tertiary);border:1px solid var(--border-color);border-radius:9999px;padding:1px 6px;white-space:nowrap}
-.quota-window-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.quota-window-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
 .quota-window{min-width:0;padding:11px 12px;border:1px solid var(--border-color);border-radius:9px;background:color-mix(in srgb,var(--bg-primary) 78%,var(--bg-secondary));transition:border-color var(--motion-fast),background-color var(--motion-normal)}
 .quota-window.unlimited{border-color:color-mix(in srgb,var(--success-color) 38%,var(--border-color));background:color-mix(in srgb,var(--success-color) 6%,var(--bg-primary))}
 .quota-window.unavailable{opacity:.72;background:var(--bg-tertiary)}
@@ -478,9 +485,12 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .quota-window .progress-track{height:5px;margin-top:9px}
 .quota-window-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:17px;margin-top:7px;color:var(--text-tertiary);font-size:10px;line-height:1.35}
 .quota-window-meta span{overflow-wrap:anywhere}
+.account-detail-collapse{display:grid;grid-template-rows:0fr;opacity:0;visibility:hidden;pointer-events:none;transition:grid-template-rows var(--motion-normal),opacity var(--motion-fast),visibility 0s linear var(--motion-normal)}
+.account-detail-collapse[aria-hidden="false"]{grid-template-rows:1fr;opacity:1;visibility:visible;pointer-events:auto;transition:grid-template-rows var(--motion-normal),opacity var(--motion-fast),visibility 0s linear 0s}
+.account-detail-inner{min-height:0;overflow:hidden}
 .detail-section{border-top:1px solid var(--border-color);margin-top:13px;padding-top:11px}
 .detail-section-title{font-size:11px;font-weight:650;color:var(--text-secondary);margin:0 0 7px}
-.detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px}
 .detail-row{min-width:0;padding:6px 8px;border-radius:7px;background:var(--bg-tertiary)}
 .detail-row dt{font-size:10px;color:var(--text-tertiary);margin:0}
 .detail-row dd{font-size:11px;color:var(--text-secondary);margin:2px 0 0;overflow-wrap:anywhere}
@@ -526,8 +536,8 @@ select:hover{border-color:var(--border-hover)}
 .field input:focus,.ttl-field input:focus,select:focus{border-color:var(--primary-color);box-shadow:0 0 0 3px var(--primary-10);outline:0}
 .connection-actions{display:flex;justify-content:flex-end;margin-top:18px}
 .form-error{min-height:20px;margin:10px 0 0;color:var(--warning-text);font-size:12px}
-.skeleton-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:14px}
-.skeleton-card{height:264px;border:1px solid var(--border-color);border-radius:12px;background:var(--bg-primary);padding:18px;overflow:hidden}
+.skeleton-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.skeleton-card{height:150px;border:1px solid var(--border-color);border-radius:12px;background:var(--bg-primary);padding:18px;overflow:hidden}
 .skeleton{position:relative;overflow:hidden;background:var(--bg-tertiary);border-radius:5px}
 .skeleton::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--text-primary) 7%,transparent),transparent);animation:skeleton 1.5s ease-in-out infinite}
 .skeleton-line{height:12px;margin-bottom:10px}.skeleton-line.short{width:42%}.skeleton-line.medium{width:68%}.skeleton-line.value{width:54%;height:24px;margin-top:25px}
@@ -545,6 +555,7 @@ select:hover{border-color:var(--border-hover)}
   .summary{grid-template-columns:repeat(2,minmax(0,1fr))}
   .result-grid,.skeleton-grid{grid-template-columns:1fr}
   .quota-window-grid,.detail-grid{grid-template-columns:1fr}
+  .result-head{align-items:stretch;flex-direction:column}.result-actions{justify-content:space-between}.result-actions .badge{margin-right:auto}
   .settings-toolbar{align-items:flex-start;flex-direction:column}.ttl-field{width:100%;justify-content:space-between}
   table,thead,tbody,tr,th,td{display:block}thead{display:none}table{table-layout:auto}tbody tr{padding:13px 14px;border-bottom:1px solid var(--border-color)}tbody tr:last-child{border-bottom:0}td{padding:0;border:0}td+td{margin-top:10px}.provider-base{white-space:normal;overflow-wrap:anywhere}.query-cell::before{content:"余额查询类型";display:block;color:var(--text-tertiary);font-size:11px;margin-bottom:5px}
 }
@@ -566,6 +577,7 @@ select:hover{border-color:var(--border-hover)}
   <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></symbol>
   <symbol id="i-server" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01"/><path d="M6 18h.01"/></symbol>
   <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
 </svg>
 
 <main id="app" class="app" hidden>
@@ -1311,13 +1323,17 @@ select:hover{border-color:var(--border-hover)}
     if (details.childNodes.length) card.appendChild(details);
   }
 
-  function renderExtraDetails(card, result) {
-    if (!result.extra || typeof result.extra !== "object") return;
-    var keys = Object.keys(result.extra).sort(function (left, right) {
+  function extraDetailKeys(result) {
+    if (!result.extra || typeof result.extra !== "object") return [];
+    return Object.keys(result.extra).sort(function (left, right) {
       var labelOrder = detailLabel(left).localeCompare(detailLabel(right), "zh-CN");
       return labelOrder || left.localeCompare(right, "zh-CN");
     });
-    if (!keys.length) return;
+  }
+
+  function renderExtraDetails(card, result, keys) {
+    keys = Array.isArray(keys) ? keys : extraDetailKeys(result);
+    if (!keys.length) return false;
     var section = element("section", "detail-section");
     section.appendChild(element("h3", "detail-section-title", "账户明细"));
     var list = element("dl", "detail-grid");
@@ -1329,11 +1345,14 @@ select:hover{border-color:var(--border-hover)}
     });
     section.appendChild(list);
     card.appendChild(section);
+    return true;
   }
 
   function resultCard(result, index) {
     var consoleOnly = Boolean(result.error) && /控制台|官网登录|订阅管理页/.test(String(result.error));
     var failed = Boolean(result.error) && !consoleOnly;
+    var detailKeys = !result.error ? extraDetailKeys(result) : [];
+    var detailsID = "account-details-" + index + "-" + tinyHash(String(result.account_name || "") + "|" + String(result.base_url || ""));
     var card = element("article", "result-card" + (failed ? " error" : consoleOnly ? " limited" : ""));
     card.style.animationDelay = Math.min(index * 35, 210) + "ms";
     var head = element("div", "result-head");
@@ -1345,15 +1364,31 @@ select:hover{border-color:var(--border-hover)}
     badge.appendChild(icon(failed || consoleOnly ? "alert" : "check"));
     var hasWindows = Array.isArray(result.quota_windows) && result.quota_windows.length > 0;
     badge.appendChild(element("span", "", failed ? "查询失败" : consoleOnly ? "仅控制台可查" : hasWindows ? "配额已更新" : "查询成功"));
-    head.appendChild(badge);
+    var actions = element("div", "result-actions");
+    actions.appendChild(badge);
+    var detailButton = null;
+    if (detailKeys.length) {
+      detailButton = element("button", "detail-toggle");
+      detailButton.type = "button";
+      detailButton.setAttribute("aria-expanded", "false");
+      detailButton.setAttribute("aria-controls", detailsID);
+      detailButton.setAttribute("aria-label", "查看“" + (result.account_name || result.provider || "余额账户") + "”的账户明细");
+      detailButton.appendChild(element("span", "detail-toggle-label", "查看账户明细"));
+      detailButton.appendChild(icon("chevron"));
+      actions.appendChild(detailButton);
+    }
+    head.appendChild(actions);
     card.appendChild(head);
 
+    var overview = element("div", "result-overview");
     if (failed || consoleOnly) {
-      card.appendChild(element("div", "quota-main failure", consoleOnly ? "当前模型密钥不能直接查询余额" : "查询失败，请检查密钥、接口地址或账户状态"));
-      card.appendChild(element("div", "error-detail", localizedError(result.error)));
+      overview.appendChild(element("div", "quota-main failure", consoleOnly ? "当前模型密钥不能直接查询余额" : "查询失败，请检查密钥、接口地址或账户状态"));
+      overview.appendChild(element("div", "error-detail", localizedError(result.error)));
+      card.appendChild(overview);
     } else {
-      card.appendChild(element("div", "quota-main", formatBalance(result)));
-      renderAccountMeta(card, result);
+      overview.appendChild(element("div", "quota-main", formatBalance(result)));
+      renderAccountMeta(overview, result);
+      card.appendChild(overview);
       var renderedWindows = renderQuotaGroups(card, result);
       var total = Number(result.tokens_total || 0);
       var used = Number(result.tokens_used || 0);
@@ -1370,7 +1405,27 @@ select:hover{border-color:var(--border-hover)}
         card.appendChild(track);
         window.requestAnimationFrame(function () { bar.style.width = percent.toFixed(1) + "%"; });
       }
-      renderExtraDetails(card, result);
+      if (detailKeys.length) {
+        var collapse = element("div", "account-detail-collapse");
+        collapse.id = detailsID;
+        collapse.setAttribute("aria-hidden", "true");
+        collapse.setAttribute("inert", "");
+        var detailInner = element("div", "account-detail-inner");
+        renderExtraDetails(detailInner, result, detailKeys);
+        collapse.appendChild(detailInner);
+        card.appendChild(collapse);
+        detailButton.addEventListener("click", function () {
+          var expanded = detailButton.getAttribute("aria-expanded") === "true";
+          var nextExpanded = !expanded;
+          detailButton.setAttribute("aria-expanded", String(nextExpanded));
+          detailButton.setAttribute("aria-label", (nextExpanded ? "收起“" : "查看“") + (result.account_name || result.provider || "余额账户") + "”的账户明细");
+          collapse.setAttribute("aria-hidden", String(!nextExpanded));
+          if (nextExpanded) collapse.removeAttribute("inert");
+          else collapse.setAttribute("inert", "");
+          card.classList.toggle("details-open", nextExpanded);
+          setText(detailButton.querySelector(".detail-toggle-label"), nextExpanded ? "收起账户明细" : "查看账户明细");
+        });
+      }
     }
 
     var foot = element("div", "result-foot");
