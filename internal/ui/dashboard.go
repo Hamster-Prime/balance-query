@@ -1407,10 +1407,29 @@ select:hover{border-color:var(--border-hover)}
 
   function quotaWindowIsExhausted(item) {
     if (!item || item.unlimited || item.unavailable || item.unknown) return false;
-    if (item.aggregate_window && (item.aggregate_missing_count || item.aggregate_unknown_count || item.aggregate_failed_count)) return false;
+    if (item.aggregate_window && (item.aggregate_missing_count || item.aggregate_unknown_count || item.aggregate_failed_count || item.aggregate_unavailable_count)) return false;
     if (/已用尽|exhausted/i.test(String(item.status || ""))) return true;
     var progress = quotaProgressRemainingPercent(item);
     return progress != null && progress <= 0;
+  }
+
+  function quotaWindowState(item) {
+    if (!item || item.unavailable) return "neutral";
+    if (item.unknown || (item.aggregate_window && (item.aggregate_missing_count || item.aggregate_unknown_count || item.aggregate_failed_count))) return "incomplete";
+    if (item.unlimited) return "available";
+    return quotaWindowIsExhausted(item) ? "exhausted" : "available";
+  }
+
+  function quotaResultState(items) {
+    var counts = { available:0, exhausted:0, incomplete:0, neutral:0 };
+    (Array.isArray(items) ? items : []).forEach(function (item) {
+      counts[quotaWindowState(item)] += 1;
+    });
+    if (counts.exhausted && counts.available) return "partial-exhausted";
+    if (counts.exhausted && counts.incomplete) return "incomplete";
+    if (counts.exhausted) return "all-exhausted";
+    if (counts.incomplete) return "incomplete";
+    return "normal";
   }
 
   function remainingProgressClass(percent) {
@@ -1495,7 +1514,7 @@ select:hover{border-color:var(--border-hover)}
     var head = element("div", "quota-window-head");
     head.appendChild(element("span", "quota-window-label", translateWindowLabel(item.label)));
     var headMeta = element("span", "quota-window-head-meta");
-    var status = unlimited ? "不限量" : unavailable ? "不可用" : unknown ? "数据不完整" : translateStatus(item.status);
+    var status = unlimited ? "不限量" : unavailable ? (translateStatus(item.status) || "套餐未提供") : unknown ? "数据不完整" : translateStatus(item.status);
     var exhaustedStatus = quotaWindowIsExhausted(item);
     var warningStatus = unavailable || unknown || Boolean(item.aggregate_mixed_unlimited) || Boolean(item.aggregate_missing_count) || Boolean(item.aggregate_failed_count) || Boolean(item.aggregate_unavailable_count) || Boolean(item.aggregate_unknown_count);
     if (status) headMeta.appendChild(element("span", "quota-status" + (unlimited ? " good" : exhaustedStatus ? " critical" : warningStatus ? " warn" : ""), status));
@@ -1520,7 +1539,7 @@ select:hover{border-color:var(--border-hover)}
       value.appendChild(element("span", "", item.show_used_when_unlimited ? "已用 " + amountWithUnit(unlimitedUsed == null ? 0 : unlimitedUsed, item.unit) : "当前周期"));
     } else if (unavailable) {
       value.appendChild(element("strong", "", "—"));
-      value.appendChild(element("span", "", "当前套餐不可用"));
+      value.appendChild(element("span", "", "当前套餐未提供此项"));
     } else if (unknown) {
       value.appendChild(element("strong", "", "—"));
       value.appendChild(element("span", "", "暂无可汇总数值"));
@@ -2069,9 +2088,9 @@ select:hover{border-color:var(--border-hover)}
         aggregate.aggregate_percent = true;
         if (boostedCapacity) aggregate.prefer_percent = true;
       }
-      var partial = missingCount || unknownEntries.length || unavailableEntries.length || failedCount;
+      var partial = missingCount || unknownEntries.length || failedCount;
       var progress = finiteNumber(aggregate.progress_remaining_percent);
-      aggregate.status = partial ? "部分密钥未计入" : progress != null && progress <= 0 ? "已用尽" : "";
+      aggregate.status = partial ? "部分密钥未计入" : unavailableEntries.length ? "部分密钥的套餐未提供此项" : progress != null && progress <= 0 ? "已用尽" : "";
       return aggregate;
     });
   }
@@ -2301,9 +2320,8 @@ select:hover{border-color:var(--border-hover)}
   function resultCard(result, index) {
     var failed = Boolean(result.error);
     var resultWindows = Array.isArray(result.quota_windows) ? result.quota_windows : [];
-    var incompleteQuota = !failed && resultWindows.some(function (item) { return item && item.unknown; });
-    var exhaustedQuota = !failed && resultWindows.some(quotaWindowIsExhausted);
-    var quotaWarning = incompleteQuota || exhaustedQuota;
+    var quotaState = failed ? "normal" : quotaResultState(resultWindows);
+    var quotaWarning = quotaState !== "normal";
     var detailKeys = !result.error ? extraDetailKeys(result) : [];
     var detailsID = "account-details-" + index + "-" + tinyHash(String(result.account_name || "") + "|" + String(result.base_url || ""));
     var card = element("article", "result-card" + (failed ? " error" : quotaWarning ? " limited" : ""));
@@ -2319,7 +2337,7 @@ select:hover{border-color:var(--border-hover)}
     var badge = element("span", "badge " + (failed ? "failure" : quotaWarning ? "warning" : "success"));
     badge.appendChild(icon(failed || quotaWarning ? "alert" : "check"));
     var hasWindows = resultWindows.length > 0;
-    badge.appendChild(element("span", "", failed ? "查询失败" : exhaustedQuota ? "配额已用尽" : incompleteQuota ? "配额数据不完整" : hasWindows ? "配额已更新" : "查询成功"));
+    badge.appendChild(element("span", "", failed ? "查询失败" : quotaState === "all-exhausted" ? "全部配额已用尽" : quotaState === "partial-exhausted" ? "部分配额已用尽" : quotaState === "incomplete" ? "配额数据不完整" : hasWindows ? "配额已更新" : "查询成功"));
     var actions = element("div", "result-actions");
     actions.appendChild(badge);
     var detailButton = null;

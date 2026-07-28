@@ -69,3 +69,44 @@ func TestGLMQuotaUsesUsageAsTotalAndExplicitRemaining(t *testing.T) {
 		t.Fatalf("aggregation scope = %q, want key", window.AggregationScope)
 	}
 }
+
+func TestGLMMissingWeeklyWindowMeansUnlimitedWhenFiveHourWindowExists(t *testing.T) {
+	result := balance.Result{}
+	appendGLMWeeklyUnlimitedIfMissing(&result, []glmLimitItem{
+		{Type: "TOKENS_LIMIT", Unit: 3, Number: 5, Percentage: testFloat64(20)},
+	})
+	if len(result.QuotaWindows) != 1 {
+		t.Fatalf("GLM synthesized weekly windows = %#v", result.QuotaWindows)
+	}
+	window := result.QuotaWindows[0]
+	if !window.Unlimited || window.Label != "每周令牌额度" || window.Status != "不限量" || window.AggregationKey != "glm:TOKENS_LIMIT:6:1" {
+		t.Fatalf("GLM synthesized weekly window = %#v", window)
+	}
+}
+
+func TestGLMDoesNotSynthesizeWeeklyUnlimitedWhenWeeklyRowExists(t *testing.T) {
+	result := balance.Result{}
+	appendGLMWeeklyUnlimitedIfMissing(&result, []glmLimitItem{
+		{Type: "TOKENS_LIMIT", Unit: 3, Number: 5},
+		{Type: "TOKENS_LIMIT", Unit: 6, Number: 1},
+	})
+	if len(result.QuotaWindows) != 0 {
+		t.Fatalf("GLM existing weekly window was duplicated: %#v", result.QuotaWindows)
+	}
+}
+
+func TestGLMDoesNotInferUnlimitedFromIncompleteLimits(t *testing.T) {
+	result := balance.Result{}
+	appendGLMWeeklyUnlimitedIfMissing(&result, []glmLimitItem{{Type: "TIME_LIMIT"}})
+	if len(result.QuotaWindows) != 0 {
+		t.Fatalf("GLM incomplete limits inferred weekly unlimited: %#v", result.QuotaWindows)
+	}
+}
+
+func TestGLMDoesNotInferUnlimitedFromIncompleteFiveHourRow(t *testing.T) {
+	result := balance.Result{}
+	appendGLMWeeklyUnlimitedIfMissing(&result, []glmLimitItem{{Type: "TOKENS_LIMIT", Unit: 3, Number: 5}})
+	if len(result.QuotaWindows) != 0 {
+		t.Fatalf("GLM incomplete 5-hour row inferred weekly unlimited: %#v", result.QuotaWindows)
+	}
+}

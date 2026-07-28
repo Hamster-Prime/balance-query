@@ -117,6 +117,7 @@ func fetchGLMQuota(authID, token, proxyURL, baseURL, label string) balance.Resul
 			}
 		}
 	}
+	appendGLMWeeklyUnlimitedIfMissing(&r, resp.Data.Limits)
 	if modelErr == nil && glmDetailSuccess(modelResp) {
 		appendGLMModelDetails(&r, modelResp.Data)
 	} else {
@@ -131,6 +132,45 @@ func fetchGLMQuota(authID, token, proxyURL, baseURL, label string) balance.Resul
 		r.Extra = nil
 	}
 	return r
+}
+
+// Some Z.AI Coding Plan accounts have a legacy subscription benefit with no
+// weekly limit. The monitor endpoint represents that benefit by omitting the
+// weekly TOKENS_LIMIT row while still returning the 5-hour token row. Only
+// synthesize unlimited weekly quota when the response is otherwise complete;
+// an empty/partial limits response must remain unknown rather than becoming a
+// false unlimited result.
+func appendGLMWeeklyUnlimitedIfMissing(result *balance.Result, limits []glmLimitItem) {
+	if result == nil {
+		return
+	}
+	hasFiveHour := false
+	hasWeekly := false
+	for _, limit := range limits {
+		if limit.Type != "TOKENS_LIMIT" {
+			continue
+		}
+		switch {
+		case limit.Unit == 3 && limit.Number == 5:
+			// A row with no usable percentage/usage fields may be an
+			// incomplete monitor response, not proof of an unlimited plan.
+			hasFiveHour = hasFiveHour || !glmQuotaWindow(limit).Unknown
+		case limit.Unit == 6 && limit.Number == 1:
+			hasWeekly = true
+		}
+	}
+	if !hasFiveHour || hasWeekly {
+		return
+	}
+	result.QuotaWindows = append(result.QuotaWindows, balance.QuotaWindow{
+		Group:            "模型额度",
+		Label:            "每周令牌额度",
+		Unit:             "令牌",
+		Unlimited:        true,
+		Status:           "不限量",
+		AggregationScope: "key",
+		AggregationKey:   "glm:TOKENS_LIMIT:6:1",
+	})
 }
 
 func fetchGLMEndpoint(endpoint, token, proxyURL string, dest any) error {

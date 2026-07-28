@@ -335,7 +335,13 @@ func TestRenderDashboardUsesRemainingQuotaForProgress(t *testing.T) {
 	for _, want := range []string{
 		`function quotaRemainingPercent(item)`,
 		`function quotaWindowIsExhausted(item)`,
+		`function quotaWindowState(item)`,
+		`function quotaResultState(items)`,
 		`if (/已用尽|exhausted/i.test(String(item.status || ""))) return true`,
+		`"partial-exhausted"`,
+		`"全部配额已用尽"`,
+		`"部分配额已用尽"`,
+		`"当前套餐未提供此项"`,
 		`function remainingProgressClass(percent)`,
 		`if (percent <= 15) return " critical"`,
 		`if (percent <= 50) return " warning"`,

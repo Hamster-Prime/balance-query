@@ -401,7 +401,7 @@ func TestMiniMaxUnlimitedAndUnavailableAreDistinct(t *testing.T) {
 		t.Fatalf("unlimited window = %#v", unlimited)
 	}
 	unavailable := miniMaxWindow("视频模型", "每周配额", 0, 0, nil, 3, 0, 0, true, 1, true, true, false)
-	if unavailable.Unlimited || !unavailable.Unavailable || unavailable.Status != "不在当前套餐中" {
+	if unavailable.Unlimited || !unavailable.Unavailable || unavailable.Status != "当前套餐未提供视频额度" {
 		t.Fatalf("unavailable window = %#v", unavailable)
 	}
 }

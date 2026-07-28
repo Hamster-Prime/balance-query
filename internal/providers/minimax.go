@@ -296,7 +296,11 @@ func miniMaxWindow(group, label string, total, reportedRemaining float64, remain
 		CapacityPercent:  capacityPercent,
 	}
 	if unavailable {
-		window.Status = "不在当前套餐中"
+		if group == "视频模型" {
+			window.Status = "当前套餐未提供视频额度"
+		} else {
+			window.Status = "当前套餐未提供此模型额度"
+		}
 		return window
 	}
 	if !fieldsPresent {

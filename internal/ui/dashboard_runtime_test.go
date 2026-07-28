@@ -8,19 +8,15 @@ import (
 	"testing"
 )
 
-func runDashboardAggregation(t *testing.T, results string) []map[string]any {
+func dashboardQuotaHelpers(t *testing.T) string {
 	t.Helper()
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node is not installed")
-	}
 	page := string(RenderDashboard(300))
 	start := strings.Index(page, "  function quotaPercent(item)")
 	end := strings.Index(page, "  function bundleSummaryMetrics(results, hasQuotaWindows)")
 	if start < 0 || end <= start {
-		t.Fatal("cannot locate dashboard aggregation functions")
+		t.Fatal("cannot locate dashboard quota functions")
 	}
-	helpers := `
+	return `
 function owns(value, key) { return Object.prototype.hasOwnProperty.call(value || {}, key); }
 function finiteNumber(value) {
   if (value == null || (typeof value === "string" && !value.trim())) return null;
@@ -30,8 +26,16 @@ function finiteNumber(value) {
 function clampPercent(value) { return Math.max(0, Math.min(100, Number(value) || 0)); }
 function canonicalQuotaUnit(value) { return String(value || "").trim(); }
 function translateWindowLabel(value) { return String(value || "").trim(); }
-`
-	script := helpers + page[start:end] + "\nprocess.stdout.write(JSON.stringify(aggregateQuotaWindows(" + results + ")));"
+` + page[start:end]
+}
+
+func runDashboardAggregation(t *testing.T, results string) []map[string]any {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := dashboardQuotaHelpers(t) + "\nprocess.stdout.write(JSON.stringify(aggregateQuotaWindows(" + results + ")));"
 	output, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("execute dashboard aggregation: %v\n%s", err, output)
@@ -41,6 +45,20 @@ function translateWindowLabel(value) { return String(value || "").trim(); }
 		t.Fatalf("decode dashboard aggregation: %v\n%s", err, output)
 	}
 	return windows
+}
+
+func runDashboardQuotaResultState(t *testing.T, windows string) string {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	script := dashboardQuotaHelpers(t) + "\nprocess.stdout.write(quotaResultState(" + windows + "));"
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute dashboard quota result state: %v\n%s", err, output)
+	}
+	return string(output)
 }
 
 func TestDashboardEmbeddedScriptHasValidSyntax(t *testing.T) {
@@ -147,6 +165,64 @@ func TestDashboardAggregationDoesNotCallPartialExhaustedGroupFullyDepleted(t *te
 	window := findAggregatedWindow(t, windows, "每周配额", "")
 	if window["status"] != "部分密钥未计入" {
 		t.Fatalf("partial depleted group status = %#v", window)
+	}
+}
+
+func TestDashboardDistinguishesPartialAndCompleteQuotaExhaustion(t *testing.T) {
+	tests := []struct {
+		name    string
+		windows string
+		want    string
+	}{
+		{
+			name: "one model exhausted while another remains",
+			windows: `[
+  {"group":"通用模型","remaining_percent":80,"capacity_percent":100},
+  {"group":"视频模型","total":3,"used":3,"remaining_percent":0,"status":"已用尽"}
+]`,
+			want: "partial-exhausted",
+		},
+		{
+			name: "all finite quotas exhausted",
+			windows: `[
+  {"group":"通用模型","remaining_percent":0,"used_percent":100,"status":"已用尽"},
+  {"group":"视频模型","remaining_percent":0,"used_percent":100,"status":"已用尽"}
+]`,
+			want: "all-exhausted",
+		},
+		{
+			name:    "exhausted plus incomplete is not definitive",
+			windows: `[{"remaining_percent":0,"used_percent":100,"status":"已用尽"},{"unknown":true}]`,
+			want:    "incomplete",
+		},
+		{
+			name:    "unlimited resource keeps result partially available",
+			windows: `[{"remaining_percent":0,"used_percent":100,"status":"已用尽"},{"unlimited":true}]`,
+			want:    "partial-exhausted",
+		},
+		{
+			name:    "unavailable resource is neutral",
+			windows: `[{"remaining_percent":80,"capacity_percent":100},{"unavailable":true}]`,
+			want:    "normal",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := runDashboardQuotaResultState(t, test.windows); got != test.want {
+				t.Fatalf("quota result state = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestDashboardAggregationTreatsUnavailableAsKnownPlanCoverage(t *testing.T) {
+	windows := runDashboardAggregation(t, `[
+  {"quota_windows":[{"group":"视频模型","label":"每日配额","aggregation_key":"video-daily","aggregation_scope":"key","unit":"次","total":3,"remaining":2}]},
+  {"quota_windows":[{"group":"视频模型","label":"每日配额","aggregation_key":"video-daily","aggregation_scope":"key","unit":"次","unavailable":true,"status":"不在当前套餐中"}]}
+]`)
+	window := findAggregatedWindow(t, windows, "每日配额", "次")
+	if window["status"] != "部分密钥的套餐未提供此项" || numberField(t, window, "aggregate_unavailable_count") != 1 {
+		t.Fatalf("known unavailable coverage = %#v", window)
 	}
 }
 
