@@ -477,10 +477,11 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .bundle-metric-value{display:block;margin-top:3px;color:var(--text-primary);font-size:13px;font-weight:650;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 .bundle-metric-meta{display:block;margin-top:2px;color:var(--text-tertiary);font-size:10px;overflow-wrap:anywhere}
 .bundle-collapse[aria-hidden="false"]{grid-template-rows:1fr;opacity:1;visibility:visible;pointer-events:auto;transition:grid-template-rows var(--motion-normal),opacity var(--motion-fast),visibility 0s linear 0s}
-.bundle-result-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:0;padding-top:12px}
-.provider-bundle .result-card{padding:14px 0;border:0;border-top:1px solid var(--border-color);border-radius:0;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none;animation:none}
-.provider-bundle .result-card:hover{border-color:var(--border-color);box-shadow:none}
-.provider-bundle .result-card:last-child{padding-bottom:0}
+.bundle-result-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding-top:14px}
+.provider-bundle .result-card{position:relative;padding:15px 16px;border:1px solid var(--border-color);border-left:3px solid var(--border-hover);border-radius:9px;background:color-mix(in srgb,var(--bg-primary) 82%,var(--bg-secondary));backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:0 1px 2px color-mix(in srgb,var(--text-primary) 5%,transparent);animation:none}
+.provider-bundle .result-card:hover{border-color:var(--border-hover);border-left-color:var(--primary-color);box-shadow:var(--shadow)}
+.provider-bundle .result-card.error{border-color:var(--failure-badge-border);border-left-color:var(--error-color);background:color-mix(in srgb,var(--failure-badge-bg) 48%,var(--bg-primary))}
+.provider-bundle .result-card.limited{border-color:var(--amber-30);border-left-color:var(--quota-medium-color)}
 .result-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-items:start}
 .result-card{min-width:0;padding:18px;border:1px solid var(--glass-border);border-radius:12px;background:linear-gradient(145deg,color-mix(in srgb,var(--bg-primary) 92%,transparent),color-mix(in srgb,var(--bg-secondary) 70%,transparent));backdrop-filter:var(--glass-backdrop-filter);-webkit-backdrop-filter:var(--glass-backdrop-filter);box-shadow:var(--shadow);animation:item-in 400ms ease-out both;transition:border-color var(--motion-fast),box-shadow var(--motion-fast),transform var(--motion-fast),background-color var(--motion-normal)}
 .result-card:hover{border-color:var(--border-hover);box-shadow:var(--shadow-lg)}
@@ -518,17 +519,19 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .quota-window{min-width:0;padding:11px 12px;border:1px solid var(--border-color);border-radius:9px;background:color-mix(in srgb,var(--bg-primary) 78%,var(--bg-secondary));transition:border-color var(--motion-fast),background-color var(--motion-normal)}
 .quota-window.unlimited{border-color:color-mix(in srgb,var(--success-color) 38%,var(--border-color));background:color-mix(in srgb,var(--success-color) 6%,var(--bg-primary))}
 .quota-window.unavailable{opacity:.72;background:var(--bg-tertiary)}
+.quota-window.unknown{border-style:dashed;background:var(--bg-tertiary)}
 .quota-window-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;min-width:0}
 .quota-window-label{min-width:0;flex:1;font-size:12px;font-weight:650;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.quota-window-head-meta{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex:0 0 auto;flex-wrap:wrap}
-.quota-status{font-size:10px;color:var(--text-tertiary);white-space:nowrap}
+.quota-window-head-meta{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex:0 1 auto;min-width:0;flex-wrap:wrap}
+.quota-status{font-size:10px;line-height:1.3;color:var(--text-tertiary);white-space:normal;text-align:right;overflow-wrap:anywhere}
 .quota-status.good{color:var(--success-color)}
 .quota-status.warn{color:var(--amber-text)}
 .quota-window-value{display:flex;align-items:baseline;gap:5px;flex-wrap:wrap;margin-top:8px;color:var(--text-primary);font-variant-numeric:tabular-nums}
 .quota-window-value strong{font-size:18px;line-height:1.2;font-weight:680}
 .quota-window-value span{font-size:11px;color:var(--text-secondary)}
 .quota-window .progress-track{height:5px;margin-top:9px}
-.quota-reset{color:var(--text-tertiary);font-size:10px;white-space:nowrap}
+.quota-reset{color:var(--text-tertiary);font-size:10px;line-height:1.3;white-space:normal;text-align:right;overflow-wrap:anywhere}
+.quota-coverage{margin-top:7px;color:var(--text-tertiary);font-size:10px;line-height:1.4;overflow-wrap:anywhere}
 .wallet-balance-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;margin-top:14px}
 .wallet-window{padding:12px}.wallet-window .quota-window-value{margin-top:0}
 .account-detail-collapse{display:grid;grid-template-rows:0fr;opacity:0;visibility:hidden;pointer-events:none;transition:grid-template-rows var(--motion-normal),opacity var(--motion-fast),visibility 0s linear var(--motion-normal)}
@@ -611,7 +614,7 @@ select:hover{border-color:var(--border-hover)}
   .settings-toolbar{align-items:flex-start;flex-direction:column}.ttl-field{width:100%;justify-content:space-between}
   table,thead,tbody,tr,th,td{display:block}thead{display:none}table{table-layout:auto}tbody tr{padding:13px 14px;border-bottom:1px solid var(--border-color)}tbody tr:last-child{border-bottom:0}td{padding:0;border:0}td+td{margin-top:10px}.provider-group-row{padding:0;border-bottom:0}.provider-group-row td{padding:11px 14px}.provider-group-row:not(:first-child) td{border-top:8px solid var(--bg-secondary)}.provider-group-hint{display:none}.provider-base{white-space:normal;overflow-wrap:anywhere}.query-cell::before{content:"余额查询类型";display:block;color:var(--text-tertiary);font-size:11px;margin-bottom:5px}
 }
-@media (max-width:420px){.summary-item{padding:12px}.result-card{padding:14px}.masthead{padding:16px}.connection-shell{padding:14px}.connection-card{padding:18px}}
+@media (max-width:420px){.summary-item{padding:12px}.bundle-summary{grid-template-columns:1fr}.result-card{padding:14px}.masthead{padding:16px}.connection-shell{padding:14px}.connection-card{padding:18px}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}.btn:hover:not(:disabled),.result-card:hover,.summary-item:hover{transform:none}}
 @media (max-width:768px),(prefers-reduced-motion:reduce),(prefers-reduced-transparency:reduce){:root{--glass-backdrop-filter:none;--glass-filter:none;--glass-bg:var(--bg-primary);--glass-bg-secondary:var(--bg-secondary);--glass-border:var(--border-color)}}
 </style>
@@ -1392,6 +1395,15 @@ select:hover{border-color:var(--border-hover)}
     return null;
   }
 
+  function quotaProgressRemainingPercent(item) {
+    var explicitProgress = finiteNumber(item && item.progress_remaining_percent);
+    if (item && owns(item, "progress_remaining_percent") && explicitProgress != null) return explicitProgress;
+    var remainingPercent = quotaRemainingPercent(item || {});
+    if (remainingPercent == null) return null;
+    var capacityPercent = finiteNumber(item && item.capacity_percent);
+    return capacityPercent != null && capacityPercent > 0 ? remainingPercent / capacityPercent * 100 : remainingPercent;
+  }
+
   function remainingProgressClass(percent) {
     if (percent <= 15) return " critical";
     if (percent <= 50) return " warning";
@@ -1433,22 +1445,50 @@ select:hover{border-color:var(--border-hover)}
         absolute = parsed.getTime();
       }
     }
-    if (absolute) textValue = durationText((absolute - Date.now()) / 1000) + "后重置";
+    if (absolute) {
+      var duration = durationText((absolute - Date.now()) / 1000);
+      textValue = item.reset_staggered ? "分批重置 · 最早 " + duration + "后" : duration + "后重置";
+      if (item.reset_partial) textValue += " · 部分时间未知";
+    }
     if (!textValue) return null;
     var node = element("span", "quota-reset", textValue);
-    if (absolute) node.setAttribute("data-reset-at", String(absolute));
+    if (absolute) {
+      node.setAttribute("data-reset-at", String(absolute));
+      if (item.reset_staggered) node.setAttribute("data-reset-staggered", "true");
+      if (item.reset_partial) node.setAttribute("data-reset-partial", "true");
+    }
     return node;
+  }
+
+  function quotaCoverageText(item) {
+    if (!item || !item.aggregate_window) return "";
+    var parts = [];
+    var finite = Number(item.aggregate_finite_count || 0);
+    var unlimited = Number(item.aggregate_unlimited_count || 0);
+    var unavailable = Number(item.aggregate_unavailable_count || 0);
+    var unknown = Number(item.aggregate_unknown_count || 0);
+    var missing = Number(item.aggregate_missing_count || 0);
+    var failed = Number(item.aggregate_failed_count || 0);
+    if (finite) parts.push(finite + " 个有限额");
+    if (unlimited) parts.push(unlimited + " 个不限量");
+    if (unavailable) parts.push(unavailable + " 个套餐不包含");
+    if (unknown) parts.push(unknown + " 个数据不完整");
+    if (missing) parts.push(missing + " 个未返回此项");
+    if (failed) parts.push(failed + " 个查询失败");
+    return parts.join(" · ");
   }
 
   function quotaWindowCard(item, fetchedAt, accountResetAt) {
     var unavailable = Boolean(item.unavailable);
     var unlimited = Boolean(item.unlimited);
-    var box = element("div", "quota-window" + (unlimited ? " unlimited" : "") + (unavailable ? " unavailable" : ""));
+    var unknown = Boolean(item.unknown);
+    var box = element("div", "quota-window" + (unlimited ? " unlimited" : "") + (unavailable ? " unavailable" : "") + (unknown ? " unknown" : ""));
     var head = element("div", "quota-window-head");
     head.appendChild(element("span", "quota-window-label", translateWindowLabel(item.label)));
     var headMeta = element("span", "quota-window-head-meta");
-    var status = unlimited ? "不限量" : unavailable ? "不可用" : translateStatus(item.status);
-    if (status) headMeta.appendChild(element("span", "quota-status" + (unlimited ? " good" : unavailable ? " warn" : ""), status));
+    var status = unlimited ? "不限量" : unavailable ? "不可用" : unknown ? "数据不完整" : translateStatus(item.status);
+    var warningStatus = unavailable || unknown || Boolean(item.aggregate_mixed_unlimited) || Boolean(item.aggregate_missing_count) || Boolean(item.aggregate_failed_count) || Boolean(item.aggregate_unavailable_count) || Boolean(item.aggregate_unknown_count);
+    if (status) headMeta.appendChild(element("span", "quota-status" + (unlimited ? " good" : warningStatus ? " warn" : ""), status));
     var duplicateReset = Boolean(item.reset_at && accountResetAt && String(item.reset_at) === String(accountResetAt));
     var resetNode = duplicateReset ? null : quotaResetNode(item, fetchedAt);
     if (resetNode) headMeta.appendChild(resetNode);
@@ -1462,7 +1502,8 @@ select:hover{border-color:var(--border-hover)}
     var remainingPercent = finiteNumber(item.remaining_percent);
     var usedPercent = quotaPercent(item);
     var aggregatePercent = Boolean(item.aggregate_percent);
-    var progressRemaining = owns(item, "progress_remaining_percent") ? finiteNumber(item.progress_remaining_percent) : quotaRemainingPercent(item);
+    var aggregateExact = Boolean(item.aggregate_exact);
+    var progressRemaining = quotaProgressRemainingPercent(item);
     if (unlimited) {
       value.appendChild(element("strong", "", "不限量"));
       var unlimitedUsed = finiteNumber(item.used);
@@ -1470,9 +1511,36 @@ select:hover{border-color:var(--border-hover)}
     } else if (unavailable) {
       value.appendChild(element("strong", "", "—"));
       value.appendChild(element("span", "", "当前套餐不可用"));
+    } else if (unknown) {
+      value.appendChild(element("strong", "", "—"));
+      value.appendChild(element("span", "", "暂无可汇总数值"));
+    } else if (item.aggregate_mixed_unlimited) {
+      value.appendChild(element("strong", "", "混合"));
+      value.appendChild(element("span", "", item.aggregate_finite_count ? "有限额与不限量并存" : "仅部分账户确认不限量"));
+    } else if (item.aggregate_range) {
+      var rangeMinPercent = finiteNumber(item.range_min_percent);
+      var rangeMaxPercent = finiteNumber(item.range_max_percent);
+      var rangeMinRemaining = finiteNumber(item.range_min_remaining);
+      var rangeMaxRemaining = finiteNumber(item.range_max_remaining);
+      if (rangeMinPercent != null && rangeMaxPercent != null) {
+        value.appendChild(element("strong", "", formatAmount(rangeMinPercent, "%") + "–" + formatAmount(rangeMaxPercent, "%")));
+        value.appendChild(element("span", "", "各账户剩余范围"));
+      } else if (rangeMinRemaining != null && rangeMaxRemaining != null) {
+        value.appendChild(element("strong", "", formatAmount(rangeMinRemaining, item.unit) + "–" + formatAmount(rangeMaxRemaining, item.unit)));
+        value.appendChild(element("span", "", unit + "剩余范围"));
+      } else {
+        value.appendChild(element("strong", "", "—"));
+        value.appendChild(element("span", "", "各账户额度不同"));
+      }
+    } else if (aggregateExact && !item.prefer_percent && remaining != null && total != null && total > 0) {
+      value.appendChild(element("strong", "", formatAmount(remaining, item.unit) + " / " + formatAmount(total, item.unit)));
+      value.appendChild(element("span", "", unit + "剩余 · 综合 " + formatAmount(progressRemaining, "%")));
     } else if (aggregatePercent && remainingPercent != null) {
-      value.appendChild(element("strong", "", formatAmount(remainingPercent, "%")));
-      value.appendChild(element("span", "", remaining != null && total != null && total > 0 ? "合计剩余 " + formatAmount(remaining, item.unit) + " / " + formatAmount(total, item.unit) + " " + unit : "合计剩余"));
+      var capacityPercent = finiteNumber(item.capacity_percent);
+      value.appendChild(element("strong", "", formatAmount(remainingPercent, "%") + (capacityPercent != null && capacityPercent > 0 ? " / " + formatAmount(capacityPercent, "%") : "")));
+      var aggregateMeta = progressRemaining != null ? "综合剩余 " + formatAmount(progressRemaining, "%") : "合计剩余";
+      if (aggregateExact && remaining != null && total != null && total > 0) aggregateMeta += " · " + formatAmount(remaining, item.unit) + " / " + formatAmount(total, item.unit) + " " + unit;
+      value.appendChild(element("span", "", aggregateMeta));
     } else if (remaining != null) {
       value.appendChild(element("strong", "", formatAmount(remaining, item.unit)));
       value.appendChild(element("span", "", total != null && total > 0 ? "/ " + formatAmount(total, item.unit) + " " + unit + "剩余" : unit + "剩余"));
@@ -1488,7 +1556,7 @@ select:hover{border-color:var(--border-hover)}
     }
     box.appendChild(value);
 
-    if (!unlimited && !unavailable && progressRemaining != null) {
+    if (!unlimited && !unavailable && !unknown && !item.aggregate_mixed_unlimited && !item.aggregate_range && progressRemaining != null) {
       var visualRemaining = clampPercent(progressRemaining);
       var track = element("div", "progress-track");
       track.setAttribute("role", "progressbar");
@@ -1496,12 +1564,14 @@ select:hover{border-color:var(--border-hover)}
       track.setAttribute("aria-valuemin", "0");
       track.setAttribute("aria-valuemax", "100");
       track.setAttribute("aria-valuenow", String(Math.round(visualRemaining)));
-      track.setAttribute("aria-valuetext", formatAmount(aggregatePercent && remainingPercent != null ? remainingPercent : progressRemaining, "%") + " 剩余");
+      track.setAttribute("aria-valuetext", formatAmount(progressRemaining, "%") + (item.aggregate_window ? " 综合剩余" : " 剩余"));
       var bar = element("div", "progress-bar" + remainingProgressClass(visualRemaining));
       track.appendChild(bar);
       box.appendChild(track);
       window.requestAnimationFrame(function () { bar.style.width = visualRemaining.toFixed(1) + "%"; });
     }
+    var coverage = quotaCoverageText(item);
+    if (coverage) box.appendChild(element("div", "quota-coverage", coverage));
     return box;
   }
 
@@ -1556,7 +1626,13 @@ select:hover{border-color:var(--border-hover)}
       var resetAt = finiteNumber(node.getAttribute("data-reset-at"));
       if (resetAt == null) return;
       var seconds = Math.max(0, (resetAt - Date.now()) / 1000);
-      node.textContent = seconds > 0 ? durationText(seconds) + "后重置" : "即将重置";
+      if (seconds <= 0) {
+        node.textContent = "即将重置";
+        return;
+      }
+      var duration = durationText(seconds);
+      node.textContent = node.getAttribute("data-reset-staggered") === "true" ? "分批重置 · 最早 " + duration + "后" : duration + "后重置";
+      if (node.getAttribute("data-reset-partial") === "true") node.textContent += " · 部分时间未知";
     });
   }
 
@@ -1760,28 +1836,60 @@ select:hover{border-color:var(--border-hover)}
     return box;
   }
 
-  function earliestQuotaResetAt(entries) {
-    var earliest = 0;
+  function quotaResetSummary(entries) {
+    var timestamps = [];
     entries.forEach(function (entry) {
       var item = entry.item;
-      if (item.unavailable) return;
       var timestamp = 0;
       var seconds = finiteNumber(item.reset_in_seconds);
       if (seconds != null && seconds > 0) {
         var fetchedAt = new Date(entry.fetchedAt || "").getTime();
-        timestamp = (Number.isNaN(fetchedAt) ? Date.now() : fetchedAt) + seconds * 1000;
+        var candidate = (Number.isNaN(fetchedAt) ? Date.now() : fetchedAt) + seconds * 1000;
+        if (candidate > Date.now()) timestamp = candidate;
       }
       if (!timestamp && item.reset_at) {
         var parsed = new Date(item.reset_at);
         if (!Number.isNaN(parsed.getTime())) timestamp = parsed.getTime();
       }
-      if (timestamp > Date.now() && (!earliest || timestamp < earliest)) earliest = timestamp;
+      if (timestamp > Date.now()) timestamps.push(timestamp);
     });
-    return earliest ? new Date(earliest).toISOString() : "";
+    if (!timestamps.length) return { resetAt:"", staggered:false, known:0 };
+    timestamps.sort(function (left, right) { return left - right; });
+    return {
+      resetAt:new Date(timestamps[0]).toISOString(),
+      staggered:timestamps[timestamps.length - 1] - timestamps[0] > 60000,
+      known:timestamps.length
+    };
+  }
+
+  function quotaAggregationScope(item) {
+    var scope = String(item && item.aggregation_scope || "unknown").trim().toLowerCase();
+    return scope || "unknown";
+  }
+
+  function quotaAggregationDimension(item) {
+    var rawUnit = String(item && item.unit || "").trim();
+    if (rawUnit) return canonicalQuotaUnit(rawUnit).toLowerCase();
+    if (quotaRemainingPercent(item || {}) != null || (item && (item.unlimited || item.unavailable || item.unknown))) return "percent";
+    return "unspecified";
+  }
+
+  function uniqueResultCount(entries) {
+    var seen = Object.create(null);
+    entries.forEach(function (entry) { seen[String(entry.resultIndex)] = true; });
+    return Object.keys(seen).length;
+  }
+
+  function hasFiniteQuotaValue(item) {
+    if (!item || item.unlimited || item.unavailable || item.unknown) return false;
+    if (quotaRemainingPercent(item) != null) return true;
+    var total = finiteNumber(item.total);
+    return (total != null && total > 0) || quotaRemaining(item) != null;
   }
 
   function aggregateQuotaWindows(results) {
     var successful = results.filter(function (result) { return !result.error; });
+    var failedCount = results.length - successful.length;
     var buckets = Object.create(null);
     successful.forEach(function (result, resultIndex) {
       var windows = Array.isArray(result.quota_windows) ? result.quota_windows.slice() : [];
@@ -1789,19 +1897,27 @@ select:hover{border-color:var(--border-hover)}
         windows.push({
           group:"令牌配额", label:"总额度", total:Number(result.tokens_total),
           used:Number(result.tokens_used || 0), remaining:Number(result.tokens_remaining || Math.max(0, Number(result.tokens_total) - Number(result.tokens_used || 0))),
-          unit:"tokens", aggregation_scope:"key"
+          unit:"tokens", aggregation_scope:"key", aggregation_key:"legacy-token-total", capacity_percent:100
         });
       }
+      windows.sort(function (left, right) {
+        var leftKey = [String(left.group || ""), translateWindowLabel(left.label), String(left.aggregation_key || ""), quotaAggregationScope(left), quotaAggregationDimension(left)].join("\u0000");
+        var rightKey = [String(right.group || ""), translateWindowLabel(right.label), String(right.aggregation_key || ""), quotaAggregationScope(right), quotaAggregationDimension(right)].join("\u0000");
+        return leftKey.localeCompare(rightKey, "zh-CN");
+      });
       var occurrences = Object.create(null);
       windows.forEach(function (item) {
         if (!item || typeof item !== "object") return;
         var group = String(item.group || "").trim() || "配额周期";
         var label = translateWindowLabel(item.label);
-        var baseKey = group + "\u0000" + label;
+        var scope = quotaAggregationScope(item);
+        var dimension = quotaAggregationDimension(item);
+        var stableID = String(item.aggregation_key || "").trim() || group + "\u0000" + label;
+        var baseKey = stableID + "\u0000" + scope + "\u0000" + dimension;
         var occurrence = occurrences[baseKey] || 0;
         occurrences[baseKey] = occurrence + 1;
         var key = baseKey + "\u0000" + occurrence;
-        if (!buckets[key]) buckets[key] = { group:group, label:label, rank:quotaWindowRank(item), entries:[] };
+        if (!buckets[key]) buckets[key] = { group:group, label:label, scope:scope, dimension:dimension, rank:quotaWindowRank(item), entries:[] };
         buckets[key].entries.push({ item:item, resultIndex:resultIndex, fetchedAt:result.fetched_at });
       });
     });
@@ -1809,90 +1925,143 @@ select:hover{border-color:var(--border-hover)}
     return Object.keys(buckets).map(function (key) { return buckets[key]; }).sort(function (left, right) {
       return left.rank - right.rank || left.group.localeCompare(right.group, "zh-CN") || left.label.localeCompare(right.label, "zh-CN");
     }).map(function (bucket) {
-      var available = bucket.entries.filter(function (entry) { return !entry.item.unavailable; });
-      var unitEntry = available.concat(bucket.entries).find(function (entry) { return String(entry.item.unit || "").trim(); });
+      var representedCount = uniqueResultCount(bucket.entries);
+      var missingCount = Math.max(0, successful.length - representedCount);
+      var unavailableEntries = bucket.entries.filter(function (entry) { return Boolean(entry.item.unavailable); });
+      var unlimitedEntries = bucket.entries.filter(function (entry) { return Boolean(entry.item.unlimited) && !entry.item.unavailable; });
+      var finiteEntries = bucket.entries.filter(function (entry) { return hasFiniteQuotaValue(entry.item); });
+      var unknownEntries = bucket.entries.filter(function (entry) {
+        return !entry.item.unlimited && !entry.item.unavailable && !hasFiniteQuotaValue(entry.item);
+      });
+      var unitEntry = finiteEntries.concat(unlimitedEntries, bucket.entries).find(function (entry) { return String(entry.item.unit || "").trim(); });
       var aggregate = {
         group:bucket.group,
         label:bucket.label,
         unit:unitEntry ? unitEntry.item.unit : "",
-        aggregation_scope:"key"
+        aggregation_scope:bucket.scope,
+        aggregate_window:true,
+        aggregate_finite_count:uniqueResultCount(finiteEntries),
+        aggregate_unlimited_count:uniqueResultCount(unlimitedEntries),
+        aggregate_unavailable_count:uniqueResultCount(unavailableEntries),
+        aggregate_unknown_count:uniqueResultCount(unknownEntries),
+        aggregate_missing_count:missingCount,
+        aggregate_failed_count:failedCount,
+        aggregate_success_count:successful.length,
+        aggregate_total_count:results.length
       };
-      var resetAt = earliestQuotaResetAt(bucket.entries);
-      if (resetAt) aggregate.reset_at = resetAt;
-      if (!available.length) {
-        aggregate.unavailable = true;
-        aggregate.status = "当前套餐不可用";
+      var resetCandidates = finiteEntries.concat(unlimitedEntries, unknownEntries);
+      var resetSummary = quotaResetSummary(resetCandidates);
+      if (resetSummary.resetAt) aggregate.reset_at = resetSummary.resetAt;
+      if (resetSummary.staggered) aggregate.reset_staggered = true;
+      if (resetSummary.known && (
+        resetSummary.known < resetCandidates.length || missingCount || failedCount
+      )) aggregate.reset_partial = true;
+
+      var mixedAccountUnlimited = bucket.scope !== "key" && unlimitedEntries.length && (
+        finiteEntries.length || unavailableEntries.length || unknownEntries.length || missingCount || failedCount
+      );
+      if (mixedAccountUnlimited) {
+        aggregate.aggregate_mixed_unlimited = true;
+        aggregate.status = finiteEntries.length ? "有限额与不限量并存" : "部分账户不限量";
         return aggregate;
       }
-      var keyScoped = available.every(function (entry) { return entry.item.aggregation_scope === "key"; });
-      aggregate.aggregation_scope = keyScoped ? "key" : "unknown";
-      var unlimited = available.some(function (entry) { return Boolean(entry.item.unlimited); });
-      if (unlimited) {
+      if (unlimitedEntries.length) {
         aggregate.unlimited = true;
         aggregate.status = "不限量";
-        var showUsage = available.some(function (entry) { return entry.item.show_used_when_unlimited; });
-        if (showUsage && keyScoped) {
-          aggregate.used = available.reduce(function (sum, entry) {
-            return sum + (finiteNumber(entry.item.used) || 0);
-          }, 0);
+        var showUsageEntries = unlimitedEntries.filter(function (entry) { return entry.item.show_used_when_unlimited; });
+        if (showUsageEntries.length) {
+          var usageValues = showUsageEntries.map(function (entry) { return finiteNumber(entry.item.used) || 0; });
+          aggregate.used = bucket.scope === "key" ? usageValues.reduce(function (sum, value) { return sum + value; }, 0) : Math.max.apply(Math, usageValues);
           aggregate.show_used_when_unlimited = true;
-        } else if (showUsage) {
-          var representativeUnlimited = available.find(function (entry) { return entry.item.unlimited && entry.item.show_used_when_unlimited; });
-          aggregate.used = representativeUnlimited ? (finiteNumber(representativeUnlimited.item.used) || 0) : 0;
-          aggregate.show_used_when_unlimited = true;
+        }
+        return aggregate;
+      }
+      if (!finiteEntries.length) {
+        if (unknownEntries.length || missingCount) {
+          aggregate.unknown = true;
+          aggregate.status = "配额数据不完整";
+        } else {
+          aggregate.unavailable = true;
+          aggregate.status = "当前套餐不可用";
         }
         return aggregate;
       }
 
-      var percentSum = 0;
-      var percentCount = 0;
-      var totalSum = 0;
-      var totalCount = 0;
-      var remainingSum = 0;
-      var remainingCount = 0;
-      var usedSum = 0;
-      var usedCount = 0;
-      available.forEach(function (entry) {
-        var item = entry.item;
-        var percent = quotaRemainingPercent(item);
-        if (percent != null) {
-          percentSum += Math.max(0, percent);
-          percentCount++;
+      if (bucket.scope !== "key") {
+        var accountPartial = missingCount || unknownEntries.length || unavailableEntries.length || failedCount;
+        var percentValues = finiteEntries.map(function (entry) { return quotaProgressRemainingPercent(entry.item); }).filter(function (value) { return value != null; });
+        var totalValues = finiteEntries.map(function (entry) { return finiteNumber(entry.item.total); }).filter(function (value) { return value != null && value > 0; });
+        var remainingValues = finiteEntries.map(function (entry) { return quotaRemaining(entry.item); }).filter(function (value) { return value != null; });
+        var representative = finiteEntries[0].item;
+        var samePercent = percentValues.length === finiteEntries.length && Math.max.apply(Math, percentValues) - Math.min.apply(Math, percentValues) < 0.000001;
+        var sameTotal = totalValues.length === finiteEntries.length && Math.max.apply(Math, totalValues) - Math.min.apply(Math, totalValues) < 0.000001;
+        var sameRemaining = remainingValues.length === finiteEntries.length && Math.max.apply(Math, remainingValues) - Math.min.apply(Math, remainingValues) < 0.000001;
+        if (sameTotal && sameRemaining) {
+          ["total", "remaining", "used", "remaining_percent", "used_percent", "capacity_percent"].forEach(function (field) {
+            if (owns(representative, field) && finiteNumber(representative[field]) != null) aggregate[field] = finiteNumber(representative[field]);
+          });
+          aggregate.progress_remaining_percent = quotaProgressRemainingPercent(representative);
+          aggregate.status = accountPartial ? "部分账户未计入" : "账户级额度数值一致";
+        } else if (samePercent) {
+          aggregate.remaining_percent = percentValues[0];
+          aggregate.capacity_percent = 100;
+          aggregate.progress_remaining_percent = percentValues[0];
+          aggregate.status = accountPartial ? "部分账户未计入" : "账户级剩余比例一致";
+        } else {
+          aggregate.aggregate_range = true;
+          if (percentValues.length) {
+            aggregate.range_min_percent = Math.min.apply(Math, percentValues);
+            aggregate.range_max_percent = Math.max.apply(Math, percentValues);
+          }
+          if (remainingValues.length) {
+            aggregate.range_min_remaining = Math.min.apply(Math, remainingValues);
+            aggregate.range_max_remaining = Math.max.apply(Math, remainingValues);
+          }
+          aggregate.status = accountPartial ? "部分账户未计入" : "账户级额度各不相同";
         }
-        var total = finiteNumber(item.total);
-        if (owns(item, "total") && total != null && total > 0) {
-          totalSum += total;
-          totalCount++;
-        }
-        var remaining = quotaRemaining(item);
-        if (remaining != null) {
-          remainingSum += Math.max(0, remaining);
-          remainingCount++;
-        }
-        var used = finiteNumber(item.used);
-        if (owns(item, "used") && used != null) {
-          usedSum += Math.max(0, used);
-          usedCount++;
-        }
-      });
-      if (!keyScoped && available.length > 1) {
-        var representative = available[0].item;
-        ["total", "remaining", "used", "remaining_percent", "used_percent"].forEach(function (field) {
-          if (owns(representative, field) && finiteNumber(representative[field]) != null) aggregate[field] = finiteNumber(representative[field]);
-        });
-        aggregate.progress_remaining_percent = quotaRemainingPercent(representative);
-        aggregate.status = "共享账户额度";
         return aggregate;
       }
-      if (percentCount) {
-        aggregate.remaining_percent = percentSum;
-        aggregate.progress_remaining_percent = percentSum / percentCount;
-        aggregate.aggregate_percent = true;
+
+      var exactEntries = finiteEntries.filter(function (entry) {
+        var total = finiteNumber(entry.item.total);
+        return total != null && total > 0 && quotaRemaining(entry.item) != null;
+      });
+      if (exactEntries.length === finiteEntries.length) {
+        aggregate.total = exactEntries.reduce(function (sum, entry) { return sum + finiteNumber(entry.item.total); }, 0);
+        aggregate.remaining = exactEntries.reduce(function (sum, entry) { return sum + Math.max(0, quotaRemaining(entry.item)); }, 0);
+        aggregate.used = Math.max(0, aggregate.total - aggregate.remaining);
+        aggregate.progress_remaining_percent = aggregate.total > 0 ? aggregate.remaining / aggregate.total * 100 : 0;
+        aggregate.aggregate_exact = true;
       }
-      if (totalCount) aggregate.total = totalSum;
-      if (remainingCount) aggregate.remaining = remainingSum;
-      if (usedCount) aggregate.used = usedSum;
-      aggregate.status = percentCount && percentSum <= 0 ? "已用尽" : "正常";
+
+      var remainingOnlyEntries = finiteEntries.filter(function (entry) { return quotaRemaining(entry.item) != null; });
+      if (!aggregate.aggregate_exact && remainingOnlyEntries.length === finiteEntries.length) {
+        aggregate.remaining = remainingOnlyEntries.reduce(function (sum, entry) { return sum + Math.max(0, quotaRemaining(entry.item)); }, 0);
+        aggregate.aggregate_remaining = true;
+      }
+
+      var percentEntries = finiteEntries.filter(function (entry) { return quotaRemainingPercent(entry.item) != null; });
+      if (percentEntries.length === finiteEntries.length) {
+        var percentSum = 0;
+        var capacitySum = 0;
+        var boostedCapacity = false;
+        percentEntries.forEach(function (entry) {
+          var remainingPercent = Math.max(0, quotaRemainingPercent(entry.item));
+          var capacity = finiteNumber(entry.item.capacity_percent);
+          if (capacity == null || capacity <= 0) capacity = Math.max(100, remainingPercent);
+          if (Math.abs(capacity - 100) > 0.000001) boostedCapacity = true;
+          percentSum += remainingPercent;
+          capacitySum += capacity;
+        });
+        aggregate.remaining_percent = percentSum;
+        aggregate.capacity_percent = capacitySum;
+        if (!aggregate.aggregate_exact || boostedCapacity) aggregate.progress_remaining_percent = capacitySum > 0 ? percentSum / capacitySum * 100 : 0;
+        aggregate.aggregate_percent = true;
+        if (boostedCapacity) aggregate.prefer_percent = true;
+      }
+      var partial = missingCount || unknownEntries.length || unavailableEntries.length || failedCount;
+      var progress = finiteNumber(aggregate.progress_remaining_percent);
+      aggregate.status = partial ? "部分密钥未计入" : progress != null && progress <= 0 ? "已用尽" : "";
       return aggregate;
     });
   }
@@ -1970,7 +2139,7 @@ select:hover{border-color:var(--border-hover)}
     var successful = results.filter(function (result) { return !result.error; }).length;
     var statusBadge = element("span", "badge " + (successful === results.length ? "success" : successful ? "warning" : "failure"));
     statusBadge.appendChild(icon(successful === results.length ? "check" : "alert"));
-    statusBadge.appendChild(element("span", "", successful + "/" + results.length + " 查询成功"));
+    statusBadge.appendChild(element("span", "", successful === results.length ? "状态正常" : successful ? successful + " 正常 · " + (results.length - successful) + " 异常" : "暂时无法汇总"));
     actions.appendChild(statusBadge);
     var toggle = element("button", "bundle-toggle");
     toggle.type = "button";

@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -16,9 +17,11 @@ type NewAPI struct {
 }
 
 type newAPITokenUsageResp struct {
-	Code    bool   `json:"code"`
-	Message string `json:"message"`
-	Data    struct {
+	Code           bool   `json:"code"`
+	Message        string `json:"message"`
+	HasQuotaFields bool   `json:"-"`
+	HasUsedField   bool   `json:"-"`
+	Data           struct {
 		Object             string          `json:"object"`
 		Name               string          `json:"name"`
 		TotalGranted       float64         `json:"total_granted"`
@@ -29,6 +32,46 @@ type newAPITokenUsageResp struct {
 		ModelLimitsEnabled bool            `json:"model_limits_enabled"`
 		ExpiresAt          int64           `json:"expires_at"`
 	} `json:"data"`
+}
+
+func (response *newAPITokenUsageResp) UnmarshalJSON(data []byte) error {
+	type wireResponse newAPITokenUsageResp
+	var decoded wireResponse
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*response = newAPITokenUsageResp(decoded)
+	var envelope struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+	completeFiniteQuota := true
+	for _, key := range []string{"total_granted", "total_used", "total_available"} {
+		raw, exists := envelope.Data[key]
+		if key == "total_used" && exists && validJSONNumber(raw) {
+			response.HasUsedField = true
+		}
+		if !exists || !validJSONNumber(raw) {
+			completeFiniteQuota = false
+			break
+		}
+	}
+	explicitUnlimited := false
+	if raw, exists := envelope.Data["unlimited_quota"]; exists {
+		_ = json.Unmarshal(raw, &explicitUnlimited)
+	}
+	response.HasQuotaFields = completeFiniteQuota || explicitUnlimited
+	return nil
+}
+
+func validJSONNumber(raw json.RawMessage) bool {
+	if len(raw) == 0 || string(raw) == "null" {
+		return false
+	}
+	var value float64
+	return json.Unmarshal(raw, &value) == nil
 }
 
 type newAPIStatusResp struct {
@@ -74,6 +117,9 @@ func (n NewAPI) Fetch(authID, token, proxyURL string) balance.Result {
 		if !usage.Code {
 			return errResult(authID, label, firstNonEmpty(usage.Message, "New API 返回密钥用量查询错误"))
 		}
+		if !usage.HasQuotaFields {
+			return errResult(authID, label, "New API 未返回密钥额度字段")
+		}
 		var status newAPIStatusResp
 		statusURL, _ := serviceEndpoint(n.BaseURL, "/api/status")
 		_ = getJSONWithHeaders(statusURL, proxyURL, nil, &status)
@@ -90,6 +136,7 @@ func parseNewAPITokenUsage(authID string, response newAPITokenUsageResp, status 
 	total := convert(response.Data.TotalGranted)
 	used := convert(response.Data.TotalUsed)
 	remaining := convert(response.Data.TotalAvailable)
+	showUsedWhenUnlimited := response.Data.UnlimitedQuota && (response.HasUsedField || response.Data.TotalUsed != 0)
 	window := balance.QuotaWindow{
 		Group:                 "密钥额度",
 		Label:                 "总额度",
@@ -98,8 +145,9 @@ func parseNewAPITokenUsage(authID string, response newAPITokenUsageResp, status 
 		Remaining:             remaining,
 		Unit:                  unit,
 		Unlimited:             response.Data.UnlimitedQuota,
-		ShowUsedWhenUnlimited: response.Data.UnlimitedQuota,
+		ShowUsedWhenUnlimited: showUsedWhenUnlimited,
 		AggregationScope:      "key",
+		AggregationKey:        "newapi:key-total",
 	}
 	if window.Unlimited {
 		window.Total = 0
@@ -108,6 +156,7 @@ func parseNewAPITokenUsage(authID string, response newAPITokenUsageResp, status 
 	if !window.Unlimited && total > 0 {
 		window.UsedPercent = percentFromValues(used, total)
 		window.RemainingPercent = clampPercent(100 - window.UsedPercent)
+		window.CapacityPercent = 100
 	}
 	if response.Data.ExpiresAt > 0 {
 		window.ResetAt = formatUnixTimestamp(response.Data.ExpiresAt)
@@ -126,7 +175,11 @@ func parseNewAPITokenUsage(authID string, response newAPITokenUsageResp, status 
 		r.Extra["密钥名称"] = response.Data.Name
 	}
 	if response.Data.UnlimitedQuota {
-		r.QuotaDisplay = fmt.Sprintf("不限量，已用 %.4f %s", used, unit)
+		if showUsedWhenUnlimited {
+			r.QuotaDisplay = fmt.Sprintf("不限量，已用 %.4f %s", used, unit)
+		} else {
+			r.QuotaDisplay = "不限量"
+		}
 	} else {
 		r.QuotaDisplay = fmt.Sprintf("剩余 %.4f / %.4f %s", remaining, total, unit)
 	}
@@ -247,9 +300,13 @@ func (n NewAPI) fetchLegacyBilling(authID, token, proxyURL string) balance.Resul
 		Unlimited:             unlimited,
 		ShowUsedWhenUnlimited: unlimited,
 		AggregationScope:      "unknown",
+		AggregationKey:        "newapi:legacy-total",
 	}
 	if subscription.AccessUntil > 0 {
 		window.ResetAt = formatUnixTimestamp(subscription.AccessUntil)
+	}
+	if !unlimited && total > 0 {
+		window.CapacityPercent = 100
 	}
 	quotaDisplay := fmt.Sprintf("剩余 %.4f / %.4f 站点额度", remaining, total)
 	if unlimited {

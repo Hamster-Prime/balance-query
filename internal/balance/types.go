@@ -78,12 +78,19 @@ type QuotaWindow struct {
 	// is 0-100; boosted plans may legitimately report RemainingPercent above 100.
 	UsedPercent      float64 `json:"used_percent,omitempty"`
 	RemainingPercent float64 `json:"remaining_percent,omitempty"`
+	// CapacityPercent is the effective percentage ceiling for this key. Most
+	// plans use 100; boosted plans can expose a larger capacity.
+	CapacityPercent float64 `json:"capacity_percent,omitempty"`
 
 	ResetAt        string `json:"reset_at,omitempty"`
 	ResetInSeconds int64  `json:"reset_in_seconds,omitempty"`
 	Unlimited      bool   `json:"unlimited,omitempty"`
 	Unavailable    bool   `json:"unavailable,omitempty"`
-	Status         string `json:"status,omitempty"`
+	// Unknown means the provider returned the window but omitted enough fields
+	// that the allowance cannot be calculated. It is distinct from an explicit
+	// zero allowance and from a plan that does not include the resource.
+	Unknown bool   `json:"unknown,omitempty"`
+	Status  string `json:"status,omitempty"`
 	// ShowUsedWhenUnlimited asks the UI to keep a provider-reported usage
 	// counter visible even though the key itself has no enforced cap.
 	ShowUsedWhenUnlimited bool `json:"show_used_when_unlimited,omitempty"`
@@ -91,6 +98,9 @@ type QuotaWindow struct {
 	// AggregationScope is "key" only when each API key owns an independent
 	// allowance. Account, organization, and unknown windows must not be summed.
 	AggregationScope string `json:"aggregation_scope,omitempty"`
+	// AggregationKey gives the dashboard a stable identity for matching the same
+	// allowance across keys, independent of API response order.
+	AggregationKey string `json:"aggregation_key,omitempty"`
 }
 
 // ── Fetcher ──────────────────────────────────────────────────────────────────

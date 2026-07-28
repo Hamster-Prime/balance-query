@@ -149,8 +149,10 @@ func kimiQuotaWindow(values map[string]any, fallbackLabel string) (balance.Quota
 		Label:            localizedQuotaLabel(firstNonEmpty(firstString(values, "name", "title"), fallbackLabel)),
 		UsedPercent:      usedPercent,
 		RemainingPercent: remainingPercent,
+		CapacityPercent:  100,
 		AggregationScope: "key",
 	}
+	window.AggregationKey = "kimi:" + strings.ToLower(strings.TrimSpace(window.Label))
 	// Kimi documents these values as shared membership quota rather than a
 	// literal request allowance. Its official CLI likewise renders used/limit
 	// only as a percentage, so exposing the raw ratio as "calls" is misleading.
@@ -220,7 +222,7 @@ func parseKimiBoosterWallet(result *balance.Result, wallet map[string]any) {
 
 	limitCents, limitOK := firstNumber(monthlyLimit, "priceInCents")
 	usedCents, usedOK := firstNumber(monthlyUsed, "priceInCents")
-	enabled, _ := wallet["monthlyChargeLimitEnabled"].(bool)
+	enabled, enabledPresent := wallet["monthlyChargeLimitEnabled"].(bool)
 	if enabled && limitOK && limitCents > 0 {
 		used := 0.0
 		if usedOK {
@@ -236,12 +238,33 @@ func parseKimiBoosterWallet(result *balance.Result, wallet map[string]any) {
 			Unit:             currency,
 			UsedPercent:      percentFromValues(used, totalLimit),
 			RemainingPercent: clampPercent(100 - percentFromValues(used, totalLimit)),
+			CapacityPercent:  100,
 			AggregationScope: "key",
+			AggregationKey:   "kimi:booster-monthly",
+		})
+	} else if enabled && limitOK && limitCents == 0 {
+		used := 0.0
+		if usedOK {
+			used = math.Trunc(usedCents) / 100
+		}
+		result.Extra["每月付费上限"] = "不限量"
+		result.QuotaWindows = append(result.QuotaWindows, balance.QuotaWindow{
+			Group: "加量包", Label: "每月付费上限", Unit: currency, Used: used,
+			Unlimited: true, ShowUsedWhenUnlimited: usedOK,
+			Status: "不限量", AggregationScope: "key", AggregationKey: "kimi:booster-monthly",
 		})
 	} else if enabled {
 		result.Extra["每月付费上限"] = "已启用"
-	} else {
+		result.QuotaWindows = append(result.QuotaWindows, balance.QuotaWindow{
+			Group: "加量包", Label: "每月付费上限", Unit: currency, Unknown: true,
+			Status: "接口未返回额度数值", AggregationScope: "key", AggregationKey: "kimi:booster-monthly",
+		})
+	} else if enabledPresent {
 		result.Extra["每月付费上限"] = "未启用"
+		result.QuotaWindows = append(result.QuotaWindows, balance.QuotaWindow{
+			Group: "加量包", Label: "每月付费上限", Unit: currency, Unavailable: true,
+			Status: "未启用", AggregationScope: "key", AggregationKey: "kimi:booster-monthly",
+		})
 	}
 }
 

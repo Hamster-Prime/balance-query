@@ -40,10 +40,10 @@ type glmDetailResp struct {
 
 type glmLimitItem struct {
 	Type          string   `json:"type"`
-	Percentage    float64  `json:"percentage"` // used percentage
+	Percentage    *float64 `json:"percentage"` // used percentage; nil means omitted
 	Unit          int64    `json:"unit"`
 	Number        int64    `json:"number"`
-	CurrentValue  float64  `json:"currentValue"`
+	CurrentValue  *float64 `json:"currentValue"`
 	Remaining     *float64 `json:"remaining"`
 	Total         float64  `json:"total"`
 	Usage         float64  `json:"usage"`
@@ -239,15 +239,31 @@ func glmQuotaWindow(limit glmLimitItem) balance.QuotaWindow {
 	if total <= 0 {
 		total = limit.Total
 	}
-	used := limit.CurrentValue
-	if used <= 0 && total > 0 {
-		used = total * clampPercent(limit.Percentage) / 100
+	used := 0.0
+	hasUsed := limit.CurrentValue != nil
+	if hasUsed {
+		used = maxFloat(*limit.CurrentValue, 0)
+	}
+	usedPercent := 0.0
+	hasPercentage := limit.Percentage != nil
+	if hasPercentage {
+		usedPercent = clampPercent(*limit.Percentage)
+	}
+	if !hasUsed && total > 0 && hasPercentage {
+		used = total * usedPercent / 100
+		hasUsed = true
 	}
 	remaining := 0.0
+	hasRemaining := limit.Remaining != nil
 	if limit.Remaining != nil {
 		remaining = maxFloat(*limit.Remaining, 0)
-	} else if total > 0 {
+	} else if total > 0 && hasUsed {
 		remaining = maxFloat(total-used, 0)
+		hasRemaining = true
+	}
+	if !hasUsed && total > 0 && hasRemaining {
+		used = maxFloat(total-remaining, 0)
+		hasUsed = true
 	}
 	unit := "令牌"
 	group := "模型额度"
@@ -262,12 +278,30 @@ func glmQuotaWindow(limit glmLimitItem) balance.QuotaWindow {
 		Total:            total,
 		Remaining:        remaining,
 		Unit:             unit,
-		UsedPercent:      clampPercent(limit.Percentage),
-		RemainingPercent: clampPercent(100 - limit.Percentage),
 		ResetAt:          formatUnixTimestamp(limit.NextResetTime),
 		AggregationScope: "key",
+		AggregationKey:   fmt.Sprintf("glm:%s:%d:%d", limit.Type, limit.Unit, limit.Number),
 	}
-	if total <= 0 {
+	if hasPercentage {
+		window.UsedPercent = usedPercent
+		window.RemainingPercent = clampPercent(100 - usedPercent)
+		window.CapacityPercent = 100
+	} else if total > 0 && (hasUsed || hasRemaining) {
+		if hasRemaining {
+			window.RemainingPercent = clampPercent(percentFromValues(remaining, total))
+			window.UsedPercent = clampPercent(100 - window.RemainingPercent)
+		} else {
+			window.UsedPercent = percentFromValues(used, total)
+			window.RemainingPercent = clampPercent(100 - window.UsedPercent)
+		}
+		window.CapacityPercent = 100
+	} else if hasRemaining {
+		window.Status = "仅提供剩余额度"
+	} else {
+		window.Unknown = true
+		window.Status = "接口未返回额度数值"
+	}
+	if total <= 0 && !window.Unknown && hasPercentage {
 		window.Status = "仅提供百分比"
 	}
 	return window

@@ -55,9 +55,9 @@ func TestGLMQuotaUsesUsageAsTotalAndExplicitRemaining(t *testing.T) {
 		Unit:         3,
 		Number:       5,
 		Usage:        40_000_000,
-		CurrentValue: 10_000_000,
+		CurrentValue: testFloat64(10_000_000),
 		Remaining:    &remaining,
-		Percentage:   25,
+		Percentage:   testFloat64(25),
 	})
 	if window.Total != 40_000_000 || window.Used != 10_000_000 || window.Remaining != 30_000_000 {
 		t.Fatalf("quota window = %#v", window)

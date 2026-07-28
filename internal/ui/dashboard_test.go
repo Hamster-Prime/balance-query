@@ -320,8 +320,9 @@ func TestRenderDashboardPlacesPlanAndResetInTitle(t *testing.T) {
 func TestRenderDashboardFramesMultipleKeyBundles(t *testing.T) {
 	page := string(RenderDashboard(300))
 	for name, pattern := range map[string]string{
-		"complete bundle frame": `(?s)\.provider-bundle\{[^}]*padding:15px[^}]*border:1px solid[^}]*border-radius:12px[^}]*background:`,
-		"flat nested key rows":  `(?s)\.provider-bundle \.result-card\{[^}]*border-top:1px solid[^}]*border-radius:0[^}]*background:transparent[^}]*box-shadow:none`,
+		"complete bundle frame":     `(?s)\.provider-bundle\{[^}]*padding:15px[^}]*border:1px solid[^}]*border-radius:12px[^}]*background:`,
+		"separated nested key rows": `(?s)\.bundle-result-grid\{[^}]*gap:10px[^}]*padding-top:14px.*?\.provider-bundle \.result-card\{[^}]*border:1px solid[^}]*border-left:3px solid[^}]*border-radius:9px[^}]*background:`,
+		"visible failed key row":    `(?s)\.provider-bundle \.result-card\.error\{[^}]*border-color:var\(--failure-badge-border\)[^}]*border-left-color:var\(--error-color\)`,
 	} {
 		if !regexp.MustCompile(pattern).MatchString(page) {
 			t.Fatalf("dashboard is missing %s (%s)", name, pattern)
@@ -338,7 +339,7 @@ func TestRenderDashboardUsesRemainingQuotaForProgress(t *testing.T) {
 		`if (percent <= 50) return " warning"`,
 		`track.setAttribute("aria-label", translateWindowLabel(item.label) + "剩余额度")`,
 		`track.setAttribute("aria-valuenow", String(Math.round(visualRemaining)))`,
-		`track.setAttribute("aria-valuetext", formatAmount(aggregatePercent && remainingPercent != null ? remainingPercent : progressRemaining, "%") + " 剩余")`,
+		`track.setAttribute("aria-valuetext", formatAmount(progressRemaining, "%") + (item.aggregate_window ? " 综合剩余" : " 剩余"))`,
 		`bar.style.width = visualRemaining.toFixed(1) + "%"`,
 		`var percent = clampPercent((total - used) / total * 100)`,
 		`track.setAttribute("aria-label", "令牌剩余额度")`,
@@ -366,28 +367,31 @@ func TestRenderDashboardSumsSuccessfulMultipleKeyQuotaWindows(t *testing.T) {
 	for _, want := range []string{
 		`function aggregateQuotaWindows(results)`,
 		`var successful = results.filter(function (result) { return !result.error; });`,
-		`var baseKey = group + "\u0000" + label;`,
-		`var keyScoped = available.every(function (entry) { return entry.item.aggregation_scope === "key"; });`,
-		`aggregate.aggregation_scope = keyScoped ? "key" : "unknown";`,
-		`var unlimited = available.some(function (entry) { return Boolean(entry.item.unlimited); });`,
-		`if (unlimited) {`,
+		`function quotaAggregationScope(item)`,
+		`function quotaAggregationDimension(item)`,
+		`var stableID = String(item.aggregation_key || "").trim()`,
+		`var baseKey = stableID + "\u0000" + scope + "\u0000" + dimension;`,
+		`var representedCount = uniqueResultCount(bucket.entries);`,
+		`var missingCount = Math.max(0, successful.length - representedCount);`,
+		`var unlimitedEntries = bucket.entries.filter`,
+		`var unknownEntries = bucket.entries.filter`,
+		`aggregate_missing_count:missingCount`,
+		`aggregate_failed_count:failedCount`,
+		`if (unlimitedEntries.length) {`,
 		`aggregate.unlimited = true;`,
-		`if (showUsage && keyScoped) {`,
-		`aggregate.used = available.reduce(function (sum, entry)`,
-		`} else if (showUsage) {`,
-		`var representativeUnlimited = available.find(function (entry) { return entry.item.unlimited && entry.item.show_used_when_unlimited; });`,
-		`return aggregate;`,
-		`percentSum += Math.max(0, percent);`,
-		`totalSum += total;`,
-		`remainingSum += Math.max(0, remaining);`,
-		`usedSum += Math.max(0, used);`,
+		`if (bucket.scope !== "key") {`,
+		`aggregate.aggregate_range = true;`,
+		`var exactEntries = finiteEntries.filter`,
+		`if (exactEntries.length === finiteEntries.length) {`,
+		`aggregate.progress_remaining_percent = aggregate.total > 0 ? aggregate.remaining / aggregate.total * 100 : 0;`,
 		`aggregate.remaining_percent = percentSum;`,
-		`aggregate.progress_remaining_percent = percentSum / percentCount;`,
-		`aggregate.status = "共享账户额度";`,
-		`if (totalCount) aggregate.total = totalSum;`,
-		`if (remainingCount) aggregate.remaining = remainingSum;`,
-		`if (usedCount) aggregate.used = usedSum;`,
-		`var progressRemaining = owns(item, "progress_remaining_percent") ? finiteNumber(item.progress_remaining_percent) : quotaRemainingPercent(item);`,
+		`aggregate.capacity_percent = capacitySum;`,
+		`percentSum / capacitySum * 100`,
+		`function quotaResetSummary(entries)`,
+		`aggregate.reset_staggered = true`,
+		`function quotaCoverageText(item)`,
+		`个未返回此项`,
+		`var progressRemaining = quotaProgressRemainingPercent(item);`,
 		`var aggregateWindows = aggregateQuotaWindows(results);`,
 		`bundleSummaryMetrics(results, aggregateWindows.length > 0)`,
 		`renderQuotaGroups(section, { quota_windows:aggregateWindows`,
@@ -410,15 +414,11 @@ func TestRenderDashboardSumsSuccessfulMultipleKeyQuotaWindows(t *testing.T) {
 		}
 	}
 
-	scopeBeforeUnlimited := regexp.MustCompile(`(?s)var keyScoped = available\.every.*?aggregate\.aggregation_scope = keyScoped \? "key" : "unknown";.*?var unlimited = available\.some`)
-	if !scopeBeforeUnlimited.MatchString(page) {
-		t.Fatal("dashboard must determine quota ownership before aggregating unlimited usage")
-	}
-	unlimitedBeforeFiniteTotals := regexp.MustCompile(`(?s)var unlimited = available\.some.*?if \(unlimited\) \{.*?return aggregate;.*?var percentSum = 0;`)
+	unlimitedBeforeFiniteTotals := regexp.MustCompile(`(?s)var unlimitedEntries = bucket\.entries\.filter.*?if \(unlimitedEntries\.length\) \{.*?return aggregate;.*?if \(!finiteEntries\.length\)`)
 	if !unlimitedBeforeFiniteTotals.MatchString(page) {
 		t.Fatal("dashboard must propagate unlimited quota before aggregating finite quota values")
 	}
-	for _, unwanted := range []string{`quotaBucketMetrics(`, `最低剩余`, `平均剩余`, `剩余范围`} {
+	for _, unwanted := range []string{`quotaBucketMetrics(`, `最低剩余`, `平均剩余`} {
 		if strings.Contains(page, unwanted) {
 			t.Fatalf("dashboard still contains obsolete minimum/range quota aggregation %q", unwanted)
 		}

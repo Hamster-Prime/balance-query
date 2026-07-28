@@ -86,6 +86,7 @@ func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
 	if quota, ok := payload["quota"].(map[string]any); ok {
 		window := quotaWindowFromMap("密钥额度", "总额度", quota, firstNonEmpty(firstString(quota, "unit"), unit))
 		window.AggregationScope = "key"
+		window.AggregationKey = "sub2api:key-total"
 		if window.Total > 0 || window.Used > 0 || window.Remaining > 0 {
 			r.QuotaWindows = append(r.QuotaWindows, window)
 			applyPrimaryWindow(&r, window)
@@ -107,32 +108,42 @@ func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
 			}
 			window := quotaWindowFromMap("速率限制", windowLabel, limit, unit)
 			window.AggregationScope = "key"
+			window.AggregationKey = "sub2api:rate:" + windowCode
 			window.ResetAt = firstString(limit, "reset_at")
 			r.QuotaWindows = append(r.QuotaWindows, window)
 		}
 	}
 
 	if subscription, ok := payload["subscription"].(map[string]any); ok {
-		appendSubscriptionWindow := func(label, usedKey, limitKey string) {
-			used, usedOK := firstNumber(subscription, usedKey)
-			total, totalOK := firstNumber(subscription, limitKey)
-			if !totalOK || total <= 0 {
+		appendSubscriptionWindow := func(label, period, usedKey, limitKey string) {
+			rawLimit, limitPresent := subscription[limitKey]
+			if !limitPresent {
 				return
 			}
+			used, usedOK := firstNumber(subscription, usedKey)
+			total, totalOK := numberValue(rawLimit)
 			if !usedOK {
 				used = 0
 			}
 			window := balance.QuotaWindow{
 				Group:            "订阅套餐",
 				Label:            label,
-				Used:             used,
-				Total:            total,
-				Remaining:        maxFloat(total-used, 0),
 				Unit:             unit,
-				UsedPercent:      percentFromValues(used, total),
-				RemainingPercent: clampPercent(100 - percentFromValues(used, total)),
 				AggregationScope: "account",
+				AggregationKey:   "sub2api:subscription:" + period,
 			}
+			if !totalOK || total <= 0 {
+				window.Unlimited = true
+				window.Status = "不限量"
+				r.QuotaWindows = append(r.QuotaWindows, window)
+				return
+			}
+			window.Used = used
+			window.Total = total
+			window.Remaining = maxFloat(total-used, 0)
+			window.UsedPercent = percentFromValues(used, total)
+			window.RemainingPercent = clampPercent(100 - window.UsedPercent)
+			window.CapacityPercent = 100
 			if label == "每周额度" {
 				// The API returns the beginning of the rolling weekly window,
 				// not its reset timestamp. The service resets it seven days later.
@@ -140,9 +151,9 @@ func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
 			}
 			r.QuotaWindows = append(r.QuotaWindows, window)
 		}
-		appendSubscriptionWindow("每日额度", "daily_usage_usd", "daily_limit_usd")
-		appendSubscriptionWindow("每周额度", "weekly_usage_usd", "weekly_limit_usd")
-		appendSubscriptionWindow("每月额度", "monthly_usage_usd", "monthly_limit_usd")
+		appendSubscriptionWindow("每日额度", "daily", "daily_usage_usd", "daily_limit_usd")
+		appendSubscriptionWindow("每周额度", "weekly", "weekly_usage_usd", "weekly_limit_usd")
+		appendSubscriptionWindow("每月额度", "monthly", "monthly_usage_usd", "monthly_limit_usd")
 		if expires := firstString(subscription, "expires_at"); expires != "" {
 			r.ResetAt = expires
 			r.Extra["套餐到期"] = expires
@@ -302,6 +313,7 @@ func quotaWindowFromMap(group, label string, values map[string]any, unit string)
 		Unit:             unit,
 		UsedPercent:      usedPercent,
 		RemainingPercent: clampPercent(100 - usedPercent),
+		CapacityPercent:  100,
 	}
 }
 

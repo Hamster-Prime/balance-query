@@ -40,6 +40,7 @@ func TestParseNewAPITokenUsageUnlimited(t *testing.T) {
 	usage.Code = true
 	usage.Data.UnlimitedQuota = true
 	usage.Data.TotalUsed = 125
+	usage.HasUsedField = true
 	result := parseNewAPITokenUsage("new-api", usage, newAPIStatusResp{})
 	if len(result.QuotaWindows) != 1 || !result.QuotaWindows[0].Unlimited {
 		t.Fatalf("unlimited result = %#v", result)
@@ -59,6 +60,7 @@ func TestParseNewAPITokenUsageUnlimitedZeroUsedClearsSyntheticLimits(t *testing.
 	var usage newAPITokenUsageResp
 	usage.Code = true
 	usage.Data.UnlimitedQuota = true
+	usage.HasUsedField = true
 	usage.Data.TotalGranted = -100
 	usage.Data.TotalAvailable = -100
 

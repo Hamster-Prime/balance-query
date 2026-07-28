@@ -7,6 +7,8 @@ import (
 	"github.com/Hamster-Prime/balance-query/internal/balance"
 )
 
+func testFloat64(value float64) *float64 { return &value }
+
 func TestNumberValueSupportsJSONNumber(t *testing.T) {
 	got, ok := numberValue(json.Number("12.75"))
 	if !ok || got != 12.75 {
@@ -118,6 +120,36 @@ func TestKimiBoosterUsesOfficialWholeCentRounding(t *testing.T) {
 	}
 }
 
+func TestKimiDisabledMonthlyChargeLimitIsExplicitlyUnavailable(t *testing.T) {
+	result := balance.Result{Extra: map[string]string{}}
+	parseKimiBoosterWallet(&result, map[string]any{
+		"balance": map[string]any{
+			"type": "BOOSTER", "amount": float64(200_000_000), "amountLeft": float64(100_000_000),
+		},
+		"monthlyChargeLimitEnabled": false,
+	})
+	if len(result.QuotaWindows) != 1 || !result.QuotaWindows[0].Unavailable {
+		t.Fatalf("disabled monthly charge window = %#v", result.QuotaWindows)
+	}
+}
+
+func TestKimiZeroMonthlyChargeLimitIsUnlimited(t *testing.T) {
+	result := balance.Result{Extra: map[string]string{}}
+	parseKimiBoosterWallet(&result, map[string]any{
+		"balance":                   map[string]any{"type": "BOOSTER", "amount": float64(10_000_000), "amountLeft": float64(5_000_000)},
+		"monthlyChargeLimitEnabled": true,
+		"monthlyChargeLimit":        map[string]any{"currency": "USD", "priceInCents": float64(0)},
+		"monthlyUsed":               map[string]any{"currency": "USD", "priceInCents": float64(125)},
+	})
+	if len(result.QuotaWindows) != 1 {
+		t.Fatalf("zero-limit monthly window = %#v", result.QuotaWindows)
+	}
+	window := result.QuotaWindows[0]
+	if !window.Unlimited || !window.ShowUsedWhenUnlimited || window.Used != 1.25 || window.Unknown {
+		t.Fatalf("zero-limit monthly window = %#v", window)
+	}
+}
+
 func TestParseSub2APIQuotaLimitedDetails(t *testing.T) {
 	result := parseSub2APIUsage("sub", map[string]any{
 		"mode":    "quota_limited",
@@ -214,6 +246,28 @@ func TestParseSub2APISubscriptionWindows(t *testing.T) {
 	}
 }
 
+func TestParseSub2APISubscriptionNullAndZeroLimitsAreUnlimited(t *testing.T) {
+	result := parseSub2APIUsage("sub", map[string]any{
+		"mode": "unrestricted",
+		"unit": "USD",
+		"subscription": map[string]any{
+			"daily_limit_usd":   float64(10),
+			"daily_usage_usd":   float64(2),
+			"weekly_limit_usd":  nil,
+			"monthly_limit_usd": float64(0),
+		},
+	})
+	if len(result.QuotaWindows) != 3 {
+		t.Fatalf("subscription windows = %d, want 3: %#v", len(result.QuotaWindows), result.QuotaWindows)
+	}
+	if !result.QuotaWindows[1].Unlimited || !result.QuotaWindows[2].Unlimited {
+		t.Fatalf("null/zero subscription limits should be unlimited: %#v", result.QuotaWindows)
+	}
+	if result.QuotaWindows[1].AggregationKey != "sub2api:subscription:weekly" {
+		t.Fatalf("weekly aggregation key = %q", result.QuotaWindows[1].AggregationKey)
+	}
+}
+
 func TestParseSub2APIStatusIsLocalized(t *testing.T) {
 	result := parseSub2APIUsage("sub", map[string]any{
 		"mode": "quota_limited", "status": "quota_exhausted",
@@ -246,7 +300,7 @@ func TestSub2APIHistoryIncludesRecentDaysAndTopModels(t *testing.T) {
 
 func TestMiniMaxWindowUsesUsageCountAsRemaining(t *testing.T) {
 	remainingPct := 60.0
-	window := miniMaxWindow("通用模型", "5 小时配额", 100, 60, &remainingPct, 1, 1_800_000_000_000, 3_600_000, false, 1, false)
+	window := miniMaxWindow("通用模型", "5 小时配额", 100, 60, &remainingPct, 1, 1_800_000_000_000, 3_600_000, false, 1, false, true)
 	if window.Remaining != 60 || window.Used != 40 || window.RemainingPercent != 60 {
 		t.Fatalf("MiniMax window = %#v", window)
 	}
@@ -256,18 +310,18 @@ func TestMiniMaxWindowUsesUsageCountAsRemaining(t *testing.T) {
 }
 
 func TestMiniMaxUnlimitedAndUnavailableAreDistinct(t *testing.T) {
-	unlimited := miniMaxWindow("通用模型", "每周配额", 0, 0, nil, 3, 0, 0, false, 1, true)
+	unlimited := miniMaxWindow("通用模型", "每周配额", 0, 0, nil, 3, 0, 0, false, 1, true, true)
 	if !unlimited.Unlimited || unlimited.Unavailable {
 		t.Fatalf("unlimited window = %#v", unlimited)
 	}
-	unavailable := miniMaxWindow("视频模型", "每周配额", 0, 0, nil, 3, 0, 0, true, 1, true)
+	unavailable := miniMaxWindow("视频模型", "每周配额", 0, 0, nil, 3, 0, 0, true, 1, true, true)
 	if unavailable.Unlimited || !unavailable.Unavailable || unavailable.Status != "不在当前套餐中" {
 		t.Fatalf("unavailable window = %#v", unavailable)
 	}
 }
 
 func TestMiniMaxCurrentWindowDoesNotTreatStatusThreeAsWeeklyUnlimited(t *testing.T) {
-	current := miniMaxWindow("通用模型", "5 小时配额", 100, 50, nil, 3, 0, 0, false, 1, false)
+	current := miniMaxWindow("通用模型", "5 小时配额", 100, 50, nil, 3, 0, 0, false, 1, false, true)
 	if current.Unlimited || current.Status != "正常" {
 		t.Fatalf("current interval = %#v", current)
 	}
@@ -362,15 +416,58 @@ func TestMiniMaxQuotaResponseFallsBackAcrossMixedEnvelope(t *testing.T) {
 	}
 }
 
+func TestMiniMaxMissingWeeklyFieldsAreUnknown(t *testing.T) {
+	var response miniMaxQuotaResp
+	err := json.Unmarshal([]byte(`{
+		"base_resp":{"status_code":0},
+		"model_remains":[{"model_name":"general","current_interval_total_count":100,"current_interval_usage_count":80,"current_interval_status":1}]
+	}`), &response)
+	if err != nil {
+		t.Fatalf("unmarshal MiniMax response: %v", err)
+	}
+	result := parseMiniMaxQuota("mini", "MiniMax Token Plan（测试）", response)
+	if len(result.QuotaWindows) != 2 || !result.QuotaWindows[1].Unknown || result.QuotaWindows[1].Status != "接口未返回此配额" {
+		t.Fatalf("missing weekly fields = %#v", result.QuotaWindows)
+	}
+}
+
 func TestGLMWindowUsesPeriodMetadataNotNumberAsQuota(t *testing.T) {
 	window := glmQuotaWindow(glmLimitItem{
-		Type: "TOKENS_LIMIT", Unit: 3, Number: 5, Percentage: 25, Total: 40_000_000,
+		Type: "TOKENS_LIMIT", Unit: 3, Number: 5, Percentage: testFloat64(25), Total: 40_000_000,
 	})
 	if window.Label != "5 小时令牌额度" || window.Total != 40_000_000 || window.Used != 10_000_000 {
 		t.Fatalf("GLM window = %#v", window)
 	}
 	if window.UsedPercent != 25 || window.RemainingPercent != 75 {
 		t.Fatalf("GLM percentages = %#v", window)
+	}
+}
+
+func TestGLMWindowDoesNotTreatMissingPercentageAsFullQuota(t *testing.T) {
+	window := glmQuotaWindow(glmLimitItem{Type: "TOKENS_LIMIT", Unit: 6, Number: 1})
+	if !window.Unknown || window.RemainingPercent != 0 || window.Status != "接口未返回额度数值" {
+		t.Fatalf("missing GLM percentage = %#v", window)
+	}
+}
+
+func TestGLMWindowDoesNotTreatTotalWithoutConsumptionFieldsAsFullQuota(t *testing.T) {
+	window := glmQuotaWindow(glmLimitItem{Type: "TOKENS_LIMIT", Unit: 6, Number: 1, Total: 100})
+	if !window.Unknown || window.RemainingPercent != 0 || window.Remaining != 0 {
+		t.Fatalf("GLM total-only window = %#v", window)
+	}
+}
+
+func TestGLMWindowTreatsExplicitZeroCurrentValueAsUnused(t *testing.T) {
+	window := glmQuotaWindow(glmLimitItem{Type: "TOKENS_LIMIT", Unit: 6, Number: 1, Total: 100, CurrentValue: testFloat64(0)})
+	if window.Unknown || window.Used != 0 || window.Remaining != 100 || window.RemainingPercent != 100 {
+		t.Fatalf("GLM explicit-zero current value = %#v", window)
+	}
+}
+
+func TestGLMWindowKeepsExplicitRemainingWithoutTotal(t *testing.T) {
+	window := glmQuotaWindow(glmLimitItem{Type: "TOKENS_LIMIT", Unit: 6, Number: 1, Remaining: testFloat64(42)})
+	if window.Unknown || window.Remaining != 42 || window.Status != "仅提供剩余额度" {
+		t.Fatalf("GLM remaining-only window = %#v", window)
 	}
 }
 

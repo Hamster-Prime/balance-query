@@ -149,6 +149,56 @@ func TestNewAPIFetchPrefersTokenUsageEndpoint(t *testing.T) {
 	}
 }
 
+func TestNewAPIFetchRejectsSuccessfulPayloadWithoutQuotaFields(t *testing.T) {
+	useTestHTTPClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/api/usage/token/" {
+			return jsonResponse(`{"code":true,"message":"ok","data":{"object":"token_usage","name":"incomplete"}}`), nil
+		}
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found"))}, nil
+	})
+
+	result := (NewAPI{BaseURL: "https://new-api.example/v1"}).Fetch("new", "new-api-key", "")
+	if result.Error != "New API 未返回密钥额度字段" {
+		t.Fatalf("missing quota fields result = %#v", result)
+	}
+}
+
+func TestNewAPIFetchRejectsNullOrPartialQuotaFields(t *testing.T) {
+	for name, payload := range map[string]string{
+		"null fields":    `{"code":true,"data":{"total_granted":null,"total_used":null,"total_available":null,"unlimited_quota":false}}`,
+		"partial fields": `{"code":true,"data":{"total_granted":100,"total_used":25,"unlimited_quota":false}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			useTestHTTPClient(t, func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path == "/api/usage/token/" {
+					return jsonResponse(payload), nil
+				}
+				return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found"))}, nil
+			})
+			result := (NewAPI{BaseURL: "https://new-api.example/v1"}).Fetch("new", "new-api-key", "")
+			if result.Error != "New API 未返回密钥额度字段" {
+				t.Fatalf("invalid quota payload result = %#v", result)
+			}
+		})
+	}
+}
+
+func TestNewAPIUnlimitedWithoutUsageDoesNotInventZeroUsed(t *testing.T) {
+	useTestHTTPClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/api/usage/token/" {
+			return jsonResponse(`{"code":true,"data":{"unlimited_quota":true}}`), nil
+		}
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found"))}, nil
+	})
+	result := (NewAPI{BaseURL: "https://new-api.example/v1"}).Fetch("new", "new-api-key", "")
+	if result.Error != "" || len(result.QuotaWindows) != 1 {
+		t.Fatalf("unlimited result = %#v", result)
+	}
+	if result.QuotaWindows[0].ShowUsedWhenUnlimited || result.QuotaDisplay != "不限量" {
+		t.Fatalf("unlimited result invented usage = %#v", result)
+	}
+}
+
 func TestMiniMaxGlobalRetriesBusinessFailureWithXAPIKey(t *testing.T) {
 	requests := 0
 	useTestHTTPClient(t, func(r *http.Request) (*http.Response, error) {
