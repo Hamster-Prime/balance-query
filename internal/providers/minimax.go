@@ -34,21 +34,23 @@ type miniMaxQuotaResp struct {
 }
 
 type miniMaxModelRemain struct {
-	ModelName        string `json:"model_name"`
-	HasCurrentFields bool   `json:"-"`
-	HasWeeklyFields  bool   `json:"-"`
+	ModelName            string `json:"model_name"`
+	HasCurrentFields     bool   `json:"-"`
+	HasWeeklyFields      bool   `json:"-"`
+	HasCurrentUsageCount bool   `json:"-"`
+	HasWeeklyUsageCount  bool   `json:"-"`
 
 	StartTime   int64 `json:"start_time"`
 	EndTime     int64 `json:"end_time"`
 	RemainsTime int64 `json:"remains_time"` // milliseconds
 
 	CurrentIntervalTotalCount   float64  `json:"current_interval_total_count"`
-	CurrentIntervalUsageCount   float64  `json:"current_interval_usage_count"` // remaining, despite the name
+	CurrentIntervalUsageCount   float64  `json:"current_interval_usage_count"` // remaining count, despite the name
 	CurrentIntervalRemainingPct *float64 `json:"current_interval_remaining_percent"`
 	IntervalBoostPermille       *float64 `json:"interval_boost_permille"`
 	CurrentIntervalStatus       int      `json:"current_interval_status"`
 	CurrentWeeklyTotalCount     float64  `json:"current_weekly_total_count"`
-	CurrentWeeklyUsageCount     float64  `json:"current_weekly_usage_count"` // remaining, despite the name
+	CurrentWeeklyUsageCount     float64  `json:"current_weekly_usage_count"` // remaining count, despite the name
 	CurrentWeeklyRemainingPct   *float64 `json:"current_weekly_remaining_percent"`
 	CurrentWeeklyStatus         int      `json:"current_weekly_status"`
 	WeeklyStartTime             int64    `json:"weekly_start_time"`
@@ -123,6 +125,8 @@ func miniMaxModelRemainFromMap(values map[string]any) miniMaxModelRemain {
 		}
 		return &value
 	}
+	currentUsageCount, hasCurrentUsageCount := firstNumber(values, "current_interval_usage_count")
+	weeklyUsageCount, hasWeeklyUsageCount := firstNumber(values, "current_weekly_usage_count")
 	return miniMaxModelRemain{
 		ModelName:                   firstString(values, "model_name"),
 		HasCurrentFields:            hasAnyMapKey(values, "start_time", "end_time", "remains_time", "current_interval_total_count", "current_interval_usage_count", "current_interval_remaining_percent", "current_interval_status", "interval_boost_permille", "interval_boost_permill"),
@@ -131,12 +135,14 @@ func miniMaxModelRemainFromMap(values map[string]any) miniMaxModelRemain {
 		EndTime:                     integer("end_time"),
 		RemainsTime:                 integer("remains_time"),
 		CurrentIntervalTotalCount:   number("current_interval_total_count"),
-		CurrentIntervalUsageCount:   number("current_interval_usage_count"),
+		HasCurrentUsageCount:        hasCurrentUsageCount,
+		HasWeeklyUsageCount:         hasWeeklyUsageCount,
+		CurrentIntervalUsageCount:   currentUsageCount,
 		CurrentIntervalRemainingPct: pointer("current_interval_remaining_percent"),
 		IntervalBoostPermille:       pointer("interval_boost_permille", "interval_boost_permill"),
 		CurrentIntervalStatus:       int(number("current_interval_status")),
 		CurrentWeeklyTotalCount:     number("current_weekly_total_count"),
-		CurrentWeeklyUsageCount:     number("current_weekly_usage_count"),
+		CurrentWeeklyUsageCount:     weeklyUsageCount,
 		CurrentWeeklyRemainingPct:   pointer("current_weekly_remaining_percent"),
 		CurrentWeeklyStatus:         int(number("current_weekly_status")),
 		WeeklyStartTime:             integer("weekly_start_time"),
@@ -217,6 +223,8 @@ func parseMiniMaxQuota(authID, label string, resp miniMaxQuotaResp) balance.Resu
 			model.CurrentIntervalUsageCount != 0 || model.CurrentIntervalRemainingPct != nil || model.CurrentIntervalStatus != 0
 		weeklyFieldsPresent := model.HasWeeklyFields || model.CurrentWeeklyTotalCount != 0 ||
 			model.CurrentWeeklyUsageCount != 0 || model.CurrentWeeklyRemainingPct != nil || model.CurrentWeeklyStatus != 0
+		currentCountPresent := model.HasCurrentUsageCount || model.CurrentIntervalUsageCount != 0
+		weeklyCountPresent := model.HasWeeklyUsageCount || model.CurrentWeeklyUsageCount != 0
 		unavailable := model.CurrentIntervalTotalCount == 0 &&
 			model.CurrentWeeklyTotalCount == 0 &&
 			model.CurrentIntervalStatus == 3 && model.CurrentWeeklyStatus == 3
@@ -229,7 +237,7 @@ func parseMiniMaxQuota(authID, label string, resp miniMaxQuotaResp) balance.Resu
 		current := miniMaxWindow(group, durationWindowLabel(intervalSeconds),
 			model.CurrentIntervalTotalCount, model.CurrentIntervalUsageCount,
 			model.CurrentIntervalRemainingPct, model.CurrentIntervalStatus,
-			model.EndTime, model.RemainsTime, unavailable, intervalBoost, false, currentFieldsPresent)
+			model.EndTime, model.RemainsTime, unavailable, intervalBoost, false, currentFieldsPresent, currentCountPresent)
 		weeklyBoost := 1.0
 		if model.WeeklyBoostPermille != nil {
 			weeklyBoost = maxFloat(*model.WeeklyBoostPermille, 0) / 1000
@@ -237,7 +245,7 @@ func parseMiniMaxQuota(authID, label string, resp miniMaxQuotaResp) balance.Resu
 		weekly := miniMaxWindow(group, "每周配额",
 			model.CurrentWeeklyTotalCount, model.CurrentWeeklyUsageCount,
 			model.CurrentWeeklyRemainingPct, model.CurrentWeeklyStatus,
-			model.WeeklyEndTime, model.WeeklyRemainsTime, unavailable, weeklyBoost, true, weeklyFieldsPresent)
+			model.WeeklyEndTime, model.WeeklyRemainsTime, unavailable, weeklyBoost, true, weeklyFieldsPresent, weeklyCountPresent)
 
 		r.QuotaWindows = append(r.QuotaWindows, current, weekly)
 		if !primarySet && !current.Unavailable && (current.Total > 0 || current.RemainingPercent > 0) {
@@ -266,7 +274,7 @@ func parseMiniMaxQuota(authID, label string, resp miniMaxQuotaResp) balance.Resu
 	return r
 }
 
-func miniMaxWindow(group, label string, total, remaining float64, remainingPct *float64, status int, resetAt, resetInMS int64, unavailable bool, boost float64, allowUnlimited, fieldsPresent bool) balance.QuotaWindow {
+func miniMaxWindow(group, label string, total, reportedRemaining float64, remainingPct *float64, status int, resetAt, resetInMS int64, unavailable bool, boost float64, allowUnlimited, fieldsPresent, countPresent bool) balance.QuotaWindow {
 	windowKind := "interval"
 	if allowUnlimited {
 		windowKind = "weekly"
@@ -279,8 +287,6 @@ func miniMaxWindow(group, label string, total, remaining float64, remainingPct *
 		Group:            group,
 		Label:            label,
 		Total:            total,
-		Remaining:        remaining,
-		Used:             maxFloat(total-remaining, 0),
 		Unit:             "次",
 		ResetAt:          formatUnixTimestamp(resetAt),
 		ResetInSeconds:   maxInt64(resetInMS/1000, 0),
@@ -301,22 +307,45 @@ func miniMaxWindow(group, label string, total, remaining float64, remainingPct *
 	if allowUnlimited && status == 3 {
 		window.Unlimited = true
 		window.Status = "无限制"
-	} else if status == 2 {
-		window.Status = "已用尽"
-	} else {
-		window.Status = "正常"
+		return window
 	}
-	if !window.Unlimited && remainingPct == nil && total <= 0 && remaining <= 0 && status != 2 {
+	if status == 2 {
+		window.Remaining = 0
+		window.Used = maxFloat(total, 0)
+		window.RemainingPercent = 0
+		window.UsedPercent = capacityPercent
+		window.Status = "已用尽"
+		return window
+	}
+	if total > 0 && countPresent {
+		window.Remaining = maxFloat(minFloat(reportedRemaining, total), 0)
+		window.Used = maxFloat(total-window.Remaining, 0)
+		window.RemainingPercent = clampDisplayPercent(window.Remaining / total * 100 * boost)
+		window.UsedPercent = maxFloat(capacityPercent-window.RemainingPercent, 0)
+		if window.Remaining <= 0 {
+			window.Status = "已用尽"
+		} else {
+			window.Status = "正常"
+		}
+		return window
+	}
+	if remainingPct == nil && total <= 0 && (!countPresent || reportedRemaining <= 0) {
 		window.Unknown = true
 		window.Status = "接口未返回额度数值"
 		return window
 	}
 	if remainingPct != nil {
 		window.RemainingPercent = clampDisplayPercent(*remainingPct * boost)
-	} else if total > 0 {
-		window.RemainingPercent = clampDisplayPercent(remaining / total * 100 * boost)
+		window.UsedPercent = maxFloat(capacityPercent-window.RemainingPercent, 0)
+		if window.RemainingPercent <= 0 {
+			window.Status = "已用尽"
+		} else {
+			window.Status = "正常"
+		}
+	} else if countPresent {
+		window.Remaining = maxFloat(reportedRemaining, 0)
+		window.Status = "正常"
 	}
-	window.UsedPercent = maxFloat(capacityPercent-window.RemainingPercent, 0)
 	return window
 }
 

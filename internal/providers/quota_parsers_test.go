@@ -55,8 +55,8 @@ func TestParseKimiUsageTopLevelWindowsAndBooster(t *testing.T) {
 		t.Fatalf("booster monthly window = %#v", got)
 	}
 	for _, window := range result.QuotaWindows {
-		if window.AggregationScope != "key" {
-			t.Fatalf("Kimi window scope = %q, want key: %#v", window.AggregationScope, window)
+		if window.AggregationScope != "account" {
+			t.Fatalf("Kimi window scope = %q, want account: %#v", window.AggregationScope, window)
 		}
 	}
 	if got := result.Extra["加量包余额"]; got != "100.00 / 200.00 USD" {
@@ -105,6 +105,92 @@ func TestKimiQuotaIsPercentageNotRequestCount(t *testing.T) {
 	}
 	if got := result.QuotaWindows[1]; got.Label != "5 小时配额" || got.UsedPercent != 30 || got.RemainingPercent != 70 {
 		t.Fatalf("rolling percentage = %#v", got)
+	}
+}
+
+func TestKimiMissingWeeklyQuotaIsExplicitlyUnknown(t *testing.T) {
+	result := parseKimiUsage("kimi", kimiUsageResp{
+		Limits: []map[string]any{{
+			"detail": map[string]any{"used": float64(0), "limit": float64(100)},
+			"window": map[string]any{"duration": float64(300), "timeUnit": "MINUTE"},
+		}},
+	})
+	if len(result.QuotaWindows) != 2 {
+		t.Fatalf("Kimi missing-weekly windows = %#v", result.QuotaWindows)
+	}
+	weekly := result.QuotaWindows[0]
+	if !weekly.Unknown || weekly.Group != "订阅配额" || weekly.Status != "接口未返回周配额，无法判断账户是否可用" {
+		t.Fatalf("Kimi missing weekly quota = %#v", weekly)
+	}
+	rolling := result.QuotaWindows[1]
+	if rolling.Unknown || rolling.Group != "滚动限流" || rolling.RemainingPercent != 100 {
+		t.Fatalf("Kimi rolling quota = %#v", rolling)
+	}
+}
+
+func TestKimiLimitWithoutUsageIsUnknownInsteadOfFull(t *testing.T) {
+	window, ok := kimiQuotaWindow(map[string]any{"limit": float64(100)}, "5 小时配额")
+	if !ok || !window.Unknown || window.RemainingPercent != 0 || window.Status != "接口未返回已用或剩余额度" {
+		t.Fatalf("Kimi limit-only quota = %#v, ok=%v", window, ok)
+	}
+	zero, ok := kimiQuotaWindow(map[string]any{"limit": float64(0), "used": float64(0)}, "5 小时配额")
+	if !ok || !zero.Unknown || zero.Status != "接口未返回有效配额上限" {
+		t.Fatalf("Kimi zero-limit quota = %#v, ok=%v", zero, ok)
+	}
+}
+
+func TestKimiExplicitRemainingPreventsFalseFullQuota(t *testing.T) {
+	window, ok := kimiQuotaWindow(map[string]any{
+		"limit": float64(100), "used": float64(0), "remaining": float64(0),
+	}, "5 小时配额")
+	if !ok || window.Unknown || window.RemainingPercent != 0 || window.UsedPercent != 100 || window.Status != "已用尽" {
+		t.Fatalf("Kimi conflicting exhausted quota = %#v, ok=%v", window, ok)
+	}
+}
+
+func TestKimiConflictingUsageFieldsUseLowerRemainingValue(t *testing.T) {
+	window, ok := kimiQuotaWindow(map[string]any{
+		"limit": float64(100), "used": float64(10), "remaining": float64(35),
+	}, "每周配额")
+	if !ok || window.Unknown || window.RemainingPercent != 35 || window.UsedPercent != 65 || window.Status != "接口额度字段不一致，已按较低剩余额度显示" {
+		t.Fatalf("Kimi inconsistent quota = %#v, ok=%v", window, ok)
+	}
+}
+
+func TestKimiTotalQuotaCanBlockOtherwiseFullRollingWindow(t *testing.T) {
+	result := parseKimiUsage("kimi", kimiUsageResp{
+		Usage: map[string]any{"limit": float64(100), "remaining": float64(100)},
+		Limits: []map[string]any{{
+			"detail": map[string]any{"limit": float64(100), "remaining": float64(100)},
+			"window": map[string]any{"duration": float64(300), "timeUnit": "TIME_UNIT_MINUTE"},
+		}},
+		TotalQuota: map[string]any{"limit": float64(100), "remaining": float64(0)},
+	})
+	if len(result.QuotaWindows) != 3 {
+		t.Fatalf("Kimi total-quota windows = %#v", result.QuotaWindows)
+	}
+	total := result.QuotaWindows[1]
+	rolling := result.QuotaWindows[2]
+	if total.Label != "会员总额度" || total.RemainingPercent != 0 || total.Status != "已用尽" {
+		t.Fatalf("Kimi exhausted total quota = %#v", total)
+	}
+	if rolling.Label != "5 小时配额" || rolling.RemainingPercent != 100 {
+		t.Fatalf("Kimi full rolling quota = %#v", rolling)
+	}
+}
+
+func TestNormalizeKimiUsageAcceptsDataEnvelope(t *testing.T) {
+	resp := normalizeKimiUsage(kimiUsageResp{Data: &struct {
+		Usage         map[string]any   `json:"usage"`
+		Limits        []map[string]any `json:"limits"`
+		BoosterWallet map[string]any   `json:"boosterWallet"`
+		TotalQuota    any              `json:"totalQuota"`
+	}{
+		Usage:      map[string]any{"limit": float64(100), "remaining": float64(25)},
+		TotalQuota: map[string]any{"limit": float64(100), "remaining": float64(0)},
+	}})
+	if resp.Data != nil || resp.Usage["remaining"] != float64(25) || resp.TotalQuota == nil {
+		t.Fatalf("normalized Kimi response = %#v", resp)
 	}
 }
 
@@ -300,7 +386,7 @@ func TestSub2APIHistoryIncludesRecentDaysAndTopModels(t *testing.T) {
 
 func TestMiniMaxWindowUsesUsageCountAsRemaining(t *testing.T) {
 	remainingPct := 60.0
-	window := miniMaxWindow("通用模型", "5 小时配额", 100, 60, &remainingPct, 1, 1_800_000_000_000, 3_600_000, false, 1, false, true)
+	window := miniMaxWindow("通用模型", "5 小时配额", 100, 60, &remainingPct, 1, 1_800_000_000_000, 3_600_000, false, 1, false, true, true)
 	if window.Remaining != 60 || window.Used != 40 || window.RemainingPercent != 60 {
 		t.Fatalf("MiniMax window = %#v", window)
 	}
@@ -310,20 +396,65 @@ func TestMiniMaxWindowUsesUsageCountAsRemaining(t *testing.T) {
 }
 
 func TestMiniMaxUnlimitedAndUnavailableAreDistinct(t *testing.T) {
-	unlimited := miniMaxWindow("通用模型", "每周配额", 0, 0, nil, 3, 0, 0, false, 1, true, true)
+	unlimited := miniMaxWindow("通用模型", "每周配额", 0, 0, nil, 3, 0, 0, false, 1, true, true, false)
 	if !unlimited.Unlimited || unlimited.Unavailable {
 		t.Fatalf("unlimited window = %#v", unlimited)
 	}
-	unavailable := miniMaxWindow("视频模型", "每周配额", 0, 0, nil, 3, 0, 0, true, 1, true, true)
+	unavailable := miniMaxWindow("视频模型", "每周配额", 0, 0, nil, 3, 0, 0, true, 1, true, true, false)
 	if unavailable.Unlimited || !unavailable.Unavailable || unavailable.Status != "不在当前套餐中" {
 		t.Fatalf("unavailable window = %#v", unavailable)
 	}
 }
 
 func TestMiniMaxCurrentWindowDoesNotTreatStatusThreeAsWeeklyUnlimited(t *testing.T) {
-	current := miniMaxWindow("通用模型", "5 小时配额", 100, 50, nil, 3, 0, 0, false, 1, false, true)
+	current := miniMaxWindow("通用模型", "5 小时配额", 100, 50, nil, 3, 0, 0, false, 1, false, true, true)
 	if current.Unlimited || current.Status != "正常" {
 		t.Fatalf("current interval = %#v", current)
+	}
+}
+
+func TestMiniMaxExactRemainingCountOverridesConflictingPercent(t *testing.T) {
+	staleFull := 100.0
+	exhausted := miniMaxWindow("视频模型", "每日配额", 3, 0, &staleFull, 1, 0, 0, false, 1, false, true, true)
+	if exhausted.Remaining != 0 || exhausted.RemainingPercent != 0 || exhausted.Used != 3 || exhausted.Status != "已用尽" {
+		t.Fatalf("0/3 MiniMax quota = %#v", exhausted)
+	}
+
+	staleEmpty := 0.0
+	full := miniMaxWindow("视频模型", "每日配额", 3, 3, &staleEmpty, 1, 0, 0, false, 1, false, true, true)
+	if full.Remaining != 3 || full.RemainingPercent != 100 || full.Used != 0 || full.Status != "正常" {
+		t.Fatalf("3/3 MiniMax quota = %#v", full)
+	}
+}
+
+func TestMiniMaxExhaustedStatusOverridesStalePercent(t *testing.T) {
+	staleFull := 100.0
+	window := miniMaxWindow("通用模型", "5 小时配额", 100, 100, &staleFull, 2, 0, 0, false, 1, false, true, true)
+	if window.Remaining != 0 || window.RemainingPercent != 0 || window.Used != 100 || window.Status != "已用尽" {
+		t.Fatalf("status=2 MiniMax quota = %#v", window)
+	}
+}
+
+func TestMiniMaxPercentOnlyWindowStillUsesRemainingPercent(t *testing.T) {
+	remaining := 75.0
+	window := miniMaxWindow("通用模型", "5 小时配额", 0, 0, &remaining, 1, 0, 0, false, 1, false, true, false)
+	if window.Unknown || window.RemainingPercent != 75 || window.Status != "正常" {
+		t.Fatalf("percent-only MiniMax quota = %#v", window)
+	}
+}
+
+func TestMiniMaxZeroPercentOnlyWindowIsExhausted(t *testing.T) {
+	remaining := 0.0
+	window := miniMaxWindow("通用模型", "5 小时配额", 0, 0, &remaining, 1, 0, 0, false, 1, false, true, false)
+	if window.Unknown || window.RemainingPercent != 0 || window.UsedPercent != 100 || window.Status != "已用尽" {
+		t.Fatalf("zero-percent MiniMax quota = %#v", window)
+	}
+}
+
+func TestMiniMaxRemainingCountWithoutTotalDoesNotInventEmptyProgress(t *testing.T) {
+	window := miniMaxWindow("视频模型", "每日配额", 0, 2, nil, 1, 0, 0, false, 1, false, true, true)
+	if window.Unknown || window.Remaining != 2 || window.UsedPercent != 0 || window.RemainingPercent != 0 || window.Status != "正常" {
+		t.Fatalf("count-only MiniMax quota = %#v", window)
 	}
 }
 

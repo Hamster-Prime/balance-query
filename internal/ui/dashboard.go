@@ -526,6 +526,7 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .quota-status{font-size:10px;line-height:1.3;color:var(--text-tertiary);white-space:normal;text-align:right;overflow-wrap:anywhere}
 .quota-status.good{color:var(--success-color)}
 .quota-status.warn{color:var(--amber-text)}
+.quota-status.critical{color:var(--error-color)}
 .quota-window-value{display:flex;align-items:baseline;gap:5px;flex-wrap:wrap;margin-top:8px;color:var(--text-primary);font-variant-numeric:tabular-nums}
 .quota-window-value strong{font-size:18px;line-height:1.2;font-weight:680}
 .quota-window-value span{font-size:11px;color:var(--text-secondary)}
@@ -1404,6 +1405,14 @@ select:hover{border-color:var(--border-hover)}
     return capacityPercent != null && capacityPercent > 0 ? remainingPercent / capacityPercent * 100 : remainingPercent;
   }
 
+  function quotaWindowIsExhausted(item) {
+    if (!item || item.unlimited || item.unavailable || item.unknown) return false;
+    if (item.aggregate_window && (item.aggregate_missing_count || item.aggregate_unknown_count || item.aggregate_failed_count)) return false;
+    if (/已用尽|exhausted/i.test(String(item.status || ""))) return true;
+    var progress = quotaProgressRemainingPercent(item);
+    return progress != null && progress <= 0;
+  }
+
   function remainingProgressClass(percent) {
     if (percent <= 15) return " critical";
     if (percent <= 50) return " warning";
@@ -1487,8 +1496,9 @@ select:hover{border-color:var(--border-hover)}
     head.appendChild(element("span", "quota-window-label", translateWindowLabel(item.label)));
     var headMeta = element("span", "quota-window-head-meta");
     var status = unlimited ? "不限量" : unavailable ? "不可用" : unknown ? "数据不完整" : translateStatus(item.status);
+    var exhaustedStatus = quotaWindowIsExhausted(item);
     var warningStatus = unavailable || unknown || Boolean(item.aggregate_mixed_unlimited) || Boolean(item.aggregate_missing_count) || Boolean(item.aggregate_failed_count) || Boolean(item.aggregate_unavailable_count) || Boolean(item.aggregate_unknown_count);
-    if (status) headMeta.appendChild(element("span", "quota-status" + (unlimited ? " good" : warningStatus ? " warn" : ""), status));
+    if (status) headMeta.appendChild(element("span", "quota-status" + (unlimited ? " good" : exhaustedStatus ? " critical" : warningStatus ? " warn" : ""), status));
     var duplicateReset = Boolean(item.reset_at && accountResetAt && String(item.reset_at) === String(accountResetAt));
     var resetNode = duplicateReset ? null : quotaResetNode(item, fetchedAt);
     if (resetNode) headMeta.appendChild(resetNode);
@@ -2290,9 +2300,13 @@ select:hover{border-color:var(--border-hover)}
 
   function resultCard(result, index) {
     var failed = Boolean(result.error);
+    var resultWindows = Array.isArray(result.quota_windows) ? result.quota_windows : [];
+    var incompleteQuota = !failed && resultWindows.some(function (item) { return item && item.unknown; });
+    var exhaustedQuota = !failed && resultWindows.some(quotaWindowIsExhausted);
+    var quotaWarning = incompleteQuota || exhaustedQuota;
     var detailKeys = !result.error ? extraDetailKeys(result) : [];
     var detailsID = "account-details-" + index + "-" + tinyHash(String(result.account_name || "") + "|" + String(result.base_url || ""));
-    var card = element("article", "result-card" + (failed ? " error" : ""));
+    var card = element("article", "result-card" + (failed ? " error" : quotaWarning ? " limited" : ""));
     card.style.animationDelay = Math.min(index * 35, 210) + "ms";
     var head = element("div", "result-head");
     var identity = element("div", "provider-cell");
@@ -2302,10 +2316,10 @@ select:hover{border-color:var(--border-hover)}
     identity.appendChild(titleRow);
     identity.appendChild(element("div", "result-url", result.base_url || ""));
     head.appendChild(identity);
-    var badge = element("span", "badge " + (failed ? "failure" : "success"));
-    badge.appendChild(icon(failed ? "alert" : "check"));
-    var hasWindows = Array.isArray(result.quota_windows) && result.quota_windows.length > 0;
-    badge.appendChild(element("span", "", failed ? "查询失败" : hasWindows ? "配额已更新" : "查询成功"));
+    var badge = element("span", "badge " + (failed ? "failure" : quotaWarning ? "warning" : "success"));
+    badge.appendChild(icon(failed || quotaWarning ? "alert" : "check"));
+    var hasWindows = resultWindows.length > 0;
+    badge.appendChild(element("span", "", failed ? "查询失败" : exhaustedQuota ? "配额已用尽" : incompleteQuota ? "配额数据不完整" : hasWindows ? "配额已更新" : "查询成功"));
     var actions = element("div", "result-actions");
     actions.appendChild(badge);
     var detailButton = null;
