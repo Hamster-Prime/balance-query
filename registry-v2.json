@@ -6,7 +6,7 @@
       "name": "\u4f59\u989d\u4e0e\u914d\u989d",
       "description": "\u67e5\u8be2 CPA AI \u63d0\u4f9b\u5546\u7684\u4f59\u989d\u3001\u591a\u5468\u671f\u914d\u989d\u3001\u91cd\u7f6e\u65f6\u95f4\u548c\u7528\u91cf\u660e\u7ec6\uff0c\u652f\u6301 DeepSeek\u3001GLM\u3001Kimi\u3001Sub2API\u3001New API\u3001MiniMax \u7b49\u7c7b\u578b\u3002",
       "author": "Hamster-Prime",
-      "version": "0.8.2",
+      "version": "0.8.3",
       "repository": "https://github.com/Hamster-Prime/balance-query",
       "logo": "https://raw.githubusercontent.com/Hamster-Prime/balance-query/main/assets/logo.png",
       "homepage": "https://github.com/Hamster-Prime/balance-query",
@@ -26,44 +26,44 @@
           {
             "goos": "darwin",
             "goarch": "amd64",
-            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.8.2/balance-query_0.8.2_darwin_amd64.zip",
-            "sha256": "ca61c7d7fe9ce1644a11a609656d4a11ce1c442b2cbd0e4b68aea95dd18be04b",
-            "size": 2545242
+            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.8.3/balance-query_0.8.3_darwin_amd64.zip",
+            "sha256": "d4aacd3a4b4101b3a0c956e51115588485dd3a66c60910652202fce9d6df3a22",
+            "size": 2603079
           },
           {
             "goos": "darwin",
             "goarch": "arm64",
-            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.8.2/balance-query_0.8.2_darwin_arm64.zip",
-            "sha256": "076af5194ed072c97f50fd7684b5294383ba0f1bfdd69dca1b4ecc9b733fed56",
-            "size": 2376541
+            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.8.3/balance-query_0.8.3_darwin_arm64.zip",
+            "sha256": "8cafeecbf8abefc1ad96b5dfd25357d77ef3c14164c31677373a29b856a5af6c",
+            "size": 2435686
           },
           {
             "goos": "linux",
             "goarch": "amd64",
-            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.8.2/balance-query_0.8.2_linux_amd64.zip",
-            "sha256": "f62eee9f9b2b92c1276e43a751665f9bbf8bf6578408d7dbd489c462c2721771",
-            "size": 2655856
+            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.8.3/balance-query_0.8.3_linux_amd64.zip",
+            "sha256": "b384cc23cef61926c7b36a4d348fa5e3c501625742cb17909463b0a2b128f405",
+            "size": 2716948
           },
           {
             "goos": "linux",
             "goarch": "arm64",
-            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.8.2/balance-query_0.8.2_linux_arm64.zip",
-            "sha256": "9f089c3122c24bdb1f37227fcba458f19674291e9eebed85fe126d9860df100a",
-            "size": 2438600
+            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.8.3/balance-query_0.8.3_linux_arm64.zip",
+            "sha256": "276df210af22f688ae8f5aba16c5bf29f361e257efede4568eb532d9e96f747c",
+            "size": 2498929
           },
           {
             "goos": "windows",
             "goarch": "amd64",
-            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.8.2/balance-query_0.8.2_windows_amd64.zip",
-            "sha256": "29698486d171abe4b4de319760435c6a973e36f773a844959b7943d206dea593",
-            "size": 2599186
+            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.8.3/balance-query_0.8.3_windows_amd64.zip",
+            "sha256": "8b8a019a3c1fec4ee1989bc9c0b9c9c360b514385fac91434328851eae6ead63",
+            "size": 2660202
           },
           {
             "goos": "windows",
             "goarch": "arm64",
-            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.8.2/balance-query_0.8.2_windows_arm64.zip",
-            "sha256": "e5076b7f6455bc97464148c2f7f93e05ceea712fd88a039495c976a8790f66b3",
-            "size": 2339512
+            "url": "https://github.com/Hamster-Prime/balance-query/releases/download/v0.8.3/balance-query_0.8.3_windows_arm64.zip",
+            "sha256": "cab7f40065fbf9d00661e7566afaa6c767ed6884f1c0be4bcc9407d9c2223fdd",
+            "size": 2397995
           }
         ]
       }
