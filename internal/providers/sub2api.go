@@ -18,19 +18,20 @@ type Sub2API struct {
 func (s Sub2API) Fetch(authID, token, proxyURL string) balance.Result {
 	label := balance.ProviderLabel[balance.ProviderSub2API]
 	if strings.TrimSpace(s.BaseURL) == "" {
-		return errResult(authID, label, "所选 AI 提供商没有配置接口地址")
+		return errResult(authID, label,
+			newProviderError(balance.FailureInvalidConfig, "所选 AI 提供商没有配置接口地址", 0, "", nil))
 	}
 	endpoint, err := serviceEndpoint(s.BaseURL, "/v1/usage")
 	if err != nil {
-		return errResult(authID, label, err.Error())
+		return errResult(authID, label, err)
 	}
 
 	endpoint += "?days=30"
 	var payload map[string]any
 	if err := getSub2APIJSON(endpoint, token, proxyURL, &payload); err != nil {
-		return errResult(authID, label, err.Error())
+		return errResult(authID, label, err)
 	}
-	r := parseSub2APIUsage(authID, payload)
+	r := parseSub2APIUsage(authID, payload, token)
 	if r.Error != "" {
 		return r
 	}
@@ -42,19 +43,22 @@ func (s Sub2API) Fetch(authID, token, proxyURL string) balance.Result {
 
 func getSub2APIJSON(endpoint, token, proxyURL string, dest any) error {
 	err := getJSON(endpoint, token, proxyURL, dest)
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "http 401") {
+	if err == nil || !isHTTPStatusError(err, 401) || !isAuthenticationFailure(err) {
 		return err
 	}
 	for _, header := range []string{"x-api-key", "x-goog-api-key"} {
 		err = getJSONWithHeaders(endpoint, proxyURL, map[string]string{header: token}, dest)
-		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "http 401") {
+		if err == nil || !isHTTPStatusError(err, 401) || !isAuthenticationFailure(err) {
 			return err
 		}
 	}
 	return err
 }
 
-func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
+func parseSub2APIUsage(authID string, payload map[string]any, secrets ...string) balance.Result {
+	if failure := sub2APIBusinessFailure(payload, secrets...); failure != nil {
+		return errResult(authID, balance.ProviderLabel[balance.ProviderSub2API], failure)
+	}
 	r := balance.Result{
 		Provider:  balance.ProviderLabel[balance.ProviderSub2API],
 		AuthID:    authID,
@@ -87,8 +91,8 @@ func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
 		window := quotaWindowFromMap("密钥额度", "总额度", quota, firstNonEmpty(firstString(quota, "unit"), unit))
 		window.AggregationScope = "key"
 		window.AggregationKey = "sub2api:key-total"
-		if window.Total > 0 || window.Used > 0 || window.Remaining > 0 {
-			r.QuotaWindows = append(r.QuotaWindows, window)
+		r.QuotaWindows = append(r.QuotaWindows, window)
+		if !window.Unknown {
 			applyPrimaryWindow(&r, window)
 		}
 	}
@@ -109,7 +113,7 @@ func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
 			window := quotaWindowFromMap("速率限制", windowLabel, limit, unit)
 			window.AggregationScope = "key"
 			window.AggregationKey = "sub2api:rate:" + windowCode
-			window.ResetAt = firstString(limit, "reset_at")
+			window.ResetAt = normalizedTimestampForDisplay(firstValue(limit, "reset_at"))
 			r.QuotaWindows = append(r.QuotaWindows, window)
 		}
 	}
@@ -122,9 +126,6 @@ func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
 			}
 			used, usedOK := firstNumber(subscription, usedKey)
 			total, totalOK := numberValue(rawLimit)
-			if !usedOK {
-				used = 0
-			}
 			window := balance.QuotaWindow{
 				Group:            "订阅套餐",
 				Label:            label,
@@ -132,12 +133,32 @@ func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
 				AggregationScope: "account",
 				AggregationKey:   "sub2api:subscription:" + period,
 			}
-			if !totalOK || total <= 0 {
+			if !totalOK {
+				window.Unknown = true
+				window.Status = "接口未返回有效套餐上限"
+				r.QuotaWindows = append(r.QuotaWindows, window)
+				return
+			}
+			if total == 0 {
 				window.Unlimited = true
 				window.Status = "不限量"
 				r.QuotaWindows = append(r.QuotaWindows, window)
 				return
 			}
+			if total < 0 {
+				window.Unknown = true
+				window.Status = "接口返回了无效的负数套餐上限"
+				r.QuotaWindows = append(r.QuotaWindows, window)
+				return
+			}
+			if !usedOK {
+				window.Total = total
+				window.Unknown = true
+				window.Status = "接口未返回有效已用额度"
+				r.QuotaWindows = append(r.QuotaWindows, window)
+				return
+			}
+			used = minFloat(maxFloat(used, 0), total)
 			window.Used = used
 			window.Total = total
 			window.Remaining = maxFloat(total-used, 0)
@@ -154,7 +175,7 @@ func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
 		appendSubscriptionWindow("每日额度", "daily", "daily_usage_usd", "daily_limit_usd")
 		appendSubscriptionWindow("每周额度", "weekly", "weekly_usage_usd", "weekly_limit_usd")
 		appendSubscriptionWindow("每月额度", "monthly", "monthly_usage_usd", "monthly_limit_usd")
-		if expires := firstString(subscription, "expires_at"); expires != "" {
+		if expires := normalizedTimestampForDisplay(firstValue(subscription, "expires_at")); expires != "" {
 			r.ResetAt = expires
 			r.Extra["套餐到期"] = expires
 		}
@@ -180,7 +201,7 @@ func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
 			r.QuotaDisplay = fmt.Sprintf("当前可用 %.4f %s", remaining, unit)
 		}
 	}
-	if expires := firstString(payload, "expires_at"); expires != "" {
+	if expires := normalizedTimestampForDisplay(firstValue(payload, "expires_at")); expires != "" {
 		r.ResetAt = expires
 		r.Extra["密钥到期"] = expires
 	}
@@ -194,9 +215,42 @@ func parseSub2APIUsage(authID string, payload map[string]any) balance.Result {
 		r.Extra = nil
 	}
 	if len(r.QuotaWindows) == 0 && r.QuotaDisplay == "" && len(r.Extra) == 0 {
-		r.Error = "Sub2API 未返回可识别的额度或用量明细"
+		return errResult(authID, balance.ProviderLabel[balance.ProviderSub2API],
+			invalidResponseError("Sub2API 未返回可识别的额度或用量明细"))
 	}
 	return r
+}
+
+func sub2APIBusinessFailure(payload map[string]any, secrets ...string) error {
+	code, codePresent, codeSuccess := businessCodeValue(firstValue(payload, "code"))
+	message := firstString(payload, "message", "msg")
+	explicitFailure := codePresent && !codeSuccess
+	if success, exists := payload["success"].(bool); exists && !success {
+		explicitFailure = true
+	}
+
+	switch upstreamError := payload["error"].(type) {
+	case string:
+		if strings.TrimSpace(upstreamError) != "" {
+			explicitFailure = true
+			message = firstNonEmpty(message, upstreamError)
+		}
+	case map[string]any:
+		nestedCode, nestedPresent, nestedSuccess := businessCodeValue(firstValue(upstreamError, "code", "type"))
+		nestedMessage := firstString(upstreamError, "message", "msg", "detail", "reason")
+		if nestedPresent && !nestedSuccess || nestedMessage != "" {
+			explicitFailure = true
+			if code == "" || codeSuccess {
+				code = nestedCode
+			}
+			message = firstNonEmpty(message, nestedMessage)
+		}
+	}
+	if !explicitFailure {
+		return nil
+	}
+	message = firstNonEmpty(message, "Sub2API 返回业务错误 "+firstNonEmpty(code, "UNKNOWN"))
+	return providerBusinessError(code, message, secrets...)
 }
 
 func appendSub2APIHistoryDetails(result *balance.Result, payload map[string]any) {
@@ -294,27 +348,71 @@ func localizedSub2Status(status string) string {
 }
 
 func quotaWindowFromMap(group, label string, values map[string]any, unit string) balance.QuotaWindow {
-	total, _ := firstNumber(values, "limit", "total")
+	total, totalOK := firstNumber(values, "limit", "total")
 	used, usedOK := firstNumber(values, "used")
 	remaining, remainingOK := firstNumber(values, "remaining")
-	if !usedOK && remainingOK && total > 0 {
-		used = total - remaining
+	window := balance.QuotaWindow{
+		Group: group,
+		Label: label,
+		Unit:  unit,
 	}
-	if !remainingOK && total > 0 {
-		remaining = maxFloat(total-used, 0)
+	if !totalOK && !usedOK && !remainingOK {
+		window.Unknown = true
+		window.Status = "接口未返回额度数值"
+		return window
+	}
+	if !totalOK || total <= 0 {
+		window.Total = maxFloat(total, 0)
+		if usedOK {
+			window.Used = maxFloat(used, 0)
+		}
+		if remainingOK {
+			window.Remaining = maxFloat(remaining, 0)
+		}
+		window.Unknown = true
+		window.Status = "接口未返回有效额度上限"
+		return window
+	}
+	if !usedOK && !remainingOK {
+		window.Total = total
+		window.Unknown = true
+		window.Status = "接口未返回已用或剩余额度"
+		return window
+	}
+	if usedOK {
+		used = minFloat(maxFloat(used, 0), total)
+	}
+	if remainingOK {
+		remaining = minFloat(maxFloat(remaining, 0), total)
+	}
+	inconsistent := false
+	if usedOK && remainingOK {
+		remainingFromUsed := total - used
+		difference := remainingFromUsed - remaining
+		if difference < 0 {
+			difference = -difference
+		}
+		inconsistent = difference > maxFloat(0.01, total*0.001)
+		remaining = minFloat(remaining, remainingFromUsed)
+		used = total - remaining
+	} else if remainingOK {
+		used = total - remaining
+	} else {
+		remaining = total - used
 	}
 	usedPercent := percentFromValues(used, total)
-	return balance.QuotaWindow{
-		Group:            group,
-		Label:            label,
-		Used:             used,
-		Total:            total,
-		Remaining:        remaining,
-		Unit:             unit,
-		UsedPercent:      usedPercent,
-		RemainingPercent: clampPercent(100 - usedPercent),
-		CapacityPercent:  100,
+	window.Used = used
+	window.Total = total
+	window.Remaining = remaining
+	window.UsedPercent = usedPercent
+	window.RemainingPercent = clampPercent(100 - usedPercent)
+	window.CapacityPercent = 100
+	if remaining <= 0 {
+		window.Status = "已用尽"
+	} else if inconsistent {
+		window.Status = "接口额度字段不一致，已按较低剩余额度显示"
 	}
+	return window
 }
 
 func appendSub2APIUsageDetails(result *balance.Result, payload map[string]any) {

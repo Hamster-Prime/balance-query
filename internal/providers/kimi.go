@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -16,15 +17,43 @@ type KimiAPI struct {
 }
 
 type kimiBalanceResp struct {
-	Code    int    `json:"code"`
-	Status  bool   `json:"status"`
-	Message string `json:"message"`
-	Scode   string `json:"scode"`
-	Data    struct {
+	Code                int    `json:"code"`
+	Status              bool   `json:"status"`
+	Message             string `json:"message"`
+	Scode               string `json:"scode"`
+	HasAvailableBalance bool   `json:"-"`
+	HasVoucherBalance   bool   `json:"-"`
+	HasCashBalance      bool   `json:"-"`
+	Data                struct {
 		AvailableBalance float64 `json:"available_balance"`
 		VoucherBalance   float64 `json:"voucher_balance"`
 		CashBalance      float64 `json:"cash_balance"`
 	} `json:"data"`
+}
+
+func (response *kimiBalanceResp) UnmarshalJSON(data []byte) error {
+	type wireResponse kimiBalanceResp
+	var decoded wireResponse
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*response = kimiBalanceResp(decoded)
+	var envelope struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+	if raw, exists := envelope.Data["available_balance"]; exists && validJSONNumber(raw) {
+		response.HasAvailableBalance = true
+	}
+	if raw, exists := envelope.Data["voucher_balance"]; exists && validJSONNumber(raw) {
+		response.HasVoucherBalance = true
+	}
+	if raw, exists := envelope.Data["cash_balance"]; exists && validJSONNumber(raw) {
+		response.HasCashBalance = true
+	}
+	return nil
 }
 
 func (k KimiAPI) Fetch(authID, token, proxyURL string) balance.Result {
@@ -34,24 +63,32 @@ func (k KimiAPI) Fetch(authID, token, proxyURL string) balance.Result {
 		if derived, err := serviceEndpoint(k.BaseURL, "/v1/users/me/balance"); err == nil {
 			endpoint = derived
 		} else {
-			return errResult(authID, label, err.Error())
+			return errResult(authID, label, err)
 		}
 	}
 	var resp kimiBalanceResp
 	if err := getJSON(endpoint, token, proxyURL, &resp); err != nil {
-		return errResult(authID, label, err.Error())
+		return errResult(authID, label, err)
 	}
 	if resp.Code != 0 || !resp.Status {
 		message := firstNonEmpty(resp.Message, resp.Scode)
 		if message == "" {
 			message = fmt.Sprintf("余额接口返回业务错误（状态 %t，代码 %d）", resp.Status, resp.Code)
 		}
-		return errResult(authID, label, message)
+		businessCode := firstNonEmpty(resp.Scode, fmt.Sprintf("%d", resp.Code))
+		return errResult(authID, label, providerBusinessError(businessCode, message, token))
+	}
+	if !resp.HasAvailableBalance || !resp.HasVoucherBalance || !resp.HasCashBalance {
+		return errResult(authID, label, invalidResponseError("Kimi 余额接口未返回完整余额字段"))
 	}
 	return balance.Result{
-		Provider:     label,
-		AuthID:       authID,
-		QuotaDisplay: fmt.Sprintf("可用 %.4f 元", resp.Data.AvailableBalance),
+		Provider:         label,
+		AuthID:           authID,
+		BalanceAmount:    resp.Data.AvailableBalance,
+		BalanceCurrency:  "CNY",
+		HasBalanceAmount: true,
+		BalanceScope:     "account",
+		QuotaDisplay:     fmt.Sprintf("可用 %.4f 元", resp.Data.AvailableBalance),
 		Extra: map[string]string{
 			"现金余额": fmt.Sprintf("%.4f 元", resp.Data.CashBalance),
 			"赠金余额": fmt.Sprintf("%.4f 元", resp.Data.VoucherBalance),
@@ -84,7 +121,7 @@ func (KimiCode) Fetch(authID, token, proxyURL string) balance.Result {
 	label := balance.ProviderLabel[balance.ProviderKimiCode]
 	var resp kimiUsageResp
 	if err := getJSON("https://api.kimi.com/coding/v1/usages", token, proxyURL, &resp); err != nil {
-		return errResult(authID, label, err.Error())
+		return errResult(authID, label, err)
 	}
 	return parseKimiUsage(authID, normalizeKimiUsage(resp))
 }
@@ -93,24 +130,74 @@ func normalizeKimiUsage(resp kimiUsageResp) kimiUsageResp {
 	if resp.Data == nil {
 		return resp
 	}
-	if len(resp.Usage) == 0 {
+	if !hasKimiQuotaNumber(resp.Usage) && hasKimiQuotaNumber(resp.Data.Usage) {
 		resp.Usage = resp.Data.Usage
 	}
-	if len(resp.Limits) == 0 {
+	if !hasKimiLimitPayload(resp.Limits) && hasKimiLimitPayload(resp.Data.Limits) {
 		resp.Limits = resp.Data.Limits
 	}
-	if len(resp.BoosterWallet) == 0 {
+	if !hasKimiBoosterPayload(resp.BoosterWallet) && hasKimiBoosterPayload(resp.Data.BoosterWallet) {
 		resp.BoosterWallet = resp.Data.BoosterWallet
 	}
-	if resp.TotalQuota == nil {
+	if !hasKimiTotalQuota(resp.TotalQuota) && hasKimiTotalQuota(resp.Data.TotalQuota) {
 		resp.TotalQuota = resp.Data.TotalQuota
 	}
 	resp.Data = nil
 	return resp
 }
 
+func hasKimiUsagePayload(resp kimiUsageResp) bool {
+	if hasKimiQuotaNumber(resp.Usage) {
+		return true
+	}
+	if hasKimiTotalQuota(resp.TotalQuota) {
+		return true
+	}
+	if hasKimiLimitPayload(resp.Limits) {
+		return true
+	}
+	return hasKimiBoosterPayload(resp.BoosterWallet)
+}
+
+func hasKimiQuotaNumber(values map[string]any) bool {
+	_, totalOK := firstNumber(values, "limit")
+	_, usedOK := firstNumber(values, "used")
+	_, remainingOK := firstNumber(values, "remaining")
+	return totalOK || usedOK || remainingOK
+}
+
+func hasKimiTotalQuota(value any) bool {
+	values, ok := value.(map[string]any)
+	return ok && hasKimiQuotaNumber(values)
+}
+
+func hasKimiLimitPayload(limits []map[string]any) bool {
+	for _, item := range limits {
+		detail := item
+		if nested, ok := item["detail"].(map[string]any); ok {
+			detail = nested
+		}
+		if hasKimiQuotaNumber(detail) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasKimiBoosterPayload(wallet map[string]any) bool {
+	balanceValues, ok := wallet["balance"].(map[string]any)
+	if !ok || !strings.EqualFold(firstString(balanceValues, "type"), "BOOSTER") {
+		return false
+	}
+	total, totalOK := firstNumber(balanceValues, "amount")
+	return totalOK && total > 0
+}
+
 func parseKimiUsage(authID string, resp kimiUsageResp) balance.Result {
 	label := balance.ProviderLabel[balance.ProviderKimiCode]
+	if !hasKimiUsagePayload(resp) {
+		return errResult(authID, label, invalidResponseError("Kimi Code 官方接口未返回可识别的配额字段"))
+	}
 	r := balance.Result{
 		Provider:  label,
 		AuthID:    authID,
@@ -167,7 +254,7 @@ func parseKimiUsage(authID string, resp kimiUsageResp) balance.Result {
 		r.Extra = nil
 	}
 	if len(r.QuotaWindows) == 0 && len(r.Extra) == 0 {
-		return errResult(authID, label, "官方接口未返回可识别的配额明细")
+		return errResult(authID, label, invalidResponseError("官方接口未返回可识别的配额明细"))
 	}
 	return r
 }
@@ -228,9 +315,9 @@ func kimiQuotaWindowBase(values map[string]any, fallbackLabel string) balance.Qu
 		AggregationScope: "account",
 	}
 	window.AggregationKey = "kimi:" + strings.ToLower(strings.TrimSpace(window.Label))
-	window.ResetAt = firstString(values, "reset_at", "resetAt", "reset_time", "resetTime")
-	if resetIn, ok := firstNumber(values, "reset_in", "resetIn", "ttl", "window"); ok && resetIn > 0 {
-		window.ResetInSeconds = int64(resetIn)
+	window.ResetAt = normalizedTimestampForDisplay(firstValue(values, "reset_at", "resetAt", "reset_time", "resetTime"))
+	if resetIn, ok := int64Value(firstValue(values, "reset_in", "resetIn", "ttl", "window")); ok && resetIn > 0 {
+		window.ResetInSeconds = resetIn
 	}
 	return window
 }
@@ -240,25 +327,28 @@ func kimiWindowLabel(item, detail map[string]any, index int) string {
 		return localizedQuotaLabel(label)
 	}
 	window, _ := item["window"].(map[string]any)
-	duration, ok := firstNumber(window, "duration")
-	if !ok {
-		duration, ok = firstNumber(item, "duration")
+	durationValue := firstValue(window, "duration")
+	if durationValue == nil {
+		durationValue = firstValue(item, "duration")
 	}
-	if !ok {
-		duration, ok = firstNumber(detail, "duration")
+	if durationValue == nil {
+		durationValue = firstValue(detail, "duration")
 	}
+	duration, ok := int64Value(durationValue)
 	unit := strings.ToUpper(firstNonEmpty(firstString(window, "timeUnit"), firstString(item, "timeUnit"), firstString(detail, "timeUnit")))
 	if ok && duration > 0 {
-		seconds := int64(duration)
+		multiplier := int64(1)
 		switch {
 		case strings.Contains(unit, "MINUTE"):
-			seconds *= 60
+			multiplier = 60
 		case strings.Contains(unit, "HOUR"):
-			seconds *= 3600
+			multiplier = 3600
 		case strings.Contains(unit, "DAY"):
-			seconds *= 86400
+			multiplier = 86400
 		}
-		return durationWindowLabel(seconds)
+		if duration <= math.MaxInt64/multiplier {
+			return durationWindowLabel(duration * multiplier)
+		}
 	}
 	return fmt.Sprintf("其他配额 %d", index+1)
 }
@@ -356,9 +446,15 @@ func applyPrimaryWindow(result *balance.Result, window balance.QuotaWindow) {
 	}
 	result.ResetAt = window.ResetAt
 	if window.Total > 0 {
-		result.TokensTotal = int64(window.Total)
-		result.TokensUsed = int64(window.Used)
-		result.TokensRemaining = int64(window.Remaining)
+		if total, totalOK := int64Value(window.Total); totalOK {
+			if used, usedOK := int64Value(window.Used); usedOK {
+				if remaining, remainingOK := int64Value(window.Remaining); remainingOK {
+					result.TokensTotal = total
+					result.TokensUsed = used
+					result.TokensRemaining = remaining
+				}
+			}
+		}
 		result.QuotaDisplay = fmt.Sprintf("%s：剩余 %s / %s %s", window.Label,
 			formatQuotaNumber(window.Remaining), formatQuotaNumber(window.Total), window.Unit)
 	} else if window.RemainingPercent > 0 || window.UsedPercent > 0 {

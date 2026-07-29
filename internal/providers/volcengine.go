@@ -9,5 +9,6 @@ type VolcengineCodingPlan struct{}
 
 func (VolcengineCodingPlan) Fetch(authID, _, _ string) balance.Result {
 	return errResult(authID, balance.ProviderLabel[balance.ProviderVolcengine],
-		"火山引擎官方尚未公开 Coding Plan API Key 的配额查询接口，请在方舟控制台查看套餐用量")
+		newProviderError(balance.FailureUnsupported,
+			"火山引擎官方尚未公开 Coding Plan API Key 的配额查询接口，请在方舟控制台查看套餐用量", 0, "", nil))
 }

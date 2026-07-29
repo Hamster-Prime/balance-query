@@ -17,7 +17,8 @@ type MiniMaxAPI struct{}
 
 func (MiniMaxAPI) Fetch(authID, _, _ string) balance.Result {
 	return errResult(authID, balance.ProviderLabel[balance.ProviderMiniMaxAPI],
-		"官方未提供模型 API Key 的余额查询接口，请在 MiniMax 开放平台控制台查看按量余额")
+		newProviderError(balance.FailureUnsupported,
+			"官方未提供模型 API Key 的余额查询接口，请在 MiniMax 开放平台控制台查看按量余额", 0, "", nil))
 }
 
 type miniMaxQuotaResp struct {
@@ -25,12 +26,13 @@ type miniMaxQuotaResp struct {
 		StatusCode int    `json:"status_code"`
 		StatusMsg  string `json:"status_msg"`
 	} `json:"base_resp"`
-	HasStatusCode   bool                 `json:"-"`
-	ResponseError   string               `json:"-"`
-	PlanTitle       string               `json:"current_subscribe_title"`
-	PointsBalance   float64              `json:"points_balance"`
-	HasPointBalance bool                 `json:"-"`
-	ModelRemains    []miniMaxModelRemain `json:"model_remains"`
+	HasStatusCode     bool                 `json:"-"`
+	ResponseError     string               `json:"-"`
+	ResponseErrorCode string               `json:"-"`
+	PlanTitle         string               `json:"current_subscribe_title"`
+	PointsBalance     float64              `json:"points_balance"`
+	HasPointBalance   bool                 `json:"-"`
+	ModelRemains      []miniMaxModelRemain `json:"model_remains"`
 }
 
 type miniMaxModelRemain struct {
@@ -70,12 +72,15 @@ func (response *miniMaxQuotaResp) UnmarshalJSON(data []byte) error {
 	if _, exists := firstNumber(base, "status_code"); !exists {
 		base, _ = payload["base_resp"].(map[string]any)
 	}
-	if code, ok := firstNumber(base, "status_code"); ok {
-		response.BaseResp.StatusCode = int(code)
+	if code, ok := miniMaxInt(base, "status_code"); ok {
+		response.BaseResp.StatusCode = code
 		response.HasStatusCode = true
 	}
 	response.BaseResp.StatusMsg = firstString(base, "status_msg")
-	response.ResponseError = firstNonEmpty(firstString(nested, "message", "error"), firstString(payload, "message", "error"))
+	nestedError, nestedErrorCode := miniMaxErrorFields(nested)
+	topLevelError, topLevelErrorCode := miniMaxErrorFields(payload)
+	response.ResponseError = firstNonEmpty(nestedError, topLevelError)
+	response.ResponseErrorCode = firstNonEmpty(nestedErrorCode, topLevelErrorCode)
 	response.PlanTitle = firstString(nested, "current_subscribe_title")
 	if response.PlanTitle == "" {
 		response.PlanTitle = firstString(payload, "current_subscribe_title")
@@ -109,6 +114,22 @@ func (response *miniMaxQuotaResp) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func miniMaxErrorFields(values map[string]any) (message, code string) {
+	message = firstString(values, "message", "msg")
+	code = firstString(values, "error_code", "scode", "type")
+	switch upstreamError := values["error"].(type) {
+	case string:
+		message = firstNonEmpty(message, upstreamError)
+		if !strings.ContainsAny(strings.TrimSpace(upstreamError), " \t\r\n:：") {
+			code = firstNonEmpty(code, upstreamError)
+		}
+	case map[string]any:
+		message = firstNonEmpty(message, firstString(upstreamError, "message", "msg", "detail", "reason"))
+		code = firstNonEmpty(code, firstString(upstreamError, "code", "type"))
+	}
+	return message, code
+}
+
 func miniMaxModelRemainFromMap(values map[string]any) miniMaxModelRemain {
 	number := func(keys ...string) float64 {
 		value, _ := firstNumber(values, keys...)
@@ -116,6 +137,10 @@ func miniMaxModelRemainFromMap(values map[string]any) miniMaxModelRemain {
 	}
 	integer := func(keys ...string) int64 {
 		value, _ := int64Value(firstValue(values, keys...))
+		return value
+	}
+	status := func(keys ...string) int {
+		value, _ := miniMaxInt(values, keys...)
 		return value
 	}
 	pointer := func(keys ...string) *float64 {
@@ -140,16 +165,24 @@ func miniMaxModelRemainFromMap(values map[string]any) miniMaxModelRemain {
 		CurrentIntervalUsageCount:   currentUsageCount,
 		CurrentIntervalRemainingPct: pointer("current_interval_remaining_percent"),
 		IntervalBoostPermille:       pointer("interval_boost_permille", "interval_boost_permill"),
-		CurrentIntervalStatus:       int(number("current_interval_status")),
+		CurrentIntervalStatus:       status("current_interval_status"),
 		CurrentWeeklyTotalCount:     number("current_weekly_total_count"),
 		CurrentWeeklyUsageCount:     weeklyUsageCount,
 		CurrentWeeklyRemainingPct:   pointer("current_weekly_remaining_percent"),
-		CurrentWeeklyStatus:         int(number("current_weekly_status")),
+		CurrentWeeklyStatus:         status("current_weekly_status"),
 		WeeklyStartTime:             integer("weekly_start_time"),
 		WeeklyEndTime:               integer("weekly_end_time"),
 		WeeklyRemainsTime:           integer("weekly_remains_time"),
 		WeeklyBoostPermille:         pointer("weekly_boost_permille", "weekly_boost_permill"),
 	}
+}
+
+func miniMaxInt(values map[string]any, keys ...string) (int, bool) {
+	value, ok := int64Value(firstValue(values, keys...))
+	if !ok || value < -1<<31 || value > 1<<31-1 {
+		return 0, false
+	}
+	return int(value), true
 }
 
 func hasAnyMapKey(values map[string]any, keys ...string) bool {
@@ -164,33 +197,49 @@ func hasAnyMapKey(values map[string]any, keys ...string) bool {
 func fetchMiniMaxCoding(authID, token, proxyURL, apiBase, label string) balance.Result {
 	endpoint := apiBase + "/v1/token_plan/remains"
 	if strings.TrimSpace(token) == "" {
-		return errResult(authID, label, "接口密钥为空")
+		return errResult(authID, label, newProviderError(balance.FailureAuthentication, "接口密钥为空", 0, "", nil))
 	}
 
-	// MiniMax's official CLI probes both credential styles. A key can receive
-	// HTTP 200 with a non-zero business status under the wrong style, so only a
-	// fully successful business response stops the probe.
+	// MiniMax accepts both credential styles for some key types. Only retry with
+	// the alternate style after a classified authentication rejection; retrying
+	// on timeouts, rate limits, or service failures doubles load and hides the
+	// original diagnostic.
 	authHeaders := []map[string]string{
 		{"Authorization": "Bearer " + token},
 		{"x-api-key": token},
 	}
-	lastMessage := "MiniMax 配额查询失败"
-	for _, headers := range authHeaders {
+	var lastErr error = invalidResponseError("MiniMax 配额查询失败")
+	for index, headers := range authHeaders {
 		var resp miniMaxQuotaResp
 		if err := getJSONWithHeaders(endpoint, proxyURL, headers, &resp); err != nil {
-			lastMessage = err.Error()
-			continue
+			lastErr = err
+			if index == 0 && isAuthenticationFailure(err) {
+				continue
+			}
+			return errResult(authID, label, err)
 		}
 		if resp.BaseResp.StatusCode != 0 {
-			lastMessage = strings.TrimSpace(resp.BaseResp.StatusMsg)
-			if lastMessage == "" {
-				lastMessage = fmt.Sprintf("MiniMax 配额接口返回业务错误 %d", resp.BaseResp.StatusCode)
+			message := strings.TrimSpace(resp.BaseResp.StatusMsg)
+			if message == "" {
+				message = fmt.Sprintf("MiniMax 配额接口返回业务错误 %d", resp.BaseResp.StatusCode)
 			}
-			continue
+			lastErr = providerBusinessError(fmt.Sprintf("%d", resp.BaseResp.StatusCode), message, token)
+			if index == 0 && isAuthenticationFailure(lastErr) {
+				continue
+			}
+			return errResult(authID, label, lastErr)
 		}
 		if !resp.HasStatusCode && len(resp.ModelRemains) == 0 {
-			lastMessage = firstNonEmpty(strings.TrimSpace(resp.ResponseError), "MiniMax 配额接口未返回有效业务状态")
-			continue
+			message := firstNonEmpty(strings.TrimSpace(resp.ResponseError), "MiniMax 配额接口未返回有效业务状态")
+			if resp.ResponseError != "" {
+				lastErr = providerBusinessError(resp.ResponseErrorCode, message, token)
+			} else {
+				lastErr = invalidResponseError(message)
+			}
+			if index == 0 && isAuthenticationFailure(lastErr) {
+				continue
+			}
+			return errResult(authID, label, lastErr)
 		}
 		if len(resp.ModelRemains) == 0 {
 			result := parseMiniMaxQuota(authID, label, resp)
@@ -205,7 +254,7 @@ func fetchMiniMaxCoding(authID, token, proxyURL, apiBase, label string) balance.
 		}
 		return parseMiniMaxQuota(authID, label, resp)
 	}
-	return errResult(authID, label, lastMessage)
+	return errResult(authID, label, lastErr)
 }
 
 func parseMiniMaxQuota(authID, label string, resp miniMaxQuotaResp) balance.Result {

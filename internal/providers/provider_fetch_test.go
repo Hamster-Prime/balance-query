@@ -5,7 +5,11 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/Hamster-Prime/balance-query/internal/balance"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -17,7 +21,7 @@ func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error)
 func useTestHTTPClient(t *testing.T, fn roundTripFunc) {
 	t.Helper()
 	original := httpClient
-	httpClient = &http.Client{Transport: fn}
+	httpClient = &http.Client{Transport: fn, CheckRedirect: providerRedirectPolicy}
 	t.Cleanup(func() { httpClient = original })
 }
 
@@ -326,7 +330,8 @@ func TestDeepSeekFetchPreservesZeroUSDBalance(t *testing.T) {
 	if result.Error != "" {
 		t.Fatalf("DeepSeek.Fetch() error = %q", result.Error)
 	}
-	if !result.HasBalance || result.BalanceUSD != 0 || result.BalanceScope != "account" {
+	if !result.HasBalance || result.BalanceUSD != 0 || !result.HasBalanceAmount || result.BalanceAmount != 0 ||
+		result.BalanceCurrency != "USD" || result.BalanceScope != "account" {
 		t.Fatalf("zero USD balance metadata = %#v", result)
 	}
 	raw, err := json.Marshal(result)
@@ -356,6 +361,9 @@ func TestKimiAPIFetchKeepsCNYOutOfUSDBalanceField(t *testing.T) {
 	if result.BalanceUSD != 0 {
 		t.Fatalf("BalanceUSD = %v, CNY must not be stored as USD", result.BalanceUSD)
 	}
+	if !result.HasBalanceAmount || result.BalanceAmount != 12.5 || result.BalanceCurrency != "CNY" || result.BalanceScope != "account" {
+		t.Fatalf("typed CNY balance = %#v", result)
+	}
 	if result.QuotaDisplay != "可用 12.5000 元" {
 		t.Fatalf("quota display = %q", result.QuotaDisplay)
 	}
@@ -380,6 +388,7 @@ func TestKimiAPIFetchRejectsAnyBusinessFailureSignal(t *testing.T) {
 
 func TestClaudeAdminFetchAggregatesUsageAndCosts(t *testing.T) {
 	seen := map[string]bool{}
+	var seenMu sync.Mutex
 	useTestHTTPClient(t, func(r *http.Request) (*http.Response, error) {
 		if got := r.Header.Get("x-api-key"); got != "sk-ant-admin-test" {
 			t.Errorf("x-api-key = %q", got)
@@ -393,7 +402,9 @@ func TestClaudeAdminFetchAggregatesUsageAndCosts(t *testing.T) {
 		if r.URL.Query().Get("starting_at") == "" || r.URL.Query().Get("ending_at") == "" {
 			t.Errorf("missing 30-day time range: %s", r.URL.RawQuery)
 		}
+		seenMu.Lock()
 		seen[r.URL.Path] = true
+		seenMu.Unlock()
 		switch r.URL.Path {
 		case "/custom/v1/organizations/usage_report/messages":
 			if got := r.URL.Query()["group_by[]"]; len(got) != 1 || got[0] != "model" {
@@ -414,7 +425,11 @@ func TestClaudeAdminFetchAggregatesUsageAndCosts(t *testing.T) {
 	if result.Error != "" {
 		t.Fatalf("ClaudeAdmin.Fetch() error = %q", result.Error)
 	}
-	if !seen["/custom/v1/organizations/usage_report/messages"] || !seen["/custom/v1/organizations/cost_report"] {
+	seenMu.Lock()
+	seenUsage := seen["/custom/v1/organizations/usage_report/messages"]
+	seenCost := seen["/custom/v1/organizations/cost_report"]
+	seenMu.Unlock()
+	if !seenUsage || !seenCost {
 		t.Fatalf("requested paths = %#v", seen)
 	}
 	if result.QuotaDisplay != "近 30 天费用 1.73 USD" {
@@ -455,6 +470,52 @@ func TestClaudeAdminFetchAllowsPartialSuccess(t *testing.T) {
 	if !strings.Contains(result.Extra["费用查询"], "未成功") {
 		t.Fatalf("cost query detail = %q", result.Extra["费用查询"])
 	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("warnings = %#v", result.Warnings)
+	}
+	warning := result.Warnings[0]
+	if warning.Kind != balance.FailurePermission || warning.HTTPStatus != http.StatusForbidden || !strings.Contains(warning.Title, "费用查询") {
+		t.Fatalf("warning = %#v", warning)
+	}
+}
+
+func TestClaudeAdminFetchesUsageAndCostConcurrently(t *testing.T) {
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseRequests := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseRequests()
+
+	useTestHTTPClient(t, func(r *http.Request) (*http.Response, error) {
+		started <- r.URL.Path
+		<-release
+		if strings.HasSuffix(r.URL.Path, "/usage_report/messages") {
+			return jsonResponse(`{"data":[],"has_more":false}`), nil
+		}
+		return jsonResponse(`{"data":[],"has_more":false}`), nil
+	})
+
+	done := make(chan balance.Result, 1)
+	go func() {
+		done <- (ClaudeAdmin{BaseURL: "https://api.anthropic.com"}).Fetch("claude", "sk-ant-admin-test", "")
+	}()
+
+	for requestCount := 0; requestCount < 2; requestCount++ {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("usage and cost requests did not start concurrently")
+		}
+	}
+	releaseRequests()
+	select {
+	case result := <-done:
+		if result.Error != "" {
+			t.Fatalf("result error = %q", result.Error)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ClaudeAdmin.Fetch did not finish")
+	}
 }
 
 func TestClaudeAdminFetchFailsOnlyWhenBothEndpointsFail(t *testing.T) {
@@ -465,6 +526,9 @@ func TestClaudeAdminFetchFailsOnlyWhenBothEndpointsFail(t *testing.T) {
 	result := (ClaudeAdmin{BaseURL: "https://api.anthropic.com"}).Fetch("claude", "standard-key", "")
 	if result.Error == "" || !strings.Contains(result.Error, "用量查询失败") || !strings.Contains(result.Error, "费用查询失败") {
 		t.Fatalf("result error = %q", result.Error)
+	}
+	if result.Failure == nil || result.Failure.Kind != balance.FailureAuthentication || result.Failure.HTTPStatus != http.StatusUnauthorized {
+		t.Fatalf("result failure = %#v", result.Failure)
 	}
 }
 

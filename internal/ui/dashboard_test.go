@@ -140,7 +140,7 @@ func TestRenderDashboardFailureCardsStayCompactWithoutDetailContent(t *testing.T
 	for name, pattern := range map[string]string{
 		`flat overview row`:        `(?s)\.result-overview\{[^}]*display:flex[^}]*flex-wrap:wrap[^}]*margin-top:`,
 		`marginless primary value`: `(?s)\.quota-main\{[^}]*margin:0`,
-		`no failed detail toggle`:  `var\s+detailKeys\s*=\s*!result\.error\s*\?\s*extraDetailKeys\(result\)\s*:\s*\[\]`,
+		`no failed detail toggle`:  `var\s+detailKeys\s*=\s*!failed\s*\?\s*extraDetailKeys\(result\)\s*:\s*\[\]`,
 	} {
 		if !regexp.MustCompile(pattern).MatchString(page) {
 			t.Fatalf("dashboard is missing compact failed-card behavior %s (%s)", name, pattern)
@@ -161,7 +161,7 @@ func TestRenderDashboardUsesSingleColumnCollapsibleAccountDetails(t *testing.T) 
 		`repeat(auto-fit,minmax(200px,1fr))`,
 		`account-detail-collapse`,
 		`grid-template-rows:0fr`,
-		`var detailKeys = !result.error ? extraDetailKeys(result) : [];`,
+		`var detailKeys = !failed ? extraDetailKeys(result) : [];`,
 		`detailButton.setAttribute("aria-expanded", "false")`,
 		`detailButton.setAttribute("aria-controls", detailsID)`,
 		`collapse.setAttribute("aria-hidden", "true")`,
@@ -549,6 +549,69 @@ func TestRenderDashboardDoesNotInterpolateCredentials(t *testing.T) {
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("dashboard is missing credential-safe rendering marker %q", want)
+		}
+	}
+}
+
+func TestRenderDashboardRestoresSafeSessionSnapshotsAndCoordinatesRequests(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, want := range []string{
+		`var QUERY_BATCH_SIZE = 128;`,
+		`var QUERY_BATCH_MAX_BYTES = 900 * 1024;`,
+		`var RESULT_SNAPSHOT_KEY = "balance-query-results::v1";`,
+		`function fallbackSHA256(value)`,
+		`function sha256Hex(value)`,
+		`function sameOriginSessionStorage()`,
+		`function persistResultSnapshot(accounts, results, ttlSeconds, credentials)`,
+		`function readResultSnapshot(accounts, ttlSeconds, credentials)`,
+		`(!Array.isArray(result.warnings) || result.warnings.length === 0)`,
+		`if (snapshot.fresh && snapshot.complete) return;`,
+		`if (generation !== state.loadGeneration`,
+		`if (generation !== state.queryGeneration`,
+		`saveGeneration: 0`,
+		`function cancelSaveRequests()`,
+		`var loadGeneration = state.loadGeneration;`,
+		`var generation = ++state.saveGeneration;`,
+		`signal: controller.signal`,
+		`generation !== state.saveGeneration || loadGeneration !== state.loadGeneration`,
+		`cancelSaveRequests();`,
+		`function accountBatches(accounts)`,
+		`function queryTimeoutForBatch(accountCount)`,
+		`responseErrorMessage(data, response.status, requestCredentials)`,
+		`optionalApiFetch("/proxy-url"`,
+		`draftTTL: String(INITIAL_TTL)`,
+		`var nextMappings = Object.assign({}, state.config.provider_mappings);`,
+		`if (!primaryChanged && !legacyChanged) return;`,
+		`if (mappingChanged) cancelQueryRequests();`,
+		`mapping_key: resolvedMapping.key`,
+		`var keyCount = buildAccounts().length;`,
+		`function latestFetchedAt(results)`,
+		`failure.title`,
+		`failure.reason`,
+		`failure.suggestion`,
+		`failure.retry_after_seconds`,
+		`建议 " + Math.ceil(retryAfter) + " 秒后重试`,
+		`failureKindLabel(failure.kind)`,
+		`function resultWarnings(result)`,
+		`var warningItems = failed ? [] : resultWarnings(result);`,
+		`var detailKeys = !failed ? extraDetailKeys(result) : [];`,
+		`partial ? "部分数据"`,
+		`renderResultWarnings(card, warningItems);`,
+		`"部分数据未获取（" + warnings.length + " 项）"`,
+		`"查询成功 · " + partialCount + " 个部分数据"`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing snapshot/request-state marker %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		`localStorage.setItem(RESULT_SNAPSHOT_KEY`,
+		`state.results = [];
+      renderResults();
+      toast(error`,
+	} {
+		if strings.Contains(page, unwanted) {
+			t.Fatalf("dashboard contains unsafe or destructive refresh behavior %q", unwanted)
 		}
 	}
 }

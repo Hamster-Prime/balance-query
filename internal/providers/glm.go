@@ -1,7 +1,9 @@
 package providers
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -16,11 +18,12 @@ type GLMZai struct{}
 type GLMZhipu struct{}
 
 type glmQuotaResp struct {
-	Code    any    `json:"code"`
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-	Msg     string `json:"msg"`
-	Data    struct {
+	Code       any    `json:"code"`
+	Success    bool   `json:"success"`
+	HasSuccess bool   `json:"-"`
+	Message    string `json:"message"`
+	Msg        string `json:"msg"`
+	Data       struct {
 		Level       string         `json:"level"`
 		PlanName    string         `json:"planName"`
 		Plan        string         `json:"plan"`
@@ -28,6 +31,21 @@ type glmQuotaResp struct {
 		PackageName string         `json:"packageName"`
 		Limits      []glmLimitItem `json:"limits"`
 	} `json:"data"`
+}
+
+func (response *glmQuotaResp) UnmarshalJSON(data []byte) error {
+	type wireResponse glmQuotaResp
+	var decoded wireResponse
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*response = glmQuotaResp(decoded)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	_, response.HasSuccess = fields["success"]
+	return nil
 }
 
 type glmDetailResp struct {
@@ -52,6 +70,9 @@ type glmLimitItem struct {
 }
 
 func fetchGLMQuota(authID, token, proxyURL, baseURL, label string) balance.Result {
+	if strings.TrimSpace(token) == "" {
+		return errResult(authID, label, newProviderError(balance.FailureAuthentication, "接口密钥为空", 0, "", nil))
+	}
 	startTime, endTime := glmUsageRange(time.Now())
 	query := "?startTime=" + url.QueryEscape(startTime) + "&endTime=" + url.QueryEscape(endTime)
 
@@ -74,18 +95,17 @@ func fetchGLMQuota(authID, token, proxyURL, baseURL, label string) balance.Resul
 	}()
 	wait.Wait()
 	if quotaErr != nil {
-		return errResult(authID, label, quotaErr.Error())
+		return errResult(authID, label, quotaErr)
 	}
-	if code, ok := numberValue(resp.Code); ok && code != 0 && code != 200 {
-		return errResult(authID, label, firstNonEmpty(resp.Message, resp.Msg,
-			fmt.Sprintf("GLM 配额接口返回业务错误 %.0f", code)))
+	if failure := glmQuotaBusinessFailure(resp, token); failure != nil {
+		return errResult(authID, label, failure)
 	}
 	if len(resp.Data.Limits) == 0 {
 		message := firstNonEmpty(resp.Message, resp.Msg)
 		if message == "" {
 			message = "官方接口未返回 Coding Plan 配额数据"
 		}
-		return errResult(authID, label, message)
+		return errResult(authID, label, invalidResponseError(message))
 	}
 
 	r := balance.Result{
@@ -118,20 +138,39 @@ func fetchGLMQuota(authID, token, proxyURL, baseURL, label string) balance.Resul
 		}
 	}
 	appendGLMWeeklyUnlimitedIfMissing(&r, resp.Data.Limits)
-	if modelErr == nil && glmDetailSuccess(modelResp) {
-		appendGLMModelDetails(&r, modelResp.Data)
-	} else {
-		r.Extra["24 小时模型统计"] = "暂不可用"
+	modelFailure := glmDetailFailure("24 小时模型统计", modelResp, modelErr, token)
+	if modelFailure == nil && !appendGLMModelDetails(&r, modelResp.Data) {
+		modelFailure = invalidResponseError("GLM 24 小时模型统计接口未返回可识别数据")
 	}
-	if toolErr == nil && glmDetailSuccess(toolResp) {
-		appendGLMToolDetails(&r, toolResp.Data)
-	} else {
+	if modelFailure != nil {
+		r.Extra["24 小时模型统计"] = "暂不可用"
+		r.Warnings = append(r.Warnings, providerWarning("24 小时模型统计", modelFailure))
+	}
+	toolFailure := glmDetailFailure("24 小时工具统计", toolResp, toolErr, token)
+	if toolFailure == nil && !appendGLMToolDetails(&r, toolResp.Data) {
+		toolFailure = invalidResponseError("GLM 24 小时工具统计接口未返回可识别数据")
+	}
+	if toolFailure != nil {
 		r.Extra["24 小时工具统计"] = "暂不可用"
+		r.Warnings = append(r.Warnings, providerWarning("24 小时工具统计", toolFailure))
 	}
 	if len(r.Extra) == 0 {
 		r.Extra = nil
 	}
 	return r
+}
+
+func glmQuotaBusinessFailure(response glmQuotaResp, secrets ...string) error {
+	code, codePresent, codeSuccess := businessCodeValue(response.Code)
+	if codePresent && !codeSuccess {
+		message := firstNonEmpty(response.Message, response.Msg, "GLM 配额接口返回业务错误 "+code)
+		return providerBusinessError(code, message, secrets...)
+	}
+	if response.HasSuccess && !response.Success {
+		message := firstNonEmpty(response.Message, response.Msg, "GLM 配额接口返回失败状态")
+		return providerBusinessError(code, message, secrets...)
+	}
+	return nil
 }
 
 // Some Z.AI Coding Plan accounts have a legacy subscription benefit with no
@@ -178,7 +217,7 @@ func fetchGLMEndpoint(endpoint, token, proxyURL string, dest any) error {
 		"Authorization":   token,
 		"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 	}, dest)
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "http 401") {
+	if err == nil || !isHTTPStatusError(err, http.StatusUnauthorized) || !isAuthenticationFailure(err) {
 		return err
 	}
 	return getJSONWithHeaders(endpoint, proxyURL, map[string]string{
@@ -196,23 +235,44 @@ func glmUsageRange(now time.Time) (string, string) {
 }
 
 func glmDetailSuccess(response glmDetailResp) bool {
-	if response.Success {
-		return true
+	_, present, success := businessCodeValue(response.Code)
+	if present {
+		return success
 	}
-	code, ok := numberValue(response.Code)
-	return ok && (code == 0 || code == 200)
+	return response.Success
 }
 
-func appendGLMModelDetails(result *balance.Result, data map[string]any) {
-	if result == nil || len(data) == 0 {
-		return
+func glmDetailFailure(section string, response glmDetailResp, requestErr error, secrets ...string) error {
+	if requestErr != nil {
+		return requestErr
 	}
+	if glmDetailSuccess(response) {
+		return nil
+	}
+	code, _, _ := businessCodeValue(response.Code)
+	message := firstNonEmpty(response.Message, response.Msg)
+	if code == "" && message == "" {
+		return invalidResponseError("GLM " + section + "接口未返回成功状态")
+	}
+	if message == "" {
+		message = "GLM " + section + "接口返回业务错误 " + code
+	}
+	return providerBusinessError(code, message, secrets...)
+}
+
+func appendGLMModelDetails(result *balance.Result, data map[string]any) bool {
+	if result == nil || len(data) == 0 {
+		return false
+	}
+	recognized := false
 	totalUsage, _ := data["totalUsage"].(map[string]any)
 	if calls, ok := firstNumber(totalUsage, "totalModelCallCount"); ok {
 		result.Extra["24 小时模型调用"] = fmt.Sprintf("%.0f 次", calls)
+		recognized = true
 	}
 	if tokens, ok := firstNumber(totalUsage, "totalTokensUsage"); ok {
 		result.Extra["24 小时令牌用量"] = fmt.Sprintf("%.0f", tokens)
+		recognized = true
 	}
 	summaries := firstSummaryList(data, totalUsage, "modelSummaryList")
 	for _, summary := range summaries {
@@ -222,13 +282,16 @@ func appendGLMModelDetails(result *balance.Result, data map[string]any) {
 			continue
 		}
 		result.Extra["24 小时 "+name] = fmt.Sprintf("%.0f 令牌", tokens)
+		recognized = true
 	}
+	return recognized
 }
 
-func appendGLMToolDetails(result *balance.Result, data map[string]any) {
+func appendGLMToolDetails(result *balance.Result, data map[string]any) bool {
 	if result == nil || len(data) == 0 {
-		return
+		return false
 	}
+	recognized := false
 	totalUsage, _ := data["totalUsage"].(map[string]any)
 	for _, item := range []struct {
 		key   string
@@ -241,6 +304,7 @@ func appendGLMToolDetails(result *balance.Result, data map[string]any) {
 	} {
 		if count, ok := firstNumber(totalUsage, item.key); ok {
 			result.Extra[item.label] = fmt.Sprintf("%.0f 次", count)
+			recognized = true
 		}
 	}
 	summaries := firstSummaryList(data, totalUsage, "toolSummaryList")
@@ -251,7 +315,9 @@ func appendGLMToolDetails(result *balance.Result, data map[string]any) {
 			continue
 		}
 		result.Extra["24 小时 "+name] = fmt.Sprintf("%.0f 次", count)
+		recognized = true
 	}
+	return recognized
 }
 
 func firstSummaryList(data, totalUsage map[string]any, key string) []map[string]any {

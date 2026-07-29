@@ -332,7 +332,7 @@ func TestParseSub2APISubscriptionWindows(t *testing.T) {
 	}
 }
 
-func TestParseSub2APISubscriptionNullAndZeroLimitsAreUnlimited(t *testing.T) {
+func TestParseSub2APISubscriptionNullLimitIsUnknownAndZeroIsUnlimited(t *testing.T) {
 	result := parseSub2APIUsage("sub", map[string]any{
 		"mode": "unrestricted",
 		"unit": "USD",
@@ -346,8 +346,8 @@ func TestParseSub2APISubscriptionNullAndZeroLimitsAreUnlimited(t *testing.T) {
 	if len(result.QuotaWindows) != 3 {
 		t.Fatalf("subscription windows = %d, want 3: %#v", len(result.QuotaWindows), result.QuotaWindows)
 	}
-	if !result.QuotaWindows[1].Unlimited || !result.QuotaWindows[2].Unlimited {
-		t.Fatalf("null/zero subscription limits should be unlimited: %#v", result.QuotaWindows)
+	if !result.QuotaWindows[1].Unknown || result.QuotaWindows[1].Unlimited || !result.QuotaWindows[2].Unlimited {
+		t.Fatalf("null limit should be unknown and zero should be unlimited: %#v", result.QuotaWindows)
 	}
 	if result.QuotaWindows[1].AggregationKey != "sub2api:subscription:weekly" {
 		t.Fatalf("weekly aggregation key = %q", result.QuotaWindows[1].AggregationKey)

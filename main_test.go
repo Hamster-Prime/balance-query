@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -101,6 +103,41 @@ provider_mappings:
 	}
 }
 
+func TestApplyRuntimeConfigEmptyYAMLResetsState(t *testing.T) {
+	previousState := snapshotState()
+	t.Cleanup(func() {
+		stateMu.Lock()
+		state = previousState
+		stateMu.Unlock()
+		resultCache.SetTTL(time.Duration(previousState.CacheTTLSeconds) * time.Second)
+		resultCache.Flush()
+	})
+
+	stateMu.Lock()
+	state = balance.PluginConfig{
+		CacheTTLSeconds:  900,
+		ProviderMappings: map[string]balance.ProviderType{"stale": balance.ProviderNewAPI},
+	}
+	stateMu.Unlock()
+	resultCache.SetTTL(900 * time.Second)
+	resultCache.Set("stale", balance.Result{Provider: "stale"})
+
+	raw, err := json.Marshal(lifecycleRequest{ConfigYAML: []byte(" \n\t")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := applyRuntimeConfig(raw); err != nil {
+		t.Fatalf("applyRuntimeConfig() error = %v", err)
+	}
+	got := snapshotState()
+	if got.CacheTTLSeconds != defaultTTLSeconds || len(got.ProviderMappings) != 0 {
+		t.Fatalf("state after empty config = %#v", got)
+	}
+	if _, ok := resultCache.Get("stale"); ok {
+		t.Fatal("empty config did not flush stale cache")
+	}
+}
+
 func TestManagementRegisterSeparatesAuthenticatedQueryAndResource(t *testing.T) {
 	raw, err := handleMethod("management.register", nil)
 	if err != nil {
@@ -167,12 +204,11 @@ func TestValidateAccountQuery(t *testing.T) {
 		{name: "explicit direct proxy", mutate: func(q *accountQuery) { q.ProxyURL = "direct" }},
 		{name: "explicit none proxy", mutate: func(q *accountQuery) { q.ProxyURL = "none" }},
 		{
-			name: "official provider also requires source URL",
+			name: "official provider can use its default URL",
 			mutate: func(q *accountQuery) {
 				q.QueryType = balance.ProviderDeepSeek
 				q.BaseURL = ""
 			},
-			wantError: "HTTP(S) URL",
 		},
 	}
 
@@ -191,6 +227,44 @@ func TestValidateAccountQuery(t *testing.T) {
 				t.Fatalf("validateAccountQuery() error = %v, want containing %q", err, test.wantError)
 			}
 		})
+	}
+}
+
+func TestResolveConfiguredQueryTypeRejectsStalePage(t *testing.T) {
+	previousState := snapshotState()
+	t.Cleanup(func() {
+		stateMu.Lock()
+		state = previousState
+		stateMu.Unlock()
+	})
+	stateMu.Lock()
+	state.ProviderMappings = map[string]balance.ProviderType{
+		"legacy-key": balance.ProviderDeepSeek,
+	}
+	stateMu.Unlock()
+
+	matching := accountQuery{
+		ProviderKey: "new-display-key",
+		MappingKey:  "legacy-key",
+		QueryType:   balance.ProviderDeepSeek,
+	}
+	if err := resolveConfiguredQueryType(&matching); err != nil {
+		t.Fatalf("resolveConfiguredQueryType() error = %v", err)
+	}
+	if matching.QueryType != balance.ProviderDeepSeek || matching.MappingKey != "legacy-key" {
+		t.Fatalf("resolved account = %#v", matching)
+	}
+
+	stale := matching
+	stale.QueryType = balance.ProviderNewAPI
+	if err := resolveConfiguredQueryType(&stale); err == nil || !strings.Contains(err.Error(), "其他页面修改") {
+		t.Fatalf("stale mapping error = %v", err)
+	}
+
+	missing := matching
+	missing.MappingKey = "unknown"
+	if err := resolveConfiguredQueryType(&missing); err == nil || !strings.Contains(err.Error(), "没有此提供商映射") {
+		t.Fatalf("missing mapping error = %v", err)
 	}
 }
 
@@ -224,6 +298,153 @@ func TestFetchAccountsPreservesProviderKeyOnCacheHit(t *testing.T) {
 	}
 	if results[0].AccountName != account.AccountName || results[0].BaseURL != account.BaseURL {
 		t.Fatalf("cached display metadata was not refreshed: %#v", results[0])
+	}
+}
+
+func TestFetchAccountsCoalescesConcurrentIdenticalUpstreamQueries(t *testing.T) {
+	cleanupCacheForTest(t, time.Hour)
+	var usageRequests atomic.Int32
+	useFetcherForTest(t, fetcherFunc(func(authID, _, _ string) balance.Result {
+		usageRequests.Add(1)
+		time.Sleep(40 * time.Millisecond)
+		return balance.Result{Provider: "New API", AuthID: authID, QuotaDisplay: "可用 80 USD", FetchedAt: time.Now()}
+	}))
+
+	first := testNewAPIAccount("https://new-api.example/v1")
+	second := first
+	second.ID = "another-auth-id"
+	second.ProviderKey = "another-display-provider"
+	second.AccountName = "另一个显示名称"
+
+	var wait sync.WaitGroup
+	results := make([][]balance.Result, 2)
+	for index, account := range []accountQuery{first, second} {
+		wait.Add(1)
+		go func(i int, item accountQuery) {
+			defer wait.Done()
+			results[i] = fetchAccounts([]accountQuery{item}, false)
+		}(index, account)
+	}
+	wait.Wait()
+	if got := usageRequests.Load(); got != 1 {
+		t.Fatalf("usage endpoint requests = %d, want 1", got)
+	}
+	for index, result := range results {
+		if len(result) != 1 || result[0].Error != "" {
+			t.Fatalf("result %d = %#v", index, result)
+		}
+	}
+	if results[1][0].ProviderKey != second.ProviderKey || results[1][0].AuthID != second.ID {
+		t.Fatalf("coalesced result kept another account's display metadata: %#v", results[1][0])
+	}
+}
+
+func TestRefreshFailurePreservesLastSuccessfulCache(t *testing.T) {
+	cleanupCacheForTest(t, time.Hour)
+	useFetcherForTest(t, fetcherFunc(func(authID, _, _ string) balance.Result {
+		return balance.Result{Provider: "New API", AuthID: authID, Error: "余额接口返回 HTTP 503", FetchedAt: time.Now()}
+	}))
+	account := testNewAPIAccount("https://new-api.example/v1")
+	cached := balance.Result{Provider: "New API", QuotaDisplay: "上次成功", FetchedAt: time.Now()}
+	resultCache.Set(accountCacheKey(account), cached)
+
+	refreshed := fetchAccounts([]accountQuery{account}, true)
+	if len(refreshed) != 1 || refreshed[0].Error == "" {
+		t.Fatalf("refresh result = %#v, want current failure", refreshed)
+	}
+	stillCached, ok := resultCache.Get(accountCacheKey(account))
+	if !ok || stillCached.Error != "" || stillCached.QuotaDisplay != "上次成功" {
+		t.Fatalf("successful cache was replaced by refresh failure: %#v, ok=%v", stillCached, ok)
+	}
+}
+
+func TestFailureResultUsesShortNegativeCache(t *testing.T) {
+	cleanupCacheForTest(t, time.Hour)
+	var requests atomic.Int32
+	useFetcherForTest(t, fetcherFunc(func(authID, _, _ string) balance.Result {
+		requests.Add(1)
+		return balance.Result{Provider: "New API", AuthID: authID, Error: "余额接口返回 HTTP 401：invalid api key", FetchedAt: time.Now()}
+	}))
+	account := testNewAPIAccount("https://new-api.example/v1")
+
+	first := fetchAccounts([]accountQuery{account}, false)
+	second := fetchAccounts([]accountQuery{account}, false)
+	if len(first) != 1 || first[0].Failure == nil || first[0].Failure.Kind != balance.FailureAuthentication {
+		t.Fatalf("first failure = %#v", first)
+	}
+	if len(second) != 1 || second[0].Error == "" {
+		t.Fatalf("cached failure = %#v", second)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("upstream requests = %d, want 1 due to negative cache", got)
+	}
+}
+
+func TestPartialWarningUsesShortCache(t *testing.T) {
+	cleanupCacheForTest(t, time.Hour)
+	var requests atomic.Int32
+	useFetcherForTest(t, fetcherFunc(func(authID, _, _ string) balance.Result {
+		requests.Add(1)
+		return balance.Result{
+			Provider: "Claude", AuthID: authID, QuotaDisplay: "近 30 天使用 100 令牌",
+			Warnings: []balance.FailureInfo{{
+				Kind: balance.FailurePermission, Title: "费用查询 · 权限不足", Reason: "费用接口无权限",
+			}},
+			FetchedAt: time.Now(),
+		}
+	}))
+	account := testNewAPIAccount("https://provider.example/v1")
+	account.QueryType = balance.ProviderClaudeAdmin
+
+	first := fetchAccounts([]accountQuery{account}, false)
+	second := fetchAccounts([]accountQuery{account}, false)
+	if len(first) != 1 || first[0].Error != "" || len(first[0].Warnings) != 1 {
+		t.Fatalf("partial result = %#v", first)
+	}
+	if len(second) != 1 || len(second[0].Warnings) != 1 || requests.Load() != 1 {
+		t.Fatalf("partial warning was not briefly cached: results=%#v requests=%d", second, requests.Load())
+	}
+}
+
+func TestProviderPanicBecomesAccountFailure(t *testing.T) {
+	cleanupCacheForTest(t, time.Hour)
+	useFetcherForTest(t, fetcherFunc(func(string, string, string) balance.Result {
+		panic("provider bug with secret")
+	}))
+	account := testNewAPIAccount("https://provider.example/v1")
+	results := fetchAccounts([]accountQuery{account}, true)
+	if len(results) != 1 || results[0].Error == "" || results[0].Failure == nil {
+		t.Fatalf("panic result = %#v", results)
+	}
+	if strings.Contains(results[0].Error, "provider bug") {
+		t.Fatalf("panic detail leaked to result: %#v", results[0])
+	}
+}
+
+func TestFetchAccountRedactsSecretFromClientMetadata(t *testing.T) {
+	const secret = "sk-client-metadata-secret"
+	useFetcherForTest(t, fetcherFunc(func(authID, _, _ string) balance.Result {
+		return balance.Result{
+			Provider: "测试", AuthID: authID,
+			Extra:     map[string]string{"上游 " + secret: "响应 " + secret},
+			FetchedAt: time.Now(),
+		}
+	}))
+	account := accountQuery{
+		ID:          "auth-" + secret,
+		ProviderKey: "provider-" + secret,
+		AccountName: "账户 " + secret,
+		BaseURL:     "https://provider.example/v1?token=" + secret,
+		APIKey:      secret,
+		QueryType:   balance.ProviderNewAPI,
+	}
+	result := fetchAccount(account)
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), secret) {
+		t.Fatalf("fetch result leaked API key from client metadata: %s", raw)
 	}
 }
 
@@ -328,6 +549,8 @@ func TestAccountCacheKeyIsStableAndDoesNotExposeSecrets(t *testing.T) {
 
 	displayOnlyChange := account
 	displayOnlyChange.AccountName = "另一个显示名称"
+	displayOnlyChange.ID = "renumbered-auth-id"
+	displayOnlyChange.ProviderKey = "renamed-provider"
 	if got := accountCacheKey(displayOnlyChange); got != first {
 		t.Fatalf("display-only fields changed cache identity: got %q, want %q", got, first)
 	}
@@ -348,14 +571,24 @@ func TestAccountCacheKeyIsStableAndDoesNotExposeSecrets(t *testing.T) {
 func TestRedactResultSecret(t *testing.T) {
 	const secret = "sk-very-secret-value"
 	result := balance.Result{
-		Error:        "上游拒绝 " + secret,
-		QuotaDisplay: "账户 " + secret,
-		Plan:         secret,
-		ResetAt:      "稍后 " + secret,
-		Extra:        map[string]string{"响应": "包含 " + secret},
+		Error:           "上游拒绝 " + secret,
+		QuotaDisplay:    "账户 " + secret,
+		Plan:            secret,
+		ResetAt:         "稍后 " + secret,
+		BalanceCurrency: secret,
+		Extra:           map[string]string{"响应 " + secret: "包含 " + secret},
+		Failure: &balance.FailureInfo{
+			Kind: secret, Title: "失败 " + secret, Reason: secret,
+			Suggestion: secret, ProviderCode: secret, RequestID: secret,
+		},
+		Warnings: []balance.FailureInfo{{
+			Kind: secret, Title: "部分失败 " + secret, Reason: secret,
+			Suggestion: secret, ProviderCode: secret, RequestID: secret,
+		}},
 		QuotaWindows: []balance.QuotaWindow{{
 			Group: secret, Label: "周期 " + secret, Unit: secret,
 			ResetAt: "稍后 " + secret, Status: "状态 " + secret,
+			AggregationScope: secret, AggregationKey: "聚合 " + secret,
 		}},
 	}
 	redactResultSecret(&result, secret)
@@ -368,6 +601,52 @@ func TestRedactResultSecret(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), maskAPIKey(secret)) {
 		t.Fatalf("redacted result does not contain masked key: %s", raw)
+	}
+}
+
+func TestDecorateAccountResultDoesNotMutateSharedResult(t *testing.T) {
+	const secret = "sk-shared-secret"
+	original := balance.Result{
+		Failure:  &balance.FailureInfo{Reason: "失败 " + secret},
+		Warnings: []balance.FailureInfo{{Reason: "警告 " + secret}},
+		Extra:    map[string]string{"详情": "包含 " + secret},
+		QuotaWindows: []balance.QuotaWindow{{
+			Label: "周期 " + secret,
+		}},
+	}
+	account := accountQuery{
+		ID: "account", ProviderKey: "provider", AccountName: "账户",
+		APIKey: secret,
+	}
+
+	first := decorateAccountResult(original, account)
+	second := decorateAccountResult(original, account)
+	if original.Failure.Reason != "失败 "+secret || original.Warnings[0].Reason != "警告 "+secret ||
+		original.Extra["详情"] != "包含 "+secret || original.QuotaWindows[0].Label != "周期 "+secret {
+		t.Fatalf("decorateAccountResult mutated its cached input: %#v", original)
+	}
+
+	first.Failure.Reason = "changed"
+	first.Warnings[0].Reason = "changed"
+	first.Extra["详情"] = "changed"
+	first.QuotaWindows[0].Label = "changed"
+	if second.Failure.Reason == "changed" || second.Warnings[0].Reason == "changed" ||
+		second.Extra["详情"] == "changed" || second.QuotaWindows[0].Label == "changed" {
+		t.Fatalf("decorated results still share mutable data: first=%#v second=%#v", first, second)
+	}
+}
+
+func TestNormalizeAccountQueryTrimsTransportFields(t *testing.T) {
+	account := accountQuery{
+		ID: " account ", ProviderKey: " provider ", MappingKey: " mapping ",
+		AccountName: " name ", BaseURL: " https://example.com/v1/ ",
+		APIKey: " secret ", ProxyURL: " direct ", QueryType: " deepseek ",
+	}
+	normalizeAccountQuery(&account)
+	if account.ID != "account" || account.ProviderKey != "provider" || account.MappingKey != "mapping" ||
+		account.AccountName != "name" || account.BaseURL != "https://example.com/v1/" ||
+		account.APIKey != "secret" || account.ProxyURL != "direct" || account.QueryType != balance.ProviderDeepSeek {
+		t.Fatalf("normalizeAccountQuery() = %#v", account)
 	}
 }
 
@@ -393,6 +672,78 @@ func TestLocalizeFetchError(t *testing.T) {
 			t.Fatalf("localized error still exposes raw upstream message: %q", got)
 		}
 	}
+}
+
+func TestClassifyFetchFailureMatrix(t *testing.T) {
+	tests := []struct {
+		name         string
+		provider     balance.ProviderType
+		message      string
+		existing     *balance.FailureInfo
+		wantKind     string
+		wantRetry    bool
+		wantContains string
+	}{
+		{name: "payment required", message: "余额接口返回 HTTP 402", wantKind: balance.FailureInsufficientFund, wantContains: "余额不足"},
+		{name: "dns beats json hostname", message: "请求余额接口失败：Get https://json.example: dial tcp: lookup json.example: no such host", wantKind: balance.FailureDNS, wantRetry: true},
+		{name: "proxy only on explicit proxy failure", message: "请求余额接口失败：Get https://proxy.example: connection refused", wantKind: balance.FailureNetwork, wantRetry: true},
+		{name: "kimi overload", provider: balance.ProviderKimiAPI, message: "HTTP 429", existing: &balance.FailureInfo{ProviderCode: "engine_overloaded_error"}, wantKind: balance.FailureService, wantRetry: true, wantContains: "过载"},
+		{name: "kimi quota", provider: balance.ProviderKimiAPI, message: "HTTP 429", existing: &balance.FailureInfo{ProviderCode: "exceeded_current_quota_error"}, wantKind: balance.FailureQuotaExhausted, wantRetry: true, wantContains: "额度"},
+		{name: "minimax five hour", provider: balance.ProviderMiniMaxCodingGlobal, message: "business failure", existing: &balance.FailureInfo{ProviderCode: "2056"}, wantKind: balance.FailureQuotaExhausted, wantRetry: true, wantContains: "5 小时"},
+		{name: "glm key type", provider: balance.ProviderGLMZAI, message: "business failure", existing: &balance.FailureInfo{ProviderCode: "1315"}, wantKind: balance.FailureAuthentication, wantContains: "密钥类型"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := classifyFetchFailure(test.provider, test.message, test.existing)
+			if got == nil || got.Kind != test.wantKind || got.Retryable != test.wantRetry {
+				t.Fatalf("classifyFetchFailure() = %#v", got)
+			}
+			if test.wantContains != "" && !strings.Contains(got.Reason, test.wantContains) {
+				t.Fatalf("reason = %q, want containing %q", got.Reason, test.wantContains)
+			}
+		})
+	}
+}
+
+func cleanupCacheForTest(t *testing.T, ttl time.Duration) {
+	t.Helper()
+	previousState := snapshotState()
+	resultCache.Flush()
+	resultCache.SetTTL(ttl)
+	stateMu.Lock()
+	state.CacheTTLSeconds = int(ttl / time.Second)
+	stateMu.Unlock()
+	t.Cleanup(func() {
+		resultCache.Flush()
+		resultCache.SetTTL(time.Duration(previousState.CacheTTLSeconds) * time.Second)
+		stateMu.Lock()
+		state = previousState
+		stateMu.Unlock()
+	})
+}
+
+func testNewAPIAccount(baseURL string) accountQuery {
+	return accountQuery{
+		ID:          "account-1",
+		ProviderKey: "provider-1",
+		AccountName: "New API 测试",
+		BaseURL:     baseURL,
+		APIKey:      "sk-test-secret",
+		QueryType:   balance.ProviderNewAPI,
+	}
+}
+
+type fetcherFunc func(authID, token, proxyURL string) balance.Result
+
+func (fn fetcherFunc) Fetch(authID, token, proxyURL string) balance.Result {
+	return fn(authID, token, proxyURL)
+}
+
+func useFetcherForTest(t *testing.T, fetcher balance.Fetcher) {
+	t.Helper()
+	previous := buildFetcher
+	buildFetcher = func(balance.ProviderType, string) balance.Fetcher { return fetcher }
+	t.Cleanup(func() { buildFetcher = previous })
 }
 
 func snapshotState() balance.PluginConfig {

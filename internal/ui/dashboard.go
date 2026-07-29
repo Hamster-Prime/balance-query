@@ -505,6 +505,17 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .quota-main{font-size:20px;line-height:1.3;font-weight:680;color:var(--text-primary);margin:0;overflow-wrap:anywhere}
 .quota-main.failure{font-size:14px;color:var(--warning-text);font-weight:600;line-height:1.45}
 .error-detail{color:var(--text-secondary);font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+.failure-suggestion{flex-basis:100%;color:var(--warning-text)}
+.result-warnings{margin-top:13px;padding:11px 12px;border:1px solid var(--amber-30);border-radius:9px;background:var(--amber-10)}
+.result-warnings-title{display:flex;align-items:center;gap:6px;color:var(--amber-text);font-size:12px;font-weight:650}
+.result-warnings-title .icon{width:14px;height:14px}
+.result-warning-list{display:flex;flex-direction:column;gap:9px;margin-top:9px}
+.result-warning-item{min-width:0;padding-top:9px;border-top:1px solid color-mix(in srgb,var(--amber-30) 72%,transparent)}
+.result-warning-item:first-child{padding-top:0;border-top:0}
+.result-warning-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.result-warning-name{color:var(--text-primary);font-size:12px;font-weight:650;overflow-wrap:anywhere}
+.result-warning-detail{margin-top:4px;color:var(--text-secondary);font-size:11px;line-height:1.45;overflow-wrap:anywhere}
+.result-warning-suggestion{color:var(--warning-text)}
 .progress-track{height:7px;border-radius:9999px;background:var(--bg-tertiary);overflow:hidden;margin-top:12px}
 .progress-bar{height:100%;width:0;border-radius:inherit;background:var(--success-color);transition:width var(--motion-normal),background-color var(--motion-normal)}
 .progress-bar.warning{background:var(--quota-medium-color)}
@@ -665,7 +676,7 @@ select:hover{border-color:var(--border-hover)}
       <div class="summary-item"><span id="stat-providers" class="summary-value">0</span><span class="summary-label">AI 提供商</span></div>
       <div class="summary-item"><span id="stat-configured" class="summary-value">0</span><span class="summary-label">已配置查询</span></div>
       <div class="summary-item"><span id="stat-keys" class="summary-value">0</span><span class="summary-label">可查询密钥</span></div>
-      <div class="summary-item"><span id="stat-success" class="summary-value">0</span><span class="summary-label">本次查询成功</span></div>
+      <div class="summary-item"><span id="stat-success" class="summary-value">0</span><span id="stat-success-label" class="summary-label">本次查询成功</span></div>
     </div>
     <div class="section-head">
       <div><h2 class="section-title">账户余额</h2><p id="query-meta" class="section-meta">正在读取提供商配置</p></div>
@@ -722,17 +733,32 @@ select:hover{border-color:var(--border-hover)}
   var ENC_PREFIX = "enc::v1::";
   var SECRET_SALT = "cli-proxy-api-webui::secure-storage";
   var REQUEST_TIMEOUT = 30000;
+  var QUERY_BATCH_SIZE = 128;
+  var QUERY_BATCH_MAX_BYTES = 900 * 1024;
+  var RESULT_SNAPSHOT_KEY = "balance-query-results::v1";
+  var RESULT_SNAPSHOT_VERSION = 1;
+  var RESULT_SNAPSHOT_MAX_BYTES = 2 * 1024 * 1024;
+  var RESULT_SNAPSHOT_MAX_STALE_MS = 7 * 24 * 60 * 60 * 1000;
   var state = {
     credentials: { apiBase: "", managementKey: "" },
     providers: [],
     globalProxyUrl: "",
     config: { cache_ttl_seconds: INITIAL_TTL, provider_mappings: {} },
     draftMappings: {},
+    draftTTL: String(INITIAL_TTL),
     results: [],
     view: "overview",
     querying: false,
     saving: false,
     dirty: false,
+    needsQuery: false,
+    loadGeneration: 0,
+    queryGeneration: 0,
+    saveGeneration: 0,
+    snapshotGeneration: 0,
+    loadController: null,
+    queryController: null,
+    saveController: null,
     activeOverviewCategory: "",
     expandedProviders: Object.create(null)
   };
@@ -757,6 +783,272 @@ select:hover{border-color:var(--border-hover)}
     if (className) node.className = className;
     if (text != null) node.textContent = String(text);
     return node;
+  }
+
+  function utf8Bytes(value) {
+    var text = String(value == null ? "" : value);
+    if (typeof TextEncoder !== "undefined") return Array.prototype.slice.call(new TextEncoder().encode(text));
+    var bytes = [];
+    for (var i = 0; i < text.length; i++) {
+      var code = text.charCodeAt(i);
+      if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
+        var low = text.charCodeAt(i + 1);
+        if (low >= 0xdc00 && low <= 0xdfff) {
+          code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+          i += 1;
+        }
+      }
+      if (code < 0x80) bytes.push(code);
+      else if (code < 0x800) bytes.push(0xc0 | (code >>> 6), 0x80 | (code & 0x3f));
+      else if (code < 0x10000) bytes.push(0xe0 | (code >>> 12), 0x80 | ((code >>> 6) & 0x3f), 0x80 | (code & 0x3f));
+      else bytes.push(0xf0 | (code >>> 18), 0x80 | ((code >>> 12) & 0x3f), 0x80 | ((code >>> 6) & 0x3f), 0x80 | (code & 0x3f));
+    }
+    return bytes;
+  }
+
+  function fallbackSHA256(value) {
+    var constants = [
+      0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+      0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+      0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+      0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+      0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+      0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+      0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+      0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+    ];
+    var bytes = utf8Bytes(value);
+    var bitLength = bytes.length * 8;
+    bytes.push(0x80);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    var high = Math.floor(bitLength / 0x100000000);
+    var low = bitLength >>> 0;
+    [high, low].forEach(function (word) {
+      bytes.push((word >>> 24) & 0xff, (word >>> 16) & 0xff, (word >>> 8) & 0xff, word & 0xff);
+    });
+    var hash = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+    function rotate(value, bits) { return (value >>> bits) | (value << (32 - bits)); }
+    for (var offset = 0; offset < bytes.length; offset += 64) {
+      var words = new Array(64);
+      for (var wordIndex = 0; wordIndex < 16; wordIndex++) {
+        var byteIndex = offset + wordIndex * 4;
+        words[wordIndex] = ((bytes[byteIndex] << 24) | (bytes[byteIndex + 1] << 16) | (bytes[byteIndex + 2] << 8) | bytes[byteIndex + 3]) >>> 0;
+      }
+      for (var expanded = 16; expanded < 64; expanded++) {
+        var before15 = words[expanded - 15];
+        var before2 = words[expanded - 2];
+        var sigma0 = rotate(before15, 7) ^ rotate(before15, 18) ^ (before15 >>> 3);
+        var sigma1 = rotate(before2, 17) ^ rotate(before2, 19) ^ (before2 >>> 10);
+        words[expanded] = (words[expanded - 16] + sigma0 + words[expanded - 7] + sigma1) >>> 0;
+      }
+      var a = hash[0], b = hash[1], c = hash[2], d = hash[3];
+      var e = hash[4], f = hash[5], g = hash[6], h = hash[7];
+      for (var round = 0; round < 64; round++) {
+        var sum1 = rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25);
+        var choose = (e & f) ^ (~e & g);
+        var temporary1 = (h + sum1 + choose + constants[round] + words[round]) >>> 0;
+        var sum0 = rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22);
+        var majority = (a & b) ^ (a & c) ^ (b & c);
+        var temporary2 = (sum0 + majority) >>> 0;
+        h = g; g = f; f = e; e = (d + temporary1) >>> 0;
+        d = c; c = b; b = a; a = (temporary1 + temporary2) >>> 0;
+      }
+      hash[0] = (hash[0] + a) >>> 0; hash[1] = (hash[1] + b) >>> 0;
+      hash[2] = (hash[2] + c) >>> 0; hash[3] = (hash[3] + d) >>> 0;
+      hash[4] = (hash[4] + e) >>> 0; hash[5] = (hash[5] + f) >>> 0;
+      hash[6] = (hash[6] + g) >>> 0; hash[7] = (hash[7] + h) >>> 0;
+    }
+    return hash.map(function (word) { return ("00000000" + word.toString(16)).slice(-8); }).join("");
+  }
+
+  function sha256Hex(value) {
+    var cryptoObject = null;
+    try { cryptoObject = window.crypto; } catch (_) {}
+    if (cryptoObject && cryptoObject.subtle && typeof TextEncoder !== "undefined") {
+      return cryptoObject.subtle.digest("SHA-256", new TextEncoder().encode(String(value))).then(function (digest) {
+        return Array.prototype.map.call(new Uint8Array(digest), function (byte) { return ("0" + byte.toString(16)).slice(-2); }).join("");
+      }).catch(function () { return fallbackSHA256(value); });
+    }
+    return Promise.resolve(fallbackSHA256(value));
+  }
+
+  function sameOriginSessionStorage() {
+    try {
+      if (window.parent !== window && window.parent.location.origin === window.location.origin) return window.parent.sessionStorage;
+    } catch (_) {}
+    try { return window.sessionStorage; } catch (_) { return null; }
+  }
+
+  function discardStoredResultSnapshot(expectedValue) {
+    var storage = sameOriginSessionStorage();
+    if (!storage) return;
+    try {
+      if (expectedValue === undefined || storage.getItem(RESULT_SNAPSHOT_KEY) === expectedValue) storage.removeItem(RESULT_SNAPSHOT_KEY);
+    } catch (_) {}
+  }
+
+  function clearResultSnapshot() {
+    state.snapshotGeneration += 1;
+    discardStoredResultSnapshot();
+  }
+
+  function replaceSecrets(value, secrets) {
+    var text = String(value == null ? "" : value);
+    secrets.forEach(function (secret) {
+      if (secret && text.indexOf(secret) !== -1) text = text.split(secret).join("[已隐藏]");
+    });
+    return text;
+  }
+
+  function sanitizeSnapshotValue(value, secrets) {
+    if (typeof value === "string") return replaceSecrets(value, secrets);
+    if (Array.isArray(value)) return value.map(function (item) { return sanitizeSnapshotValue(item, secrets); });
+    if (!value || typeof value !== "object") return value;
+    var sanitized = Object.create(null);
+    Object.keys(value).forEach(function (key) {
+      sanitized[replaceSecrets(key, secrets)] = sanitizeSnapshotValue(value[key], secrets);
+    });
+    return sanitized;
+  }
+
+  function snapshotSecrets(accounts, credentials) {
+    var secrets = [String(credentials && credentials.managementKey || "")];
+    accounts.forEach(function (account) { secrets.push(String(account.api_key || "")); });
+    secrets = secrets.filter(function (secret, index, list) { return secret && list.indexOf(secret) === index; });
+    return secrets.every(function (secret) { return secret.length >= 4; }) ? secrets : null;
+  }
+
+  function accountFingerprintMaterial(account) {
+    return [
+      SECRET_SALT, String(window.location && window.location.host || ""),
+      String(account.id || "").trim(), String(account.provider_key || "").trim(),
+      String(account.mapping_key || "").trim(), String(account.query_type || "").trim(), String(account.base_url || "").trim(),
+      String(account.proxy_url || "").trim(), String(account.api_key || "")
+    ].join("\u0000");
+  }
+
+  function resultSnapshotIdentity(accounts, credentials) {
+    var scopeMaterial = [SECRET_SALT, String(window.location && window.location.host || ""), String(credentials && credentials.apiBase || ""), String(credentials && credentials.managementKey || "")].join("\u0000");
+    var pending = [sha256Hex(scopeMaterial)].concat(accounts.map(function (account) { return sha256Hex(accountFingerprintMaterial(account)); }));
+    return Promise.all(pending).then(function (digests) {
+      return { scopeHash:digests[0], accountDigests:digests.slice(1) };
+    });
+  }
+
+  function resultSnapshotExpiry(results, ttlSeconds) {
+    if (!(ttlSeconds > 0) || !Array.isArray(results) || !results.length) return 0;
+    var fetched = results.map(function (result) { return new Date(result && result.fetched_at || "").getTime(); }).filter(function (timestamp) { return Number.isFinite(timestamp); });
+    if (fetched.length !== results.length) return 0;
+    var now = Date.now();
+    if (fetched.some(function (timestamp) { return timestamp > now + 60000 || now - timestamp > RESULT_SNAPSHOT_MAX_STALE_MS; })) return 0;
+    return Math.min(Math.min.apply(Math, fetched) + ttlSeconds * 1000, now + ttlSeconds * 1000);
+  }
+
+  function snapshotResultForAccount(result, account) {
+    return Object.assign({}, result || {}, {
+      provider_key:String(account.provider_key || ""), auth_id:String(account.id || ""),
+      account_name:String(account.account_name || ""), base_url:String(account.base_url || ""),
+      key_preview:maskKey(account.api_key)
+    });
+  }
+
+  function readResultSnapshot(accounts, ttlSeconds, credentials) {
+    if (!(ttlSeconds > 0)) {
+      clearResultSnapshot();
+      return Promise.resolve(null);
+    }
+    var storage = sameOriginSessionStorage();
+    if (!storage) return Promise.resolve(null);
+    var record = null;
+    var serializedRecord = "";
+    try {
+      serializedRecord = storage.getItem(RESULT_SNAPSHOT_KEY) || "";
+      record = JSON.parse(serializedRecord || "null");
+    } catch (_) {}
+    if (!record || record.version !== RESULT_SNAPSHOT_VERSION || record.ttl_seconds !== ttlSeconds ||
+        !Array.isArray(record.account_digests) || !Array.isArray(record.results) || record.results.length !== accounts.length ||
+        !Number.isFinite(Number(record.stored_at)) || !Number.isFinite(Number(record.expires_at)) ||
+        Number(record.stored_at) > Date.now() + 60000 || Date.now() - Number(record.stored_at) > RESULT_SNAPSHOT_MAX_STALE_MS) {
+      discardStoredResultSnapshot(serializedRecord);
+      return Promise.resolve(null);
+    }
+    return resultSnapshotIdentity(accounts, credentials).then(function (identity) {
+      var matches = identity.scopeHash === record.scope_hash && identity.accountDigests.length === record.account_digests.length &&
+        identity.accountDigests.every(function (digest, index) { return digest === record.account_digests[index]; });
+      if (!matches) {
+        discardStoredResultSnapshot(serializedRecord);
+        return null;
+      }
+      var secrets = snapshotSecrets(accounts, credentials);
+      if (!secrets) {
+        discardStoredResultSnapshot(serializedRecord);
+        return null;
+      }
+      var sanitized = sanitizeSnapshotValue(record.results, secrets);
+      var results = sanitized.map(function (result, index) { return snapshotResultForAccount(result, accounts[index]); });
+      var maximumExpiry = resultSnapshotExpiry(results, ttlSeconds);
+      if (!maximumExpiry || Number(record.expires_at) > maximumExpiry + 1000) {
+        discardStoredResultSnapshot(serializedRecord);
+        return null;
+      }
+      return {
+        results:results,
+        fresh:Number(record.expires_at) > Date.now(),
+        complete:results.length === accounts.length && results.every(function (result) {
+          return !result.error && !result.failure && (!Array.isArray(result.warnings) || result.warnings.length === 0);
+        })
+      };
+    }).catch(function () { return null; });
+  }
+
+  function serializedByteLength(value) {
+    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(value).length;
+    return utf8Bytes(value).length;
+  }
+
+  function persistResultSnapshot(accounts, results, ttlSeconds, credentials) {
+    if (!(ttlSeconds > 0) || !accounts.length || !Array.isArray(results) || results.length !== accounts.length) {
+      clearResultSnapshot();
+      return Promise.resolve(false);
+    }
+    var storage = sameOriginSessionStorage();
+    var secrets = snapshotSecrets(accounts, credentials);
+    if (!storage) return Promise.resolve(false);
+    if (!secrets) {
+      discardStoredResultSnapshot();
+      return Promise.resolve(false);
+    }
+    var sanitizedResults = sanitizeSnapshotValue(results, secrets);
+    var expiresAt = resultSnapshotExpiry(sanitizedResults, ttlSeconds);
+    if (!expiresAt) {
+      discardStoredResultSnapshot();
+      return Promise.resolve(false);
+    }
+    var snapshotGeneration = ++state.snapshotGeneration;
+    return resultSnapshotIdentity(accounts, credentials).then(function (identity) {
+      if (snapshotGeneration !== state.snapshotGeneration) return false;
+      var record = {
+        version:RESULT_SNAPSHOT_VERSION,
+        scope_hash:identity.scopeHash,
+        account_digests:identity.accountDigests,
+        ttl_seconds:ttlSeconds,
+        stored_at:Date.now(),
+        expires_at:expiresAt,
+        results:sanitizedResults
+      };
+      var serialized = JSON.stringify(record);
+      if (serializedByteLength(serialized) > RESULT_SNAPSHOT_MAX_BYTES || secrets.some(function (secret) { return serialized.indexOf(secret) !== -1; })) {
+        discardStoredResultSnapshot();
+        return false;
+      }
+      try {
+        storage.setItem(RESULT_SNAPSHOT_KEY, serialized);
+        return true;
+      } catch (_) {
+        discardStoredResultSnapshot();
+        return false;
+      }
+    }).catch(function () { return false; });
   }
 
   function deobfuscate(raw) {
@@ -824,48 +1116,84 @@ select:hover{border-color:var(--border-hover)}
     }
   }
 
-  function endpoint(path) { return state.credentials.apiBase + MANAGEMENT_PREFIX + path; }
+  function endpoint(path, credentials) {
+    var selected = credentials || state.credentials;
+    return selected.apiBase + MANAGEMENT_PREFIX + path;
+  }
 
   function statusMessage(status) {
     if (status === 400) return "请求参数不正确";
     if (status === 401 || status === 403) return "管理密钥无效或权限不足";
     if (status === 404) return "当前 CPA 版本不支持此接口";
     if (status === 409) return "配置已被其他操作更新，请刷新后重试";
+    if (status === 413) return "查询账户过多或请求内容过大";
+    if (status === 429) return "CPA 请求过于频繁，请稍后重试";
     if (status >= 500) return "CPA 服务暂时不可用";
     return "请求未成功";
   }
 
-  function apiFetch(path, options, timeout) {
+  function responseErrorMessage(data, status, credentials) {
+    var candidate = "";
+    if (data && typeof data.error === "string") candidate = data.error;
+    else if (data && data.error && typeof data.error.message === "string") candidate = data.error.message;
+    else if (data && typeof data.message === "string") candidate = data.message;
+    candidate = String(candidate || "").trim();
+    if (!candidate) return statusMessage(status);
+    candidate = redactSecrets(candidate);
+    var managementKey = String(credentials && credentials.managementKey || "");
+    if (managementKey) candidate = candidate.split(managementKey).join("[管理密钥已隐藏]");
+    return candidate;
+  }
+
+  function apiFetch(path, options, timeout, credentials) {
+    var requestCredentials = Object.assign({}, credentials || state.credentials);
+    var externalSignal = options && options.signal;
     var controller = new AbortController();
-    var timer = window.setTimeout(function () { controller.abort(); }, timeout || REQUEST_TIMEOUT);
+    var timedOut = false;
+    var relayAbort = function () { controller.abort(); };
+    if (externalSignal) {
+      if (externalSignal.aborted) controller.abort();
+      else externalSignal.addEventListener("abort", relayAbort, { once:true });
+    }
+    var timer = window.setTimeout(function () { timedOut = true; controller.abort(); }, timeout || REQUEST_TIMEOUT);
     var init = Object.assign({}, options || {}, {
       cache: "no-store",
       credentials: "omit",
       signal: controller.signal,
       headers: Object.assign({
         "Accept": "application/json",
-        "Authorization": "Bearer " + state.credentials.managementKey
+        "Authorization": "Bearer " + requestCredentials.managementKey
       }, options && options.headers ? options.headers : {})
     });
-    return fetch(endpoint(path), init).then(function (response) {
+    return fetch(endpoint(path, requestCredentials), init).then(function (response) {
       return response.text().then(function (body) {
         var data = null;
         if (body) { try { data = JSON.parse(body); } catch (_) {} }
         if (!response.ok) {
-          var error = new Error(statusMessage(response.status));
+          var error = new Error(responseErrorMessage(data, response.status, requestCredentials));
           error.status = response.status;
+          error.data = data;
           throw error;
         }
         return data || {};
       });
     }).catch(function (error) {
-      if (error && error.name === "AbortError") throw new Error("请求超时，请稍后重试");
+      if (error && error.name === "AbortError") {
+        var abortError = new Error(timedOut ? "请求超时，请稍后重试" : "请求已取消");
+        abortError.cancelled = !timedOut;
+        abortError.timedOut = timedOut;
+        throw abortError;
+      }
+      if (error && error.name === "TypeError") throw new Error("无法连接 CPA，请检查地址、网络或跨域设置");
       throw error;
-    }).finally(function () { window.clearTimeout(timer); });
+    }).finally(function () {
+      window.clearTimeout(timer);
+      if (externalSignal) externalSignal.removeEventListener("abort", relayAbort);
+    });
   }
 
-  function optionalApiFetch(path) {
-    return apiFetch(path).catch(function (error) {
+  function optionalApiFetch(path, options, timeout, credentials) {
+    return apiFetch(path, options, timeout, credentials).catch(function (error) {
       if (error && error.status === 404) return {};
       throw error;
     });
@@ -924,6 +1252,12 @@ select:hover{border-color:var(--border-hover)}
   function mappedQueryType(provider, mappings) {
     mappings = mappings || {};
     return mappings[provider.mappingKey] || mappings[provider.legacyMappingKey] || "";
+  }
+  function resolvedProviderMapping(provider, mappings) {
+    mappings = mappings || {};
+    if (mappings[provider.mappingKey]) return { key:provider.mappingKey, type:mappings[provider.mappingKey] };
+    if (mappings[provider.legacyMappingKey]) return { key:provider.legacyMappingKey, type:mappings[provider.legacyMappingKey] };
+    return { key:provider.mappingKey, type:"" };
   }
   function keyEntryDisabled(entry) {
     var excluded = entry && Array.isArray(entry["excluded-models"]) ? entry["excluded-models"] : [];
@@ -1032,6 +1366,40 @@ select:hover{border-color:var(--border-hover)}
     return { cache_ttl_seconds: ttl, provider_mappings: Object.assign({}, mappings) };
   }
 
+  function stableMappings(value) {
+    var mappings = value && typeof value === "object" ? value : {};
+    return JSON.stringify(Object.keys(mappings).sort().map(function (key) { return [key, mappings[key]]; }));
+  }
+
+  function refreshDirtyState() {
+    state.dirty = String(state.draftTTL) !== String(state.config.cache_ttl_seconds) || stableMappings(state.draftMappings) !== stableMappings(state.config.provider_mappings);
+    setText(byID("save-state"), state.dirty ? "有未保存的更改" : "");
+    return state.dirty;
+  }
+
+  function cancelLoadRequests() {
+    state.loadGeneration += 1;
+    if (state.loadController) state.loadController.abort();
+    state.loadController = null;
+  }
+
+  function cancelQueryRequests() {
+    state.queryGeneration += 1;
+    if (state.queryController) state.queryController.abort();
+    state.queryController = null;
+    state.querying = false;
+    setButtonBusy(byID("refresh-button"), false, "刷新余额");
+  }
+
+  function cancelSaveRequests() {
+    state.saveGeneration += 1;
+    if (state.saveController) state.saveController.abort();
+    state.saveController = null;
+    state.saving = false;
+    setButtonBusy(byID("save-button"), false, "保存设置");
+    setText(byID("save-state"), "");
+  }
+
   function showConnection(message) {
     byID("app").hidden = true;
     byID("connection-view").hidden = false;
@@ -1042,11 +1410,11 @@ select:hover{border-color:var(--border-hover)}
     window.setTimeout(function () { byID(message ? "management-key-input" : "api-base-input").focus(); }, 0);
   }
 
-  function showApp() {
+  function showApp(connected) {
     byID("connection-view").hidden = true;
     byID("app").hidden = false;
-    byID("connection-dot").classList.remove("pending");
-    setText(byID("connection-state"), "已连接 CPA");
+    byID("connection-dot").classList.toggle("pending", !connected);
+    setText(byID("connection-state"), connected ? "已连接 CPA" : "正在连接 CPA");
   }
 
   function setButtonBusy(button, busy, label) {
@@ -1088,6 +1456,10 @@ select:hover{border-color:var(--border-hover)}
     byID("refresh-button").hidden = !overview;
     byID("save-button").hidden = overview;
     if (!overview) renderSettings();
+    else if (state.needsQuery && !state.querying) {
+      state.needsQuery = false;
+      queryBalances(false);
+    }
   }
 
   function showSkeletons() {
@@ -1146,7 +1518,8 @@ select:hover{border-color:var(--border-hover)}
     var accounts = [];
     state.providers.forEach(function (provider) {
       if (provider.disabled) return;
-      var queryType = mappedQueryType(provider, state.config.provider_mappings);
+      var resolvedMapping = resolvedProviderMapping(provider, state.config.provider_mappings);
+      var queryType = resolvedMapping.type;
       if (!providerLabels[queryType]) return;
       var enabledKeys = provider.keys.map(function (keyEntry, originalIndex) {
         return { entry:keyEntry, originalIndex:originalIndex };
@@ -1157,6 +1530,7 @@ select:hover{border-color:var(--border-hover)}
         accounts.push({
           id: keyEntry.authIndex || ("compat-" + tinyHash(provider.mappingKey) + "-" + (item.originalIndex + 1)),
           provider_key: provider.mappingKey,
+          mapping_key: resolvedMapping.key,
           account_name: accountName,
           base_url: provider.baseUrl,
           api_key: keyEntry.apiKey,
@@ -1175,15 +1549,14 @@ select:hover{border-color:var(--border-hover)}
   }
 
   function updateSummary() {
-    var keyCount = state.providers.reduce(function (sum, provider) {
-      if (provider.disabled) return sum;
-      return sum + provider.keys.filter(function (entry) { return !entry.disabled; }).length;
-    }, 0);
+    var keyCount = buildAccounts().length;
     var successCount = state.results.filter(function (result) { return !result.error; }).length;
+    var partialCount = state.results.filter(function (result) { return !result.error && resultWarnings(result).length > 0; }).length;
     setText(byID("stat-providers"), state.providers.length);
     setText(byID("stat-configured"), configuredProviderCount());
     setText(byID("stat-keys"), keyCount);
     setText(byID("stat-success"), successCount);
+    setText(byID("stat-success-label"), partialCount ? "查询成功 · " + partialCount + " 个部分数据" : "本次查询成功");
   }
 
   function formatTime(value) {
@@ -1191,6 +1564,15 @@ select:hover{border-color:var(--border-hover)}
     var date = new Date(value);
     if (Number.isNaN(date.getTime())) return "";
     return new Intl.DateTimeFormat("zh-CN", { hour:"2-digit", minute:"2-digit", second:"2-digit" }).format(date);
+  }
+
+  function latestFetchedAt(results) {
+    var latest = 0;
+    (Array.isArray(results) ? results : []).forEach(function (result) {
+      var timestamp = new Date(result && result.fetched_at || "").getTime();
+      if (Number.isFinite(timestamp) && timestamp > latest) latest = timestamp;
+    });
+    return latest ? new Date(latest).toISOString() : "";
   }
 
   function formatDateTime(value) {
@@ -1373,6 +1755,68 @@ select:hover{border-color:var(--border-hover)}
       .replace(/not found/ig, "接口不存在")
       .replace(/request timeout|timed out/ig, "请求超时")
       .replace(/connection refused/ig, "连接被拒绝");
+  }
+
+  function failureKindLabel(kind) {
+    var normalized = String(kind || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+    var labels = {
+      authentication:"认证失败",auth:"认证失败",unauthorized:"认证失败",invalid_key:"认证失败",
+      permission:"权限不足",forbidden:"权限不足",
+      insufficient_balance:"余额不足",insufficient_funds:"余额不足",balance:"余额不足",quota_exhausted:"额度已耗尽",
+      rate_limit:"请求限流",rate_limited:"请求限流",too_many_requests:"请求限流",
+      endpoint:"端点异常",not_found:"端点异常",conflict:"请求冲突",
+      proxy:"代理异常",dns:"DNS 异常",tls:"TLS 异常",timeout:"请求超时",network:"网络异常",connection:"网络异常",
+      invalid_response:"响应异常",parse:"响应异常",
+      upstream:"服务异常",server:"服务异常",service_unavailable:"服务异常",
+      configuration:"配置错误",config:"配置错误",invalid_config:"配置错误",validation:"配置错误",
+      account_restricted:"账户不可用",no_data:"暂无可查询数据",unsupported:"暂不支持自动查询",unknown:"查询失败"
+    };
+    return labels[normalized] || "查询失败";
+  }
+
+  function failurePresentation(result) {
+    var failure = result && result.failure && typeof result.failure === "object" ? result.failure : {};
+    var kindLabel = failureKindLabel(failure.kind);
+    var title = localizedError(failure.title || "") || kindLabel;
+    var reason = localizedError(failure.reason || result && result.error || "");
+    var suggestion = localizedError(failure.suggestion || "");
+    var retryAfter = Number(failure.retry_after_seconds);
+    var suggestionText = suggestion ? (/^建议\s*[:：]?/.test(suggestion) ? suggestion : "建议：" + suggestion) : "";
+    if (Number.isFinite(retryAfter) && retryAfter > 0 && !/\d+(?:\.\d+)?\s*秒后重试/.test(suggestion)) {
+      suggestionText += (suggestionText ? "；" : "") + "建议 " + Math.ceil(retryAfter) + " 秒后重试";
+    }
+    if (reason === title) reason = "";
+    return { kindLabel:kindLabel, title:title, reason:reason, suggestion:suggestionText };
+  }
+
+  function resultWarnings(result) {
+    if (!result || !Array.isArray(result.warnings)) return [];
+    return result.warnings.filter(function (warning) { return warning && typeof warning === "object"; });
+  }
+
+  function renderResultWarnings(card, warnings) {
+    if (!Array.isArray(warnings) || !warnings.length) return false;
+    var section = element("section", "result-warnings");
+    section.setAttribute("aria-label", "部分查询警告");
+    var heading = element("div", "result-warnings-title");
+    heading.appendChild(icon("alert"));
+    heading.appendChild(element("span", "", "部分数据未获取（" + warnings.length + " 项）"));
+    section.appendChild(heading);
+    var list = element("div", "result-warning-list");
+    warnings.forEach(function (warning) {
+      var presentation = failurePresentation({ failure:warning });
+      var item = element("div", "result-warning-item");
+      var head = element("div", "result-warning-head");
+      head.appendChild(element("span", "badge warning", presentation.kindLabel));
+      head.appendChild(element("span", "result-warning-name", presentation.title));
+      item.appendChild(head);
+      if (presentation.reason) item.appendChild(element("div", "result-warning-detail", presentation.reason));
+      if (presentation.suggestion) item.appendChild(element("div", "result-warning-detail result-warning-suggestion", presentation.suggestion));
+      list.appendChild(item);
+    });
+    section.appendChild(list);
+    card.appendChild(section);
+    return true;
   }
 
   function quotaPercent(item) {
@@ -1826,7 +2270,10 @@ select:hover{border-color:var(--border-hover)}
       var successCount = services.reduce(function (sum, service) {
         return sum + service.results.filter(function (result) { return !result.error; }).length;
       }, 0);
-      return { category:category, services:services, keyCount:keyCount, successCount:successCount };
+      var partialCount = services.reduce(function (sum, service) {
+        return sum + service.results.filter(function (result) { return !result.error && resultWarnings(result).length > 0; }).length;
+      }, 0);
+      return { category:category, services:services, keyCount:keyCount, successCount:successCount, partialCount:partialCount };
     });
   }
 
@@ -2166,9 +2613,16 @@ select:hover{border-color:var(--border-hover)}
     var actions = element("div", "bundle-actions");
     actions.appendChild(element("span", "badge muted", results.length + " 个密钥"));
     var successful = results.filter(function (result) { return !result.error; }).length;
-    var statusBadge = element("span", "badge " + (successful === results.length ? "success" : successful ? "warning" : "failure"));
-    statusBadge.appendChild(icon(successful === results.length ? "check" : "alert"));
-    statusBadge.appendChild(element("span", "", successful === results.length ? "状态正常" : successful ? successful + " 正常 · " + (results.length - successful) + " 异常" : "暂时无法汇总"));
+    var partialCount = results.filter(function (result) { return !result.error && resultWarnings(result).length > 0; }).length;
+    var failedCount = results.length - successful;
+    var fullyHealthy = successful === results.length && partialCount === 0;
+    var statusBadge = element("span", "badge " + (fullyHealthy ? "success" : successful ? "warning" : "failure"));
+    statusBadge.appendChild(icon(fullyHealthy ? "check" : "alert"));
+    var statusParts = [];
+    if (successful) statusParts.push(successful + " 查询成功");
+    if (partialCount) statusParts.push(partialCount + " 部分数据");
+    if (failedCount) statusParts.push(failedCount + " 异常");
+    statusBadge.appendChild(element("span", "", fullyHealthy ? "状态正常" : statusParts.join(" · ") || "暂时无法汇总"));
     actions.appendChild(statusBadge);
     var toggle = element("button", "bundle-toggle");
     toggle.type = "button";
@@ -2302,7 +2756,9 @@ select:hover{border-color:var(--border-hover)}
       header.appendChild(mark);
       var copy = element("div", "category-copy");
       copy.appendChild(element("h3", "category-title", group.category));
-      copy.appendChild(element("span", "category-meta", group.services.length + " 个服务地址 · " + group.keyCount + " 个密钥 · " + group.successCount + " 个查询成功"));
+      var categoryMeta = group.services.length + " 个服务地址 · " + group.keyCount + " 个密钥 · " + group.successCount + " 个查询成功";
+      if (group.partialCount) categoryMeta += " · " + group.partialCount + " 个部分数据";
+      copy.appendChild(element("span", "category-meta", categoryMeta));
       header.appendChild(copy);
       section.appendChild(header);
       var content = element("div", "category-content");
@@ -2318,13 +2774,16 @@ select:hover{border-color:var(--border-hover)}
   }
 
   function resultCard(result, index) {
-    var failed = Boolean(result.error);
+    var failed = Boolean(result.error || result.failure);
+    var failure = failed ? failurePresentation(result) : null;
+    var warningItems = failed ? [] : resultWarnings(result);
+    var partial = warningItems.length > 0;
     var resultWindows = Array.isArray(result.quota_windows) ? result.quota_windows : [];
     var quotaState = failed ? "normal" : quotaResultState(resultWindows);
     var quotaWarning = quotaState !== "normal";
-    var detailKeys = !result.error ? extraDetailKeys(result) : [];
+    var detailKeys = !failed ? extraDetailKeys(result) : [];
     var detailsID = "account-details-" + index + "-" + tinyHash(String(result.account_name || "") + "|" + String(result.base_url || ""));
-    var card = element("article", "result-card" + (failed ? " error" : quotaWarning ? " limited" : ""));
+    var card = element("article", "result-card" + (failed ? " error" : partial || quotaWarning ? " limited" : ""));
     card.style.animationDelay = Math.min(index * 35, 210) + "ms";
     var head = element("div", "result-head");
     var identity = element("div", "provider-cell");
@@ -2334,10 +2793,10 @@ select:hover{border-color:var(--border-hover)}
     identity.appendChild(titleRow);
     identity.appendChild(element("div", "result-url", result.base_url || ""));
     head.appendChild(identity);
-    var badge = element("span", "badge " + (failed ? "failure" : quotaWarning ? "warning" : "success"));
-    badge.appendChild(icon(failed || quotaWarning ? "alert" : "check"));
+    var badge = element("span", "badge " + (failed ? "failure" : partial || quotaWarning ? "warning" : "success"));
+    badge.appendChild(icon(failed || partial || quotaWarning ? "alert" : "check"));
     var hasWindows = resultWindows.length > 0;
-    badge.appendChild(element("span", "", failed ? "查询失败" : quotaState === "all-exhausted" ? "全部配额已用尽" : quotaState === "partial-exhausted" ? "部分配额已用尽" : quotaState === "incomplete" ? "配额数据不完整" : hasWindows ? "配额已更新" : "查询成功"));
+    badge.appendChild(element("span", "", failed ? failure.kindLabel : partial ? "部分数据" : quotaState === "all-exhausted" ? "全部配额已用尽" : quotaState === "partial-exhausted" ? "部分配额已用尽" : quotaState === "incomplete" ? "配额数据不完整" : hasWindows ? "配额已更新" : "查询成功"));
     var actions = element("div", "result-actions");
     actions.appendChild(badge);
     var detailButton = null;
@@ -2356,8 +2815,9 @@ select:hover{border-color:var(--border-hover)}
 
     var overview = element("div", "result-overview");
     if (failed) {
-      overview.appendChild(element("div", "quota-main failure", "查询失败，请检查密钥、接口地址或账户状态"));
-      overview.appendChild(element("div", "error-detail", localizedError(result.error)));
+      overview.appendChild(element("div", "quota-main failure", failure.title));
+      if (failure.reason) overview.appendChild(element("div", "error-detail", failure.reason));
+      if (failure.suggestion) overview.appendChild(element("div", "error-detail failure-suggestion", failure.suggestion));
       card.appendChild(overview);
     } else {
       var renderedWallet = renderWalletBalance(card, result);
@@ -2382,6 +2842,7 @@ select:hover{border-color:var(--border-hover)}
         card.appendChild(track);
         window.requestAnimationFrame(function () { bar.style.width = percent.toFixed(1) + "%"; });
       }
+      renderResultWarnings(card, warningItems);
       if (detailKeys.length) {
         var collapse = element("div", "account-detail-collapse");
         collapse.id = detailsID;
@@ -2436,7 +2897,8 @@ select:hover{border-color:var(--border-hover)}
       emptyState(target, "暂无查询结果", "点击“刷新余额”获取最新余额与套餐配额。", null, null);
       return;
     }
-    setText(byID("query-meta"), state.results.length + " 个账户 · 更新于 " + (formatTime(state.results[0] && state.results[0].fetched_at) || "刚刚"));
+    var latestUpdate = latestFetchedAt(state.results);
+    setText(byID("query-meta"), state.results.length + " 个账户 · 更新于 " + (formatTime(latestUpdate) || "刚刚"));
     target.textContent = "";
     var groups = overviewResultGroups(accounts);
     if (!groups.length) {
@@ -2444,30 +2906,86 @@ select:hover{border-color:var(--border-hover)}
       return;
     }
     renderOverviewGroups(target, groups);
-    setText(byID("overview-status"), "已更新 " + state.results.length + " 个账户，其中 " + state.results.filter(function (result) { return !result.error; }).length + " 个查询成功");
+    var successful = state.results.filter(function (result) { return !result.error; }).length;
+    var partialCount = state.results.filter(function (result) { return !result.error && resultWarnings(result).length > 0; }).length;
+    setText(byID("overview-status"), "已更新 " + state.results.length + " 个账户，其中 " + successful + " 个查询成功" + (partialCount ? "，" + partialCount + " 个为部分数据" : ""));
     refreshCountdowns();
+  }
+
+  function queryTimeoutForBatch(accountCount) {
+    return Math.min(5 * 60 * 1000, Math.max(120 * 1000, 30 * 1000 + Math.ceil(Math.max(1, accountCount) / 8) * 12 * 1000));
+  }
+
+  function accountBatches(accounts) {
+    var batches = [];
+    var current = [];
+    accounts.forEach(function (account) {
+      var candidate = current.concat([account]);
+      var oversized = serializedByteLength(JSON.stringify({ accounts:candidate, refresh:false })) > QUERY_BATCH_MAX_BYTES;
+      if (current.length && (current.length >= QUERY_BATCH_SIZE || oversized)) {
+        batches.push(current);
+        current = [account];
+      } else {
+        current = candidate;
+      }
+    });
+    if (current.length) batches.push(current);
+    return batches;
+  }
+
+  function fetchAccountBatches(batches, refresh, controller, credentials) {
+    var combined = [];
+    var chain = Promise.resolve();
+    batches.forEach(function (batch) {
+      chain = chain.then(function () {
+        return apiFetch("/balance-query/query", {
+          method: "POST",
+          signal: controller.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accounts: batch, refresh: Boolean(refresh) })
+        }, queryTimeoutForBatch(batch.length), credentials).then(function (data) {
+          if (!Array.isArray(data.results) || data.results.length !== batch.length) throw new Error("CPA 返回的查询结果数量不正确");
+          combined = combined.concat(data.results);
+        });
+      });
+    });
+    return chain.then(function () { return combined; });
   }
 
   function queryBalances(refresh) {
     var accounts = buildAccounts();
-    if (!accounts.length) { state.results = []; renderResults(); return Promise.resolve(); }
+    state.needsQuery = false;
+    if (state.queryController) state.queryController.abort();
+    var generation = ++state.queryGeneration;
+    if (!accounts.length) {
+      state.queryController = null;
+      state.querying = false;
+      state.results = [];
+      clearResultSnapshot();
+      renderResults();
+      return Promise.resolve();
+    }
+    var controller = new AbortController();
+    var credentials = Object.assign({}, state.credentials);
+    state.queryController = controller;
     state.querying = true;
     setButtonBusy(byID("refresh-button"), true, "查询中");
-    showSkeletons();
-    setText(byID("query-meta"), "正在查询 " + accounts.length + " 个账户");
-    return apiFetch("/balance-query/query", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accounts: accounts, refresh: Boolean(refresh) })
-    }, 60000).then(function (data) {
-      state.results = Array.isArray(data.results) ? data.results : [];
+    if (state.results.length) byID("results").setAttribute("aria-busy", "true");
+    else showSkeletons();
+    setText(byID("query-meta"), (refresh ? "正在刷新 " : "正在查询 ") + accounts.length + " 个账户");
+    return fetchAccountBatches(accountBatches(accounts), refresh, controller, credentials).then(function (results) {
+      if (generation !== state.queryGeneration) return;
+      state.results = results;
       renderResults();
+      return persistResultSnapshot(accounts, results, state.config.cache_ttl_seconds, credentials);
     }).catch(function (error) {
-      state.results = [];
+      if (generation !== state.queryGeneration || error && error.cancelled) return;
       renderResults();
       toast(error && error.message ? error.message : "余额查询失败", true);
     }).finally(function () {
+      if (generation !== state.queryGeneration) return;
       state.querying = false;
+      state.queryController = null;
       setButtonBusy(byID("refresh-button"), false, "刷新余额");
     });
   }
@@ -2491,7 +3009,7 @@ select:hover{border-color:var(--border-hover)}
     var body = byID("settings-body");
     var empty = byID("settings-empty");
     body.textContent = "";
-    byID("ttl-input").value = String(state.config.cache_ttl_seconds);
+    byID("ttl-input").value = String(state.draftTTL);
     if (!state.providers.length) {
       empty.hidden = false;
       emptyState(empty, "暂无 AI 提供商", "请先在 CPA 的 AI 提供商页面添加提供商和接口密钥。", null, null);
@@ -2539,8 +3057,7 @@ select:hover{border-color:var(--border-hover)}
           delete state.draftMappings[provider.legacyMappingKey];
           if (select.value) state.draftMappings[provider.mappingKey] = select.value;
           else delete state.draftMappings[provider.mappingKey];
-          state.dirty = true;
-          setText(byID("save-state"), "有未保存的更改");
+          refreshDirtyState();
         });
         queryCell.appendChild(select);
         row.appendChild(queryCell);
@@ -2550,58 +3067,100 @@ select:hover{border-color:var(--border-hover)}
   }
 
   function validateTTL() {
-    var value = Number(byID("ttl-input").value);
+    if (!String(state.draftTTL).trim()) return null;
+    var value = Number(state.draftTTL);
     if (!Number.isInteger(value) || value < 0 || (value > 0 && value < 10) || value > 86400) return null;
     return value;
   }
 
   function saveSettings() {
-    if (state.saving) return;
+    if (state.saving) return Promise.resolve(false);
     var ttl = validateTTL();
-    if (ttl == null) { toast("缓存时长应为 0，或 10 至 86400 之间的整数", true); byID("ttl-input").focus(); return; }
-    var nextMappings = {};
+    if (ttl == null) { toast("缓存时长应为 0，或 10 至 86400 之间的整数", true); byID("ttl-input").focus(); return Promise.resolve(false); }
+    var nextMappings = Object.assign({}, state.config.provider_mappings);
     state.providers.forEach(function (provider) {
-      var selected = mappedQueryType(provider, state.draftMappings);
-      if (providerLabels[selected]) nextMappings[provider.mappingKey] = selected;
+      var primaryChanged = owns(state.config.provider_mappings, provider.mappingKey) !== owns(state.draftMappings, provider.mappingKey) || state.config.provider_mappings[provider.mappingKey] !== state.draftMappings[provider.mappingKey];
+      var legacyChanged = owns(state.config.provider_mappings, provider.legacyMappingKey) !== owns(state.draftMappings, provider.legacyMappingKey) || state.config.provider_mappings[provider.legacyMappingKey] !== state.draftMappings[provider.legacyMappingKey];
+      if (!primaryChanged && !legacyChanged) return;
+      var resolved = resolvedProviderMapping(provider, state.draftMappings);
+      delete nextMappings[provider.mappingKey];
+      delete nextMappings[provider.legacyMappingKey];
+      if (providerLabels[resolved.type]) nextMappings[resolved.key] = resolved.type;
     });
+    var mappingChanged = stableMappings(nextMappings) !== stableMappings(state.config.provider_mappings);
+    var credentials = Object.assign({}, state.credentials);
+    var loadGeneration = state.loadGeneration;
+    var generation = ++state.saveGeneration;
+    var controller = new AbortController();
+    state.saveController = controller;
     state.saving = true;
     setButtonBusy(byID("save-button"), true, "保存中");
     setText(byID("save-state"), "正在保存");
-    apiFetch("/plugins/balance-query/config", {
+    return apiFetch("/plugins/balance-query/config", {
       method: "PATCH",
+      signal: controller.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cache_ttl_seconds: ttl, provider_mappings: nextMappings })
-    }).then(function () {
+    }, REQUEST_TIMEOUT, credentials).then(function () {
+      if (generation !== state.saveGeneration || loadGeneration !== state.loadGeneration || credentials.apiBase !== state.credentials.apiBase || credentials.managementKey !== state.credentials.managementKey) return false;
+      if (mappingChanged) cancelQueryRequests();
       state.config = { cache_ttl_seconds: ttl, provider_mappings: Object.assign({}, nextMappings) };
       state.draftMappings = Object.assign({}, nextMappings);
+      state.draftTTL = String(ttl);
       state.dirty = false;
-      state.results = [];
+      if (mappingChanged) {
+        clearResultSnapshot();
+        state.results = [];
+        state.needsQuery = true;
+      } else if (ttl === 0) {
+        clearResultSnapshot();
+      } else if (state.results.length) {
+        persistResultSnapshot(buildAccounts(), state.results, ttl, credentials);
+      }
       setText(byID("save-state"), "已保存");
       toast("查询设置已保存", false);
-      updateSummary();
+      if (state.view === "settings") renderSettings();
+      renderResults();
+      if (mappingChanged && state.view === "overview") {
+        state.needsQuery = false;
+        queryBalances(false);
+      }
       window.setTimeout(function () { if (!state.dirty) setText(byID("save-state"), ""); }, 2000);
+      return true;
     }).catch(function (error) {
+      if (generation !== state.saveGeneration || loadGeneration !== state.loadGeneration || error && error.cancelled) return false;
       setText(byID("save-state"), "保存失败");
       toast(error && error.message ? error.message : "保存设置失败", true);
+      return false;
     }).finally(function () {
+      if (generation !== state.saveGeneration || loadGeneration !== state.loadGeneration) return;
       state.saving = false;
+      state.saveController = null;
       setButtonBusy(byID("save-button"), false, "保存设置");
     });
   }
 
   function loadData() {
-    showApp();
+    cancelSaveRequests();
+    cancelQueryRequests();
+    if (state.loadController) state.loadController.abort();
+    var generation = ++state.loadGeneration;
+    var controller = new AbortController();
+    var credentials = Object.assign({}, state.credentials);
+    state.loadController = controller;
+    showApp(false);
     showSkeletons();
     setText(byID("query-meta"), "正在读取 AI 提供商");
     return Promise.all([
-      apiFetch("/openai-compatibility"),
-      optionalApiFetch("/claude-api-key"),
-      optionalApiFetch("/xai-api-key"),
-      optionalApiFetch("/codex-api-key"),
-      optionalApiFetch("/gemini-api-key"),
-      apiFetch("/plugins/balance-query/config"),
-      apiFetch("/proxy-url")
+      apiFetch("/openai-compatibility", { signal:controller.signal }, REQUEST_TIMEOUT, credentials),
+      optionalApiFetch("/claude-api-key", { signal:controller.signal }, REQUEST_TIMEOUT, credentials),
+      optionalApiFetch("/xai-api-key", { signal:controller.signal }, REQUEST_TIMEOUT, credentials),
+      optionalApiFetch("/codex-api-key", { signal:controller.signal }, REQUEST_TIMEOUT, credentials),
+      optionalApiFetch("/gemini-api-key", { signal:controller.signal }, REQUEST_TIMEOUT, credentials),
+      apiFetch("/plugins/balance-query/config", { signal:controller.signal }, REQUEST_TIMEOUT, credentials),
+      optionalApiFetch("/proxy-url", { signal:controller.signal }, REQUEST_TIMEOUT, credentials)
     ]).then(function (responses) {
+      if (generation !== state.loadGeneration) return null;
       var list = responses[0] && responses[0]["openai-compatibility"];
       state.providers = (Array.isArray(list) ? list : []).map(function (entry, index) {
         return normalizeProvider(entry, index, "openai-compatibility");
@@ -2614,16 +3173,34 @@ select:hover{border-color:var(--border-hover)}
       state.config = normalizeConfig(responses[5]);
       state.globalProxyUrl = String(responses[6] && responses[6]["proxy-url"] || "").trim();
       state.draftMappings = Object.assign({}, state.config.provider_mappings);
+      state.draftTTL = String(state.config.cache_ttl_seconds);
       state.results = [];
       state.dirty = false;
+      state.needsQuery = false;
       renderSettings();
       updateSummary();
-      renderResults();
-      return queryBalances(false);
+      var accounts = buildAccounts();
+      return readResultSnapshot(accounts, state.config.cache_ttl_seconds, credentials).then(function (snapshot) {
+        if (generation !== state.loadGeneration) return;
+        showApp(true);
+        if (snapshot) {
+          state.results = snapshot.results;
+          renderResults();
+          if (snapshot.fresh && snapshot.complete) return;
+        }
+        if (!accounts.length) {
+          renderResults();
+          return;
+        }
+        return queryBalances(false);
+      });
     }).catch(function (error) {
+      if (generation !== state.loadGeneration || error && error.cancelled) return;
       var authError = error && (error.status === 401 || error.status === 403);
-      state.credentials.managementKey = "";
+      if (authError) state.credentials.managementKey = "";
       showConnection(authError ? "管理密钥无效，请重新输入。" : (error && error.message ? error.message : "无法连接 CPA。"));
+    }).finally(function () {
+      if (generation === state.loadGeneration) state.loadController = null;
     });
   }
 
@@ -2632,10 +3209,16 @@ select:hover{border-color:var(--border-hover)}
   });
   byID("refresh-button").addEventListener("click", function () { if (!state.querying) queryBalances(true); });
   byID("save-button").addEventListener("click", saveSettings);
-  byID("reconnect-button").addEventListener("click", function () { showConnection(""); });
+  byID("reconnect-button").addEventListener("click", function () {
+    cancelLoadRequests();
+    cancelQueryRequests();
+    cancelSaveRequests();
+    state.needsQuery = false;
+    showConnection("");
+  });
   byID("ttl-input").addEventListener("input", function () {
-    state.dirty = Number(byID("ttl-input").value) !== state.config.cache_ttl_seconds || JSON.stringify(state.draftMappings) !== JSON.stringify(state.config.provider_mappings);
-    setText(byID("save-state"), state.dirty ? "有未保存的更改" : "");
+    state.draftTTL = byID("ttl-input").value;
+    refreshDirtyState();
   });
   byID("connection-form").addEventListener("submit", function (event) {
     event.preventDefault();
@@ -2643,11 +3226,20 @@ select:hover{border-color:var(--border-hover)}
     var key = byID("management-key-input").value.trim();
     if (!base) { setText(byID("connection-error"), "请输入有效的 CPA HTTP(S) 地址。" ); return; }
     if (!key) { setText(byID("connection-error"), "请输入管理密钥。" ); return; }
+    var connectionChanged = base !== state.credentials.apiBase || key !== state.credentials.managementKey;
     state.credentials = { apiBase: base, managementKey: key };
+    if (connectionChanged) {
+      state.results = [];
+      state.needsQuery = false;
+    }
     byID("management-key-input").value = "";
     setText(byID("connection-error"), "");
     setButtonBusy(byID("connect-button"), true, "连接中");
-    loadData().finally(function () { setButtonBusy(byID("connect-button"), false, "连接"); });
+    var loading = loadData();
+    var generation = state.loadGeneration;
+    loading.finally(function () {
+      if (generation === state.loadGeneration) setButtonBusy(byID("connect-button"), false, "连接");
+    });
   });
   window.addEventListener("beforeunload", function (event) {
     if (!state.dirty) return;

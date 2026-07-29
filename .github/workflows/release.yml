@@ -21,7 +21,9 @@ jobs:
           go-version: '1.22'
 
       - name: Test
-        run: go test ./...
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          BALANCE_QUERY_EXPECT_VERSION="${VERSION}" go test ./...
 
       - name: Vet
         run: go vet ./...
@@ -157,10 +159,10 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           # Flatten zip files into dist/zips/
           mkdir -p dist/zips
-          find dist -name '*.zip' -exec mv {} dist/zips/ \;
+          find dist -mindepth 2 -type f -name '*.zip' -not -path 'dist/zips/*' -exec mv -t dist/zips -- {} +
           # Flatten metadata
           mkdir -p dist/meta
-          find dist -name '*.json' -exec mv {} dist/meta/ \;
+          find dist -mindepth 2 -type f -name '*.json' -not -path 'dist/meta/*' -exec mv -t dist/meta -- {} +
           ls dist/zips/
           ls dist/meta/
 
@@ -195,26 +197,6 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           REPO="https://github.com/Hamster-Prime/balance-query"
           RAW="https://github.com/Hamster-Prime/balance-query/releases/download/${TAG}"
-
-          # Build artifact array from metadata
-          ARTIFACTS=$(python3 - <<'PYEOF'
-          import json, os, glob
-
-          meta_files = glob.glob('dist/meta/*.json')
-          artifacts = []
-          for f in sorted(meta_files):
-              with open(f) as fp:
-                  m = json.load(fp)
-              artifacts.append({
-                  "goos": m["goos"],
-                  "goarch": m["goarch"],
-                  "url": f"$RAW/{m['zip']}",
-                  "sha256": m["sha256"],
-                  "size": m["size"]
-              })
-          print(json.dumps(artifacts, indent=4))
-          PYEOF
-          )
 
           # Write registry.json (v1)
           cat > registry.json <<JSONEOF

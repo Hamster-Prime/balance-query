@@ -2,7 +2,6 @@ package providers
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -30,13 +29,13 @@ func (d DeepSeek) Fetch(authID, token, proxyURL string) balance.Result {
 	if strings.TrimSpace(d.BaseURL) != "" {
 		derived, err := serviceEndpoint(d.BaseURL, "/user/balance")
 		if err != nil {
-			return errResult(authID, balance.ProviderLabel[balance.ProviderDeepSeek], err.Error())
+			return errResult(authID, balance.ProviderLabel[balance.ProviderDeepSeek], err)
 		}
 		endpoint = derived
 	}
 	var resp deepSeekResp
 	if err := getJSON(endpoint, token, proxyURL, &resp); err != nil {
-		return errResult(authID, balance.ProviderLabel[balance.ProviderDeepSeek], err.Error())
+		return errResult(authID, balance.ProviderLabel[balance.ProviderDeepSeek], err)
 	}
 	r := balance.Result{
 		Provider:  balance.ProviderLabel[balance.ProviderDeepSeek],
@@ -45,7 +44,8 @@ func (d DeepSeek) Fetch(authID, token, proxyURL string) balance.Result {
 		Extra:     map[string]string{"账户状态": map[bool]string{true: "可用", false: "不可用"}[resp.IsAvailable]},
 	}
 	if len(resp.BalanceInfos) == 0 {
-		return errResult(authID, balance.ProviderLabel[balance.ProviderDeepSeek], "官方接口未返回余额明细")
+		return errResult(authID, balance.ProviderLabel[balance.ProviderDeepSeek],
+			invalidResponseError("官方接口未返回余额明细"))
 	}
 	for _, b := range resp.BalanceInfos {
 		currency := b.Currency
@@ -57,18 +57,37 @@ func (d DeepSeek) Fetch(authID, token, proxyURL string) balance.Result {
 		r.Extra[currency+" 充值余额"] = b.ToppedUpBalance
 		switch b.Currency {
 		case "CNY":
+			amount, ok := numberValue(b.TotalBalance)
+			if !ok {
+				return errResult(authID, balance.ProviderLabel[balance.ProviderDeepSeek],
+					invalidResponseError("DeepSeek 余额接口返回了无效的人民币余额"))
+			}
+			if !r.HasBalanceAmount {
+				r.BalanceAmount = amount
+				r.BalanceCurrency = "CNY"
+				r.HasBalanceAmount = true
+				r.BalanceScope = "account"
+			}
 			if r.QuotaDisplay == "" {
 				r.QuotaDisplay = fmt.Sprintf("可用 ¥%s", b.TotalBalance)
 			}
 		case "USD":
+			amount, ok := numberValue(b.TotalBalance)
+			if !ok {
+				return errResult(authID, balance.ProviderLabel[balance.ProviderDeepSeek],
+					invalidResponseError("DeepSeek 余额接口返回了无效的美元余额"))
+			}
 			if r.QuotaDisplay == "" {
 				r.QuotaDisplay = fmt.Sprintf("可用 $%s", b.TotalBalance)
 			}
-			if amount, err := strconv.ParseFloat(b.TotalBalance, 64); err == nil {
-				r.BalanceUSD = amount
-				r.HasBalance = true
-				r.BalanceScope = "account"
+			if !r.HasBalanceAmount {
+				r.BalanceAmount = amount
+				r.BalanceCurrency = "USD"
+				r.HasBalanceAmount = true
 			}
+			r.BalanceUSD = amount
+			r.HasBalance = true
+			r.BalanceScope = "account"
 		}
 	}
 	if r.QuotaDisplay == "" {

@@ -55,11 +55,55 @@ type Result struct {
 	// than integer tokens.
 	QuotaWindows []QuotaWindow `json:"quota_windows,omitempty"`
 
-	// Non-empty means this entry failed to fetch.
-	Error string `json:"error,omitempty"`
+	// Non-empty means this entry failed to fetch. Error is retained for older
+	// dashboard clients; Failure carries a stable category and actionable detail.
+	Error   string       `json:"error,omitempty"`
+	Failure *FailureInfo `json:"failure,omitempty"`
+	// Warnings preserve usable partial data when one of several independent
+	// provider endpoints fails (for example Anthropic usage vs. cost reports).
+	Warnings []FailureInfo `json:"warnings,omitempty"`
 
 	FetchedAt time.Time `json:"fetched_at"`
 }
+
+// FailureInfo is the normalized, provider-safe description of a failed query.
+// Provider responses are deliberately reduced to these fields so credentials,
+// HTML error pages, and other untrusted upstream content are never reflected in
+// the dashboard.
+type FailureInfo struct {
+	Kind         string `json:"kind"`
+	Title        string `json:"title"`
+	Reason       string `json:"reason"`
+	Suggestion   string `json:"suggestion,omitempty"`
+	Retryable    bool   `json:"retryable"`
+	HTTPStatus   int    `json:"http_status,omitempty"`
+	ProviderCode string `json:"provider_code,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
+	// RetryAfterSeconds mirrors an upstream Retry-After hint when available.
+	RetryAfterSeconds int64 `json:"retry_after_seconds,omitempty"`
+}
+
+const (
+	FailureAuthentication   = "authentication"
+	FailurePermission       = "permission"
+	FailureInsufficientFund = "insufficient_funds"
+	FailureQuotaExhausted   = "quota_exhausted"
+	FailureRateLimited      = "rate_limited"
+	FailureConflict         = "conflict"
+	FailureInvalidConfig    = "invalid_config"
+	FailureEndpoint         = "endpoint"
+	FailureProxy            = "proxy"
+	FailureTimeout          = "timeout"
+	FailureDNS              = "dns"
+	FailureTLS              = "tls"
+	FailureNetwork          = "network"
+	FailureInvalidResponse  = "invalid_response"
+	FailureService          = "service_unavailable"
+	FailureAccount          = "account_restricted"
+	FailureNoData           = "no_data"
+	FailureUnsupported      = "unsupported"
+	FailureUnknown          = "unknown"
+)
 
 // QuotaWindow is one independently-resetting quota bucket. Providers often
 // expose several of these at once, so flattening them into Result's legacy

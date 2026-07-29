@@ -1,10 +1,12 @@
 package providers
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +14,8 @@ import (
 )
 
 const anthropicVersion = "2023-06-01"
+
+const claudeReportTimeout = 75 * time.Second
 
 // ClaudeAdmin queries Anthropic's organization Usage & Cost Admin API. These
 // endpoints report historical organization activity; they do not expose a
@@ -68,6 +72,7 @@ type claudeUsageTotals struct {
 	Cache5M       int64
 	Output        int64
 	WebSearches   int64
+	TotalTokens   int64
 	ByModel       map[string]*claudeModelUsage
 }
 
@@ -77,18 +82,29 @@ type claudeModelUsage struct {
 	WebSearches int64
 }
 
+type claudeUsageOutcome struct {
+	totals claudeUsageTotals
+	err    error
+}
+
+type claudeCostOutcome struct {
+	totalUSD float64
+	details  map[string]float64
+	err      error
+}
+
 func (totals claudeUsageTotals) inputTokens() int64 {
-	return totals.UncachedInput + totals.CacheRead + totals.Cache1H + totals.Cache5M
+	return totals.TotalTokens - totals.Output
 }
 
 func (totals claudeUsageTotals) totalTokens() int64 {
-	return totals.inputTokens() + totals.Output
+	return totals.TotalTokens
 }
 
 func (c ClaudeAdmin) Fetch(authID, token, proxyURL string) balance.Result {
 	label := balance.ProviderLabel[balance.ProviderClaudeAdmin]
 	if strings.TrimSpace(token) == "" {
-		return errResult(authID, label, "管理员密钥为空")
+		return errResult(authID, label, newProviderError(balance.FailureAuthentication, "管理员密钥为空", 0, "", nil))
 	}
 
 	baseURL := strings.TrimSpace(c.BaseURL)
@@ -97,11 +113,11 @@ func (c ClaudeAdmin) Fetch(authID, token, proxyURL string) balance.Result {
 	}
 	usageEndpoint, err := serviceEndpoint(baseURL, "/v1/organizations/usage_report/messages")
 	if err != nil {
-		return errResult(authID, label, err.Error())
+		return errResult(authID, label, err)
 	}
 	costEndpoint, err := serviceEndpoint(baseURL, "/v1/organizations/cost_report")
 	if err != nil {
-		return errResult(authID, label, err.Error())
+		return errResult(authID, label, err)
 	}
 
 	endingAt := time.Now().UTC().Truncate(time.Hour)
@@ -121,10 +137,23 @@ func (c ClaudeAdmin) Fetch(authID, token, proxyURL string) balance.Result {
 		"anthropic-version": anthropicVersion,
 	}
 
-	usageTotals, usageErr := fetchClaudeUsage(usageEndpoint, usageQuery, proxyURL, headers)
-	costUSD, costDetails, costErr := fetchClaudeCosts(costEndpoint, costQuery, proxyURL, headers)
+	usageResult := make(chan claudeUsageOutcome, 1)
+	costResult := make(chan claudeCostOutcome, 1)
+	go func() {
+		totals, fetchErr := fetchClaudeUsage(usageEndpoint, usageQuery, proxyURL, headers)
+		usageResult <- claudeUsageOutcome{totals: totals, err: fetchErr}
+	}()
+	go func() {
+		totalUSD, details, fetchErr := fetchClaudeCosts(costEndpoint, costQuery, proxyURL, headers)
+		costResult <- claudeCostOutcome{totalUSD: totalUSD, details: details, err: fetchErr}
+	}()
+
+	usage := <-usageResult
+	cost := <-costResult
+	usageTotals, usageErr := usage.totals, usage.err
+	costUSD, costDetails, costErr := cost.totalUSD, cost.details, cost.err
 	if usageErr != nil && costErr != nil {
-		return errResult(authID, label, fmt.Sprintf("用量查询失败：%v；费用查询失败：%v", usageErr, costErr))
+		return errResult(authID, label, combinedClaudeReportError(usageErr, costErr))
 	}
 
 	result := balance.Result{
@@ -144,7 +173,9 @@ func (c ClaudeAdmin) Fetch(authID, token, proxyURL string) balance.Result {
 			result.Extra["费用 "+description] = fmt.Sprintf("%.2f USD", amount)
 		}
 	} else {
-		result.Extra["费用查询"] = "未成功，请确认管理员密钥具有组织费用读取权限"
+		warning := providerWarning("费用查询", costErr)
+		result.Warnings = append(result.Warnings, warning)
+		result.Extra["费用查询"] = "未成功，详见告警：" + warning.Title
 	}
 	if usageErr == nil {
 		if result.QuotaDisplay == "" {
@@ -152,12 +183,52 @@ func (c ClaudeAdmin) Fetch(authID, token, proxyURL string) balance.Result {
 		}
 		appendClaudeUsageDetails(&result, usageTotals)
 	} else {
-		result.Extra["用量查询"] = "未成功，请确认管理员密钥具有组织用量读取权限"
+		warning := providerWarning("用量查询", usageErr)
+		result.Warnings = append(result.Warnings, warning)
+		result.Extra["用量查询"] = "未成功，详见告警：" + warning.Title
 	}
 	return result
 }
 
+func combinedClaudeReportError(usageErr, costErr error) error {
+	message := fmt.Sprintf("用量查询失败：%v；费用查询失败：%v", usageErr, costErr)
+	usageFailure := providerWarning("", usageErr)
+	costFailure := providerWarning("", costErr)
+	kind := balance.FailureUnknown
+	status := 0
+	code := ""
+	retryAfter := max(usageFailure.RetryAfterSeconds, costFailure.RetryAfterSeconds)
+	requestID := ""
+	if usageFailure.Kind == costFailure.Kind {
+		kind = usageFailure.Kind
+		if usageFailure.HTTPStatus == costFailure.HTTPStatus {
+			status = usageFailure.HTTPStatus
+		}
+		if usageFailure.ProviderCode == costFailure.ProviderCode {
+			code = usageFailure.ProviderCode
+		}
+		if usageFailure.RequestID == costFailure.RequestID {
+			requestID = usageFailure.RequestID
+		}
+	}
+	return &ProviderError{
+		Kind:              kind,
+		Message:           safeProviderMessage(message),
+		HTTPStatus:        status,
+		ProviderCode:      code,
+		RequestID:         requestID,
+		RetryAfterSeconds: retryAfter,
+		Cause:             errors.Join(usageErr, costErr),
+	}
+}
+
 func fetchClaudeUsage(endpoint string, query url.Values, proxyURL string, headers map[string]string) (claudeUsageTotals, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), claudeReportTimeout)
+	defer cancel()
+	return fetchClaudeUsageWithContext(ctx, endpoint, query, proxyURL, headers)
+}
+
+func fetchClaudeUsageWithContext(ctx context.Context, endpoint string, query url.Values, proxyURL string, headers map[string]string) (claudeUsageTotals, error) {
 	totals := claudeUsageTotals{ByModel: map[string]*claudeModelUsage{}}
 	page := ""
 	for requestCount := 0; requestCount < 20; requestCount++ {
@@ -166,26 +237,35 @@ func fetchClaudeUsage(endpoint string, query url.Values, proxyURL string, header
 			pageQuery.Set("page", page)
 		}
 		var response claudeUsageResponse
-		if err := getJSONWithHeaders(endpoint+"?"+pageQuery.Encode(), proxyURL, headers, &response); err != nil {
+		if err := getJSONWithHeadersContext(ctx, endpoint+"?"+pageQuery.Encode(), proxyURL, headers, &response); err != nil {
 			return claudeUsageTotals{}, err
 		}
 		for _, bucket := range response.Data {
 			for _, item := range bucket.Results {
-				totals.UncachedInput += item.UncachedInputTokens
-				totals.CacheRead += item.CacheReadInputTokens
-				totals.Cache1H += item.CacheCreation.Ephemeral1HInputTokens
-				totals.Cache5M += item.CacheCreation.Ephemeral5MInputTokens
-				totals.Output += item.OutputTokens
-				totals.WebSearches += item.ServerToolUse.WebSearchRequests
+				if !addNonnegativeInt64(&totals.TotalTokens, item.UncachedInputTokens, item.CacheReadInputTokens,
+					item.CacheCreation.Ephemeral1HInputTokens, item.CacheCreation.Ephemeral5MInputTokens, item.OutputTokens) {
+					return claudeUsageTotals{}, invalidResponseError("用量接口返回了无效或溢出的令牌总数")
+				}
+				if !addNonnegativeInt64(&totals.UncachedInput, item.UncachedInputTokens) ||
+					!addNonnegativeInt64(&totals.CacheRead, item.CacheReadInputTokens) ||
+					!addNonnegativeInt64(&totals.Cache1H, item.CacheCreation.Ephemeral1HInputTokens) ||
+					!addNonnegativeInt64(&totals.Cache5M, item.CacheCreation.Ephemeral5MInputTokens) ||
+					!addNonnegativeInt64(&totals.Output, item.OutputTokens) ||
+					!addNonnegativeInt64(&totals.WebSearches, item.ServerToolUse.WebSearchRequests) {
+					return claudeUsageTotals{}, invalidResponseError("用量接口返回了无效或溢出的计数")
+				}
 				model := firstNonEmpty(strings.TrimSpace(item.Model), "未知模型")
 				modelTotals := totals.ByModel[model]
 				if modelTotals == nil {
 					modelTotals = &claudeModelUsage{}
 					totals.ByModel[model] = modelTotals
 				}
-				modelTotals.Input += item.UncachedInputTokens + item.CacheReadInputTokens + item.CacheCreation.Ephemeral1HInputTokens + item.CacheCreation.Ephemeral5MInputTokens
-				modelTotals.Output += item.OutputTokens
-				modelTotals.WebSearches += item.ServerToolUse.WebSearchRequests
+				if !addNonnegativeInt64(&modelTotals.Input, item.UncachedInputTokens, item.CacheReadInputTokens,
+					item.CacheCreation.Ephemeral1HInputTokens, item.CacheCreation.Ephemeral5MInputTokens) ||
+					!addNonnegativeInt64(&modelTotals.Output, item.OutputTokens) ||
+					!addNonnegativeInt64(&modelTotals.WebSearches, item.ServerToolUse.WebSearchRequests) {
+					return claudeUsageTotals{}, invalidResponseError("用量接口返回了无效或溢出的模型计数")
+				}
 			}
 		}
 		if !response.HasMore || strings.TrimSpace(response.NextPage) == "" {
@@ -193,10 +273,26 @@ func fetchClaudeUsage(endpoint string, query url.Values, proxyURL string, header
 		}
 		page = response.NextPage
 	}
-	return claudeUsageTotals{}, fmt.Errorf("用量接口分页超过安全上限")
+	return claudeUsageTotals{}, invalidResponseError("用量接口分页超过安全上限")
+}
+
+func addNonnegativeInt64(target *int64, values ...int64) bool {
+	for _, value := range values {
+		if value < 0 || *target > math.MaxInt64-value {
+			return false
+		}
+		*target += value
+	}
+	return true
 }
 
 func fetchClaudeCosts(endpoint string, query url.Values, proxyURL string, headers map[string]string) (float64, map[string]float64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), claudeReportTimeout)
+	defer cancel()
+	return fetchClaudeCostsWithContext(ctx, endpoint, query, proxyURL, headers)
+}
+
+func fetchClaudeCostsWithContext(ctx context.Context, endpoint string, query url.Values, proxyURL string, headers map[string]string) (float64, map[string]float64, error) {
 	totalUSD := 0.0
 	details := map[string]float64{}
 	page := ""
@@ -206,7 +302,7 @@ func fetchClaudeCosts(endpoint string, query url.Values, proxyURL string, header
 			pageQuery.Set("page", page)
 		}
 		var response claudeCostResponse
-		if err := getJSONWithHeaders(endpoint+"?"+pageQuery.Encode(), proxyURL, headers, &response); err != nil {
+		if err := getJSONWithHeadersContext(ctx, endpoint+"?"+pageQuery.Encode(), proxyURL, headers, &response); err != nil {
 			return 0, nil, err
 		}
 		for _, bucket := range response.Data {
@@ -214,14 +310,22 @@ func fetchClaudeCosts(endpoint string, query url.Values, proxyURL string, header
 				if item.Currency != "" && !strings.EqualFold(item.Currency, "USD") {
 					continue
 				}
-				amountInCents, err := strconv.ParseFloat(strings.TrimSpace(item.Amount), 64)
-				if err != nil {
-					return 0, nil, fmt.Errorf("费用金额格式无效")
+				amountInCents, ok := numberValue(item.Amount)
+				if !ok {
+					return 0, nil, invalidResponseError("费用金额格式无效")
 				}
 				amountUSD := amountInCents / 100
-				totalUSD += amountUSD
+				nextTotal := totalUSD + amountUSD
 				description := claudeCostDetailLabel(item)
-				details[description] += amountUSD
+				nextDetail := details[description] + amountUSD
+				if _, ok := numberValue(nextTotal); !ok {
+					return 0, nil, invalidResponseError("费用合计超出可表示范围")
+				}
+				if _, ok := numberValue(nextDetail); !ok {
+					return 0, nil, invalidResponseError("费用明细合计超出可表示范围")
+				}
+				totalUSD = nextTotal
+				details[description] = nextDetail
 			}
 		}
 		if !response.HasMore || strings.TrimSpace(response.NextPage) == "" {
@@ -229,7 +333,7 @@ func fetchClaudeCosts(endpoint string, query url.Values, proxyURL string, header
 		}
 		page = response.NextPage
 	}
-	return 0, nil, fmt.Errorf("费用接口分页超过安全上限")
+	return 0, nil, invalidResponseError("费用接口分页超过安全上限")
 }
 
 func appendClaudeUsageDetails(result *balance.Result, totals claudeUsageTotals) {
