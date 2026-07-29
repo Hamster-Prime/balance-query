@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -138,6 +139,60 @@ func TestApplyRuntimeConfigEmptyYAMLResetsState(t *testing.T) {
 	}
 }
 
+func TestConcurrentRuntimeConfigKeepsCachePolicyAndStateAligned(t *testing.T) {
+	previousState := snapshotState()
+	t.Cleanup(func() {
+		stateMu.Lock()
+		resultCache.Reset(time.Duration(previousState.CacheTTLSeconds) * time.Second)
+		state = previousState
+		stateMu.Unlock()
+	})
+
+	configWithTTL := func(ttl int) []byte {
+		raw, err := json.Marshal(lifecycleRequest{ConfigYAML: []byte(
+			"cache_ttl_seconds: " + strconv.Itoa(ttl) + "\nprovider_mappings: {}\n",
+		)})
+		if err != nil {
+			t.Fatalf("marshal TTL %d config: %v", ttl, err)
+		}
+		return raw
+	}
+	disabled := configWithTTL(0)
+	enabled := configWithTTL(600)
+
+	for iteration := 0; iteration < 100; iteration++ {
+		stateMu.Lock()
+		resultCache.Reset(defaultTTLSeconds * time.Second)
+		state = balance.PluginConfig{CacheTTLSeconds: defaultTTLSeconds, ProviderMappings: map[string]balance.ProviderType{}}
+		stateMu.Unlock()
+
+		var wait sync.WaitGroup
+		errors := make(chan error, 2)
+		for _, raw := range [][]byte{disabled, enabled} {
+			wait.Add(1)
+			go func(config []byte) {
+				defer wait.Done()
+				errors <- applyRuntimeConfig(config)
+			}(raw)
+		}
+		wait.Wait()
+		close(errors)
+		for err := range errors {
+			if err != nil {
+				t.Fatalf("concurrent applyRuntimeConfig() error = %v", err)
+			}
+		}
+
+		probeKey := "cache-policy-probe-" + strconv.Itoa(iteration)
+		resultCache.Set(probeKey, balance.Result{Provider: "probe"})
+		_, cached := resultCache.Get(probeKey)
+		if ttl := currentTTL(); (ttl == 0 && cached) || (ttl > 0 && !cached) {
+			t.Fatalf("runtime TTL %d and cache policy diverged on iteration %d (cached=%t)", ttl, iteration, cached)
+		}
+		resultCache.Delete(probeKey)
+	}
+}
+
 func TestManagementRegisterSeparatesAuthenticatedQueryAndResource(t *testing.T) {
 	raw, err := handleMethod("management.register", nil)
 	if err != nil {
@@ -147,11 +202,14 @@ func TestManagementRegisterSeparatesAuthenticatedQueryAndResource(t *testing.T) 
 	var registration managementRegistration
 	decodeOKEnvelope(t, raw, &registration)
 
-	if len(registration.Routes) != 1 {
-		t.Fatalf("management routes = %d, want 1: %#v", len(registration.Routes), registration.Routes)
+	if len(registration.Routes) != 2 {
+		t.Fatalf("management routes = %d, want 2: %#v", len(registration.Routes), registration.Routes)
 	}
 	if route := registration.Routes[0]; route.Method != http.MethodPost || route.Path != queryPath {
 		t.Fatalf("management route = %#v, want POST %s", route, queryPath)
+	}
+	if route := registration.Routes[1]; route.Method != http.MethodGet || route.Path != configStatePath {
+		t.Fatalf("management route = %#v, want GET %s", route, configStatePath)
 	}
 	if len(registration.Resources) != 1 {
 		t.Fatalf("resource routes = %d, want 1: %#v", len(registration.Resources), registration.Resources)
@@ -164,7 +222,7 @@ func TestManagementRegisterSeparatesAuthenticatedQueryAndResource(t *testing.T) 
 	// without management authentication. Keep the secret-bearing query endpoint out
 	// of Resources and the navigable dashboard out of authenticated API routes.
 	for _, resource := range registration.Resources {
-		if resource.Path == queryPath {
+		if resource.Path == queryPath || resource.Path == configStatePath {
 			t.Fatalf("secret-bearing query path %q was exposed as an unauthenticated resource", queryPath)
 		}
 	}
@@ -172,6 +230,62 @@ func TestManagementRegisterSeparatesAuthenticatedQueryAndResource(t *testing.T) 
 		if route.Path == resourcePath {
 			t.Fatalf("dashboard path %q was incorrectly registered as a management API route", resourcePath)
 		}
+	}
+}
+
+func TestRuntimeConfigStateRouteReturnsDeepCopy(t *testing.T) {
+	previous := snapshotState()
+	stateMu.Lock()
+	state = balance.PluginConfig{
+		CacheTTLSeconds:  600,
+		ProviderMappings: map[string]balance.ProviderType{"provider": balance.ProviderNewAPI},
+	}
+	stateMu.Unlock()
+	t.Cleanup(func() {
+		stateMu.Lock()
+		state = previous
+		stateMu.Unlock()
+	})
+
+	direct := currentConfigState()
+	direct.ProviderMappings["provider"] = balance.ProviderDeepSeek
+	if current := currentConfigState(); current.ProviderMappings["provider"] != balance.ProviderNewAPI {
+		t.Fatalf("currentConfigState shared its mapping map: %#v", current)
+	}
+
+	rawRequest, err := json.Marshal(managementRequest{Method: http.MethodGet, Path: configStatePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawResponse, err := handleManagementRequest(rawRequest)
+	if err != nil {
+		t.Fatalf("handleManagementRequest() error = %v", err)
+	}
+	var response managementResponse
+	decodeOKEnvelope(t, rawResponse, &response)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", response.StatusCode, response.Body)
+	}
+	var got balance.PluginConfig
+	if err := json.Unmarshal(response.Body, &got); err != nil {
+		t.Fatalf("decode config state: %v", err)
+	}
+	got.ProviderMappings["provider"] = balance.ProviderDeepSeek
+	if current := currentConfigState(); current.ProviderMappings["provider"] != balance.ProviderNewAPI {
+		t.Fatalf("runtime config response shared its mapping map: %#v", current)
+	}
+
+	rawRequest, err = json.Marshal(managementRequest{Method: http.MethodPost, Path: configStatePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawResponse, err = handleManagementRequest(rawRequest)
+	if err != nil {
+		t.Fatalf("handleManagementRequest() error = %v", err)
+	}
+	decodeOKEnvelope(t, rawResponse, &response)
+	if response.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status = %d, want 405", response.StatusCode)
 	}
 }
 

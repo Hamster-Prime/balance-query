@@ -62,8 +62,9 @@ const (
 	abiVersion    = 1
 	schemaVersion = 1
 
-	resourcePath = "/dashboard"
-	queryPath    = "/" + pluginID + "/query"
+	resourcePath    = "/dashboard"
+	queryPath       = "/" + pluginID + "/query"
+	configStatePath = "/" + pluginID + "/config-state"
 
 	defaultTTLSeconds     = 300
 	maxQueryAccounts      = 128
@@ -165,12 +166,12 @@ func cliproxyPluginFree(ptr unsafe.Pointer, _ C.size_t) {
 func cliproxyPluginShutdown() {
 	providers.CloseIdleConnections()
 	stateMu.Lock()
+	resultCache.Reset(defaultTTLSeconds * time.Second)
 	state = balance.PluginConfig{
 		CacheTTLSeconds:  defaultTTLSeconds,
 		ProviderMappings: map[string]balance.ProviderType{},
 	}
 	stateMu.Unlock()
-	resultCache.Reset(defaultTTLSeconds * time.Second)
 }
 
 func handleMethod(method string, request []byte) ([]byte, error) {
@@ -255,13 +256,16 @@ func applyRuntimeConfig(raw []byte) error {
 		return fmt.Errorf("解析插件配置请求失败：%w", err)
 	}
 	if len(request.ConfigYAML) == 0 || strings.TrimSpace(string(request.ConfigYAML)) == "" {
+		// Clear cached results before publishing the reset configuration. Once the
+		// runtime state endpoint exposes the new TTL, callers must not be able to
+		// observe entries created under the previous cache policy.
 		stateMu.Lock()
+		resultCache.Reset(defaultTTLSeconds * time.Second)
 		state = balance.PluginConfig{
 			CacheTTLSeconds:  defaultTTLSeconds,
 			ProviderMappings: map[string]balance.ProviderType{},
 		}
 		stateMu.Unlock()
-		resultCache.Reset(defaultTTLSeconds * time.Second)
 		return nil
 	}
 
@@ -288,14 +292,18 @@ func applyRuntimeConfig(raw []byte) error {
 		}
 	}
 
+	// Serialize cache-policy changes and runtime-state publication so concurrent
+	// reconfigure calls cannot leave the cache TTL and the visible state out of
+	// sync with one another.
 	stateMu.Lock()
-	previousTTL := state.CacheTTLSeconds
-	state = next
-	stateMu.Unlock()
-
-	if previousTTL != next.CacheTTLSeconds {
+	if state.CacheTTLSeconds != next.CacheTTLSeconds {
 		resultCache.Reset(time.Duration(next.CacheTTLSeconds) * time.Second)
 	}
+	// Publish the new runtime state only after a TTL change has atomically
+	// cleared the old cache. The dashboard uses this state as its confirmation
+	// barrier before issuing queries under the new settings.
+	state = next
+	stateMu.Unlock()
 	return nil
 }
 
@@ -316,6 +324,19 @@ func currentTTL() int {
 	stateMu.RLock()
 	defer stateMu.RUnlock()
 	return state.CacheTTLSeconds
+}
+
+func currentConfigState() balance.PluginConfig {
+	stateMu.RLock()
+	defer stateMu.RUnlock()
+	mappings := make(map[string]balance.ProviderType, len(state.ProviderMappings))
+	for key, providerType := range state.ProviderMappings {
+		mappings[key] = providerType
+	}
+	return balance.PluginConfig{
+		CacheTTLSeconds:  state.CacheTTLSeconds,
+		ProviderMappings: mappings,
+	}
 }
 
 type managementRegistration struct {
@@ -350,7 +371,10 @@ type managementResponse struct {
 
 func handleManagementRegister() ([]byte, error) {
 	return okEnvelope(managementRegistration{
-		Routes: []managementRoute{{Method: http.MethodPost, Path: queryPath}},
+		Routes: []managementRoute{
+			{Method: http.MethodPost, Path: queryPath},
+			{Method: http.MethodGet, Path: configStatePath},
+		},
 		Resources: []managementResource{{
 			Path:        resourcePath,
 			Menu:        "余额与配额",
@@ -374,6 +398,14 @@ func handleManagementRequest(raw []byte) ([]byte, error) {
 			}))
 		}
 		return handleBalanceQuery(request)
+	}
+	if strings.HasSuffix(request.Path, configStatePath) {
+		if !strings.EqualFold(request.Method, http.MethodGet) {
+			return okEnvelope(jsonResponse(http.StatusMethodNotAllowed, map[string]string{
+				"error": "仅支持 GET 请求",
+			}))
+		}
+		return okEnvelope(jsonResponse(http.StatusOK, currentConfigState()))
 	}
 
 	page := ui.RenderDashboard(currentTTL())

@@ -560,30 +560,35 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .empty-icon .icon{width:20px;height:20px}
 .empty-title{font-weight:650;color:var(--text-primary);margin:0 0 4px}
 .empty-desc{font-size:13px;max-width:480px;margin:0 0 14px;color:var(--text-secondary)}
-.settings-sheet{border:1px solid var(--border-color);border-radius:8px;background:var(--bg-primary);box-shadow:var(--shadow);overflow:hidden;animation:item-in 300ms ease-out both}
-.settings-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border-bottom:1px solid var(--border-color);background:var(--bg-quinary)}
+.settings-layout{display:grid;gap:16px}
+.settings-policy-card,.settings-sheet{border:1px solid var(--border-color);border-radius:8px;background:var(--bg-primary);box-shadow:var(--shadow);overflow:hidden;animation:item-in 300ms ease-out both}
+.settings-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 18px;background:linear-gradient(145deg,var(--bg-primary),var(--bg-quinary))}
+.settings-toolbar-copy{min-width:0}.settings-toolbar-title{display:block;font-size:13px;font-weight:680;color:var(--text-primary)}
+.settings-provider-nav{margin-bottom:0}
 .ttl-field{display:flex;align-items:center;gap:8px;color:var(--text-secondary);font-size:13px}
 .ttl-field input{width:92px;height:34px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-primary);color:var(--text-primary);padding:0 9px;font-variant-numeric:tabular-nums}
 .table-wrap{width:100%;overflow-x:auto}
 table{width:100%;border-collapse:collapse;table-layout:fixed}
-th{height:38px;padding:0 14px;text-align:left;color:var(--text-tertiary);font-size:11px;font-weight:650;background:var(--bg-tertiary);border-bottom:1px solid var(--border-color)}
-td{padding:12px 14px;border-bottom:1px solid var(--border-color);vertical-align:middle}
+th{height:42px;padding:0 16px;text-align:left;color:var(--text-tertiary);font-size:11px;font-weight:650;background:var(--bg-tertiary);border-bottom:1px solid var(--border-color)}
+td{padding:15px 16px;border-bottom:1px solid var(--border-color);vertical-align:middle}
 tbody tr:last-child td{border-bottom:0}
 tbody tr{transition:background 150ms ease}
 tbody tr:hover{background:var(--bg-hover)}
 .provider-group-row{transition:none}
 .provider-group-row:hover{background:transparent}
-.provider-group-row td{padding:12px 14px 9px;border-bottom:1px solid var(--border-color);background:var(--bg-quinary)}
-.provider-group-row:not(:first-child) td{border-top:8px solid var(--bg-secondary)}
+.provider-group-row td{padding:15px 16px;border-bottom:2px solid var(--border-color);background:linear-gradient(135deg,var(--bg-quinary),var(--bg-tertiary))}
 .provider-group-heading{display:flex;align-items:center;gap:8px;min-width:0;color:var(--text-primary)}
 .provider-group-heading .icon{width:15px;height:15px;color:var(--text-secondary)}
 .provider-group-title{font-size:13px;font-weight:680;line-height:1.3}
 .provider-group-hint{margin-left:auto;color:var(--text-tertiary);font-size:10px;font-weight:500;white-space:nowrap}
+.provider-settings-row{box-shadow:inset 3px 0 0 transparent}
+.provider-settings-row:hover{box-shadow:inset 3px 0 0 var(--primary-color)}
 .provider-cell{min-width:0}
 .provider-title-line{display:flex;align-items:center;gap:7px;min-width:0}
 .provider-title{font-weight:620;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .provider-disabled{color:var(--warning-text);font-size:11px;white-space:nowrap}
 .provider-base{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;color:var(--text-tertiary);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:3px}
+.settings-field-label{display:none;color:var(--text-tertiary);font-size:10px;font-weight:650;letter-spacing:0}
 .key-list{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
 .key-chip{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;border:1px solid var(--border-color);border-radius:5px;background:var(--bg-tertiary);color:var(--text-secondary);font-size:10px;padding:2px 5px}
 .key-chip.disabled{color:var(--text-tertiary);text-decoration:line-through;opacity:.72}
@@ -619,12 +624,11 @@ select:hover{border-color:var(--border-hover)}
   .app{padding:16px 14px 28px}.masthead{align-items:center}.subtitle{max-width:230px}.head-state{display:none}
   .workspace-nav{align-items:stretch;flex-direction:column}.segments{width:100%}.toolbar{justify-content:stretch}.toolbar .btn{flex:1;min-width:0}
   .summary{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .provider-jump-nav{margin-left:-2px;margin-right:-2px;flex-wrap:wrap;overflow:visible;scroll-snap-type:none}.provider-jump-link{flex:1 1 calc(33.333% - 6px);min-width:100px}.provider-bundle-head{align-items:stretch;flex-direction:column}.bundle-actions{justify-content:space-between}.bundle-actions .badge:first-child{margin-right:auto}.bundle-url{white-space:normal;overflow-wrap:anywhere}.bundle-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #provider-jump-nav{margin-left:-2px;margin-right:-2px;flex-wrap:wrap;overflow:visible;scroll-snap-type:none}#provider-jump-nav .provider-jump-link{flex:1 1 calc(33.333% - 6px);min-width:100px}.settings-provider-nav{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--border-hover) transparent;scroll-snap-type:x mandatory}.settings-provider-nav::-webkit-scrollbar{display:block;height:3px}.settings-provider-nav::-webkit-scrollbar-thumb{border-radius:9999px;background:var(--border-hover)}.settings-provider-nav .provider-jump-link{flex:0 0 auto;min-width:112px}.provider-bundle-head{align-items:stretch;flex-direction:column}.bundle-actions{justify-content:space-between}.bundle-actions .badge:first-child{margin-right:auto}.bundle-url{white-space:normal;overflow-wrap:anywhere}.bundle-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
   .result-grid,.skeleton-grid{grid-template-columns:1fr}
   .quota-window-grid,.detail-grid{grid-template-columns:1fr}
   .result-head{align-items:stretch;flex-direction:column}.result-actions{justify-content:space-between}.result-actions .badge{margin-right:auto}
-  .settings-toolbar{align-items:flex-start;flex-direction:column}.ttl-field{width:100%;justify-content:space-between}
-  table,thead,tbody,tr,th,td{display:block}thead{display:none}table{table-layout:auto}tbody tr{padding:13px 14px;border-bottom:1px solid var(--border-color)}tbody tr:last-child{border-bottom:0}td{padding:0;border:0}td+td{margin-top:10px}.provider-group-row{padding:0;border-bottom:0}.provider-group-row td{padding:11px 14px}.provider-group-row:not(:first-child) td{border-top:8px solid var(--bg-secondary)}.provider-group-hint{display:none}.provider-base{white-space:normal;overflow-wrap:anywhere}.query-cell::before{content:"余额查询类型";display:block;color:var(--text-tertiary);font-size:11px;margin-bottom:5px}
+  .settings-layout{gap:12px}.settings-toolbar{align-items:flex-start;flex-direction:column;padding:15px}.ttl-field{width:100%;justify-content:space-between}.settings-sheet{border:0;background:transparent;box-shadow:none;overflow:visible}.settings-table,.settings-table thead,.settings-table tbody,.settings-table tr,.settings-table th,.settings-table td{display:block}.settings-table thead{display:none}.settings-table{table-layout:auto}.settings-table tbody{padding:0 12px 12px;background:var(--bg-secondary)}.settings-table .provider-group-row{margin:0 -12px 12px}.settings-table .provider-group-row td{padding:13px 14px;border:1px solid var(--border-color);border-radius:8px}.settings-table .provider-group-hint{white-space:normal;text-align:right}.settings-table .provider-settings-row{margin-top:10px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-primary);overflow:hidden}.settings-table .provider-settings-row:hover{box-shadow:none}.settings-table .provider-settings-row td{padding:12px 13px;border:0}.settings-table .provider-settings-row td+td{border-top:1px solid var(--border-color)}.settings-field-label{display:block;margin-bottom:6px}.provider-base{white-space:normal;overflow-wrap:anywhere}.key-list{align-items:flex-start}.query-cell select{height:40px}
 }
 @media (max-width:420px){.summary-item{padding:12px}.bundle-summary{grid-template-columns:1fr}.result-card{padding:14px}.masthead{padding:16px}.connection-shell{padding:14px}.connection-card{padding:18px}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}.btn:hover:not(:disabled),.result-card:hover,.summary-item:hover{transform:none}}
@@ -691,19 +695,24 @@ select:hover{border-color:var(--border-hover)}
       <div><h2 class="section-title">查询映射</h2><p class="section-meta">按 AI 提供商和服务地址手动指定余额查询类型</p></div>
       <div id="save-state" class="save-state" aria-live="polite"></div>
     </div>
-    <div class="settings-sheet">
-      <div class="settings-toolbar">
-        <div><strong>缓存策略</strong><div class="section-meta">设为 0 可关闭缓存，其他值为 10 至 86400 秒</div></div>
-        <label class="ttl-field" for="ttl-input"><span>缓存时长</span><input id="ttl-input" type="number" min="0" max="86400" step="1" inputmode="numeric" aria-describedby="ttl-unit"><span id="ttl-unit">秒</span></label>
+    <div class="settings-layout">
+      <section class="settings-policy-card" aria-labelledby="cache-settings-title">
+        <div class="settings-toolbar">
+          <div class="settings-toolbar-copy"><strong id="cache-settings-title" class="settings-toolbar-title">缓存策略</strong><div class="section-meta">设为 0 可关闭缓存，其他值为 10 至 86400 秒</div></div>
+          <label class="ttl-field" for="ttl-input"><span>缓存时长</span><input id="ttl-input" type="number" min="0" max="86400" step="1" inputmode="numeric" aria-describedby="ttl-unit"><span id="ttl-unit">秒</span></label>
+        </div>
+      </section>
+      <nav id="settings-provider-nav" class="provider-jump-nav settings-provider-nav" aria-label="查询设置提供商分组" hidden></nav>
+      <div id="settings-sheet" class="settings-sheet">
+        <div id="settings-table-wrap" class="table-wrap">
+          <table class="settings-table">
+            <colgroup><col style="width:38%"><col style="width:28%"><col style="width:34%"></colgroup>
+            <thead><tr><th scope="col">AI 提供商与服务地址</th><th scope="col">接口密钥</th><th scope="col">余额查询类型</th></tr></thead>
+            <tbody id="settings-body"></tbody>
+          </table>
+        </div>
+        <div id="settings-empty" hidden></div>
       </div>
-      <div class="table-wrap">
-        <table>
-          <colgroup><col style="width:38%"><col style="width:28%"><col style="width:34%"></colgroup>
-          <thead><tr><th scope="col">AI 提供商与服务地址</th><th scope="col">接口密钥</th><th scope="col">余额查询类型</th></tr></thead>
-          <tbody id="settings-body"></tbody>
-        </table>
-      </div>
-      <div id="settings-empty" hidden></div>
     </div>
   </section>
 </main>
@@ -729,14 +738,18 @@ select:hover{border-color:var(--border-hover)}
   var PROVIDER_DEFINITIONS = __PROVIDER_DEFINITIONS__;
   var INITIAL_TTL = __TTL_SECONDS__;
   var MANAGEMENT_PREFIX = "/v0/management";
+  var RUNTIME_CONFIG_PATH = "/balance-query/config-state";
   var AUTH_STORAGE_KEY = "cli-proxy-auth";
   var ENC_PREFIX = "enc::v1::";
   var SECRET_SALT = "cli-proxy-api-webui::secure-storage";
   var REQUEST_TIMEOUT = 30000;
+  var CONFIG_REQUEST_TIMEOUT = 10000;
+  var CONFIG_STATE_WAIT_TIMEOUT = 15000;
   var QUERY_BATCH_SIZE = 128;
   var QUERY_BATCH_MAX_BYTES = 900 * 1024;
+  var PROVIDER_CONFIG_SOURCES = ["openai-compatibility", "claude-api-key", "xai-api-key", "codex-api-key", "gemini-api-key"];
   var RESULT_SNAPSHOT_KEY = "balance-query-results::v1";
-  var RESULT_SNAPSHOT_VERSION = 1;
+  var RESULT_SNAPSHOT_VERSION = 2;
   var RESULT_SNAPSHOT_MAX_BYTES = 2 * 1024 * 1024;
   var RESULT_SNAPSHOT_MAX_STALE_MS = 7 * 24 * 60 * 60 * 1000;
   var state = {
@@ -746,8 +759,12 @@ select:hover{border-color:var(--border-hover)}
     config: { cache_ttl_seconds: INITIAL_TTL, provider_mappings: {} },
     draftMappings: {},
     draftTTL: String(INITIAL_TTL),
+    draftRevision: 0,
     results: [],
+    previewAccounts: [],
+    previewProviders: [],
     view: "overview",
+    dataReady: false,
     querying: false,
     saving: false,
     dirty: false,
@@ -760,6 +777,7 @@ select:hover{border-color:var(--border-hover)}
     queryController: null,
     saveController: null,
     activeOverviewCategory: "",
+    activeSettingsCategory: "",
     expandedProviders: Object.create(null)
   };
   var providerLabels = Object.create(null);
@@ -879,6 +897,13 @@ select:hover{border-color:var(--border-hover)}
     try { return window.sessionStorage; } catch (_) { return null; }
   }
 
+  function sameOriginLocalStorage() {
+    try {
+      if (window.parent !== window && window.parent.location.origin === window.location.origin) return window.parent.localStorage;
+    } catch (_) {}
+    try { return window.localStorage || null; } catch (_) { return null; }
+  }
+
   function discardStoredResultSnapshot(expectedValue) {
     var storage = sameOriginSessionStorage();
     if (!storage) return;
@@ -927,21 +952,51 @@ select:hover{border-color:var(--border-hover)}
     ].join("\u0000");
   }
 
+  function attachAccountDigest(account, digest) {
+    if (!account || typeof account !== "object" || !digest) return account;
+    try { Object.defineProperty(account, "__account_digest", { value:String(digest), configurable:true }); } catch (_) {}
+    return account;
+  }
+
+  function accountResultDigest(account) {
+    if (account && account.__account_digest) return String(account.__account_digest);
+    var digest = fallbackSHA256(accountFingerprintMaterial(account));
+    attachAccountDigest(account, digest);
+    return digest;
+  }
+
+  function attachResultAccountDigest(result, digest) {
+    if (!result || typeof result !== "object" || !digest) return result;
+    try { Object.defineProperty(result, "__account_digest", { value:String(digest), configurable:true }); } catch (_) {}
+    return result;
+  }
+
+  function resultSnapshotScopeHash(credentials) {
+    var material = [SECRET_SALT, String(window.location && window.location.host || ""), String(credentials && credentials.apiBase || ""), String(credentials && credentials.managementKey || "")].join("\u0000");
+    return sha256Hex(material);
+  }
+
   function resultSnapshotIdentity(accounts, credentials) {
-    var scopeMaterial = [SECRET_SALT, String(window.location && window.location.host || ""), String(credentials && credentials.apiBase || ""), String(credentials && credentials.managementKey || "")].join("\u0000");
-    var pending = [sha256Hex(scopeMaterial)].concat(accounts.map(function (account) { return sha256Hex(accountFingerprintMaterial(account)); }));
+    var pending = [resultSnapshotScopeHash(credentials)].concat(accounts.map(function (account) { return sha256Hex(accountFingerprintMaterial(account)); }));
     return Promise.all(pending).then(function (digests) {
       return { scopeHash:digests[0], accountDigests:digests.slice(1) };
     });
   }
 
   function resultSnapshotExpiry(results, ttlSeconds) {
-    if (!(ttlSeconds > 0) || !Array.isArray(results) || !results.length) return 0;
+    if (!Array.isArray(results) || !results.length) return 0;
     var fetched = results.map(function (result) { return new Date(result && result.fetched_at || "").getTime(); }).filter(function (timestamp) { return Number.isFinite(timestamp); });
     if (fetched.length !== results.length) return 0;
     var now = Date.now();
     if (fetched.some(function (timestamp) { return timestamp > now + 60000 || now - timestamp > RESULT_SNAPSHOT_MAX_STALE_MS; })) return 0;
-    return Math.min(Math.min.apply(Math, fetched) + ttlSeconds * 1000, now + ttlSeconds * 1000);
+    if (!(ttlSeconds > 0)) return now;
+    var expiries = results.map(function (result, index) {
+      var itemTTL = ttlSeconds;
+      if (result && (result.error || result.failure)) itemTTL = Math.min(itemTTL, result.failure && result.failure.retryable ? 20 : 120);
+      else if (result && Array.isArray(result.warnings) && result.warnings.length) itemTTL = Math.min(itemTTL, 20);
+      return fetched[index] + itemTTL * 1000;
+    });
+    return Math.min(Math.min.apply(Math, expiries), now + ttlSeconds * 1000);
   }
 
   function snapshotResultForAccount(result, account) {
@@ -952,48 +1007,110 @@ select:hover{border-color:var(--border-hover)}
     });
   }
 
-  function readResultSnapshot(accounts, ttlSeconds, credentials) {
-    if (!(ttlSeconds > 0)) {
-      clearResultSnapshot();
-      return Promise.resolve(null);
-    }
+  function snapshotDisplayAccount(account) {
+    var display = {
+      id:String(account.id || ""), provider_key:String(account.provider_key || ""), mapping_key:String(account.mapping_key || ""),
+      account_name:String(account.account_name || ""), base_url:String(account.base_url || ""), query_type:String(account.query_type || ""),
+      source:String(account.source || "")
+    };
+    return attachAccountDigest(display, accountResultDigest(account || {}));
+  }
+
+  function snapshotDisplayProvider(provider) {
+    return {
+      name:String(provider.name || ""), baseUrl:String(provider.baseUrl || ""), category:providerCategoryLabel(provider.category),
+      source:providerConfigSource(provider), disabled:Boolean(provider.disabled), mappingKey:String(provider.mappingKey || ""), legacyMappingKey:String(provider.legacyMappingKey || ""), keys:[]
+    };
+  }
+
+  function storedResultSnapshot() {
     var storage = sameOriginSessionStorage();
-    if (!storage) return Promise.resolve(null);
+    if (!storage) return null;
     var record = null;
     var serializedRecord = "";
     try {
       serializedRecord = storage.getItem(RESULT_SNAPSHOT_KEY) || "";
       record = JSON.parse(serializedRecord || "null");
     } catch (_) {}
-    if (!record || record.version !== RESULT_SNAPSHOT_VERSION || record.ttl_seconds !== ttlSeconds ||
-        !Array.isArray(record.account_digests) || !Array.isArray(record.results) || record.results.length !== accounts.length ||
-        !Number.isFinite(Number(record.stored_at)) || !Number.isFinite(Number(record.expires_at)) ||
-        Number(record.stored_at) > Date.now() + 60000 || Date.now() - Number(record.stored_at) > RESULT_SNAPSHOT_MAX_STALE_MS) {
+    var ttl = Number(record && record.ttl_seconds);
+    if (!record || record.version !== RESULT_SNAPSHOT_VERSION || !Number.isInteger(ttl) || ttl < 0 ||
+        !Array.isArray(record.account_digests) || !Array.isArray(record.results) || record.results.length !== record.account_digests.length ||
+        !Array.isArray(record.display_accounts) || record.display_accounts.length !== record.results.length || !Array.isArray(record.display_providers) ||
+        !record.config || typeof record.config !== "object" || !Number.isFinite(Number(record.stored_at)) || !Number.isFinite(Number(record.expires_at)) ||
+        Number(record.stored_at) > Date.now() + 60000 ||
+        Date.now() - Number(record.stored_at) > RESULT_SNAPSHOT_MAX_STALE_MS) {
       discardStoredResultSnapshot(serializedRecord);
-      return Promise.resolve(null);
+      return null;
     }
+    return { record:record, serialized:serializedRecord };
+  }
+
+  function snapshotFresh(record, ttlSeconds) {
+    return ttlSeconds > 0 && Number(record.ttl_seconds) === Number(ttlSeconds) && Number(record.expires_at) > Date.now();
+  }
+
+  function readResultSnapshotPreview(credentials) {
+    var stored = storedResultSnapshot();
+    if (!stored) return Promise.resolve(null);
+    return resultSnapshotScopeHash(credentials).then(function (scopeHash) {
+      var record = stored.record;
+      if (scopeHash !== record.scope_hash) return null;
+      var results = sanitizeSnapshotValue(record.results, [String(credentials && credentials.managementKey || "")]);
+      results.forEach(function (result, index) { attachResultAccountDigest(result, record.account_digests[index]); });
+      var providers = record.display_providers.map(function (provider) {
+        var restored = {
+          name:String(provider && provider.name || ""), baseUrl:String(provider && provider.baseUrl || ""),
+          category:providerCategoryLabel(provider && provider.category), disabled:Boolean(provider && provider.disabled),
+          source:String(provider && provider.source || ""),
+          mappingKey:String(provider && provider.mappingKey || ""), legacyMappingKey:String(provider && provider.legacyMappingKey || ""), keys:[]
+        };
+        restored.source = providerConfigSource(restored);
+        return restored;
+      });
+      var accounts = record.display_accounts.map(function (account, index) {
+        var restored = snapshotDisplayAccount(account || {});
+        restored.source = accountConfigSource(restored, providers);
+        return attachAccountDigest(restored, record.account_digests[index]);
+      });
+      return { results:results, providers:providers, accounts:accounts, config:normalizeConfig(record.config), fresh:snapshotFresh(record, record.ttl_seconds) };
+    }).catch(function () { return null; });
+  }
+
+  function readResultSnapshot(accounts, ttlSeconds, credentials) {
+    if (!accounts.length) return Promise.resolve(null);
+    var stored = storedResultSnapshot();
+    if (!stored || stored.record.results.length !== accounts.length) return Promise.resolve(null);
+    var record = stored.record;
     return resultSnapshotIdentity(accounts, credentials).then(function (identity) {
-      var matches = identity.scopeHash === record.scope_hash && identity.accountDigests.length === record.account_digests.length &&
-        identity.accountDigests.every(function (digest, index) { return digest === record.account_digests[index]; });
-      if (!matches) {
-        discardStoredResultSnapshot(serializedRecord);
-        return null;
+      if (identity.scopeHash !== record.scope_hash || identity.accountDigests.length !== record.account_digests.length) return null;
+      var digestIndexes = Object.create(null);
+      record.account_digests.forEach(function (digest, index) {
+        if (!digestIndexes[digest]) digestIndexes[digest] = [];
+        digestIndexes[digest].push(index);
+      });
+      var resultIndexes = [];
+      for (var digestIndex = 0; digestIndex < identity.accountDigests.length; digestIndex++) {
+        var indexes = digestIndexes[identity.accountDigests[digestIndex]];
+        if (!indexes || !indexes.length) return null;
+        resultIndexes.push(indexes.shift());
       }
       var secrets = snapshotSecrets(accounts, credentials);
       if (!secrets) {
-        discardStoredResultSnapshot(serializedRecord);
+        discardStoredResultSnapshot(stored.serialized);
         return null;
       }
       var sanitized = sanitizeSnapshotValue(record.results, secrets);
-      var results = sanitized.map(function (result, index) { return snapshotResultForAccount(result, accounts[index]); });
-      var maximumExpiry = resultSnapshotExpiry(results, ttlSeconds);
+      var results = resultIndexes.map(function (resultIndex, accountIndex) {
+        return attachResultAccountDigest(snapshotResultForAccount(sanitized[resultIndex], accounts[accountIndex]), identity.accountDigests[accountIndex]);
+      });
+      var maximumExpiry = resultSnapshotExpiry(results, Number(record.ttl_seconds));
       if (!maximumExpiry || Number(record.expires_at) > maximumExpiry + 1000) {
-        discardStoredResultSnapshot(serializedRecord);
+        discardStoredResultSnapshot(stored.serialized);
         return null;
       }
       return {
         results:results,
-        fresh:Number(record.expires_at) > Date.now(),
+        fresh:snapshotFresh(record, ttlSeconds),
         complete:results.length === accounts.length && results.every(function (result) {
           return !result.error && !result.failure && (!Array.isArray(result.warnings) || result.warnings.length === 0);
         })
@@ -1007,7 +1124,8 @@ select:hover{border-color:var(--border-hover)}
   }
 
   function persistResultSnapshot(accounts, results, ttlSeconds, credentials) {
-    if (!(ttlSeconds > 0) || !accounts.length || !Array.isArray(results) || results.length !== accounts.length) {
+    var orderedResults = orderedResultsForAccounts(results, accounts);
+    if (!accounts.length || !orderedResults) {
       clearResultSnapshot();
       return Promise.resolve(false);
     }
@@ -1018,13 +1136,18 @@ select:hover{border-color:var(--border-hover)}
       discardStoredResultSnapshot();
       return Promise.resolve(false);
     }
-    var sanitizedResults = sanitizeSnapshotValue(results, secrets);
+    var sanitizedResults = sanitizeSnapshotValue(orderedResults, secrets);
     var expiresAt = resultSnapshotExpiry(sanitizedResults, ttlSeconds);
     if (!expiresAt) {
       discardStoredResultSnapshot();
       return Promise.resolve(false);
     }
     var snapshotGeneration = ++state.snapshotGeneration;
+    var capturedProviders = (state.providers || []).concat(state.previewProviders || []).filter(function (provider, index, list) {
+      return list.findIndex(function (candidate) { return candidate.mappingKey === provider.mappingKey; }) === index;
+    }).map(snapshotDisplayProvider);
+    var capturedAccounts = accounts.map(snapshotDisplayAccount);
+    var capturedConfig = { cache_ttl_seconds:ttlSeconds, provider_mappings:Object.assign({}, state.config.provider_mappings) };
     return resultSnapshotIdentity(accounts, credentials).then(function (identity) {
       if (snapshotGeneration !== state.snapshotGeneration) return false;
       var record = {
@@ -1034,7 +1157,10 @@ select:hover{border-color:var(--border-hover)}
         ttl_seconds:ttlSeconds,
         stored_at:Date.now(),
         expires_at:expiresAt,
-        results:sanitizedResults
+        results:sanitizedResults,
+        display_accounts:sanitizeSnapshotValue(capturedAccounts, secrets),
+        display_providers:sanitizeSnapshotValue(capturedProviders, secrets),
+        config:sanitizeSnapshotValue(capturedConfig, secrets)
       };
       var serialized = JSON.stringify(record);
       if (serializedByteLength(serialized) > RESULT_SNAPSHOT_MAX_BYTES || secrets.some(function (secret) { return serialized.indexOf(secret) !== -1; })) {
@@ -1199,6 +1325,117 @@ select:hover{border-color:var(--border-hover)}
     });
   }
 
+  function abortableDelay(milliseconds, signal) {
+    return new Promise(function (resolve, reject) {
+      if (signal && signal.aborted) {
+        var alreadyCancelled = new Error("请求已取消");
+        alreadyCancelled.cancelled = true;
+        reject(alreadyCancelled);
+        return;
+      }
+      var timer = window.setTimeout(finish, milliseconds);
+      function cleanup() { if (signal) signal.removeEventListener("abort", cancel); }
+      function finish() { cleanup(); resolve(); }
+      function cancel() {
+        window.clearTimeout(timer);
+        cleanup();
+        var cancelled = new Error("请求已取消");
+        cancelled.cancelled = true;
+        reject(cancelled);
+      }
+      if (signal) signal.addEventListener("abort", cancel, { once:true });
+    });
+  }
+
+  function configsEqual(left, right) {
+    var normalizedLeft = normalizeConfig(left);
+    var normalizedRight = normalizeConfig(right);
+    function runtimeMappings(mappings) {
+      var filtered = {};
+      Object.keys(mappings).forEach(function (key) {
+        if (providerLabels[mappings[key]]) filtered[key] = mappings[key];
+      });
+      return filtered;
+    }
+    return normalizedLeft.cache_ttl_seconds === normalizedRight.cache_ttl_seconds &&
+      stableMappings(runtimeMappings(normalizedLeft.provider_mappings)) === stableMappings(runtimeMappings(normalizedRight.provider_mappings));
+  }
+
+  function runtimePendingError(message) {
+    var pending = new Error(message || "设置已写入 CPA，但未能确认插件已完成应用，请稍后重试");
+    pending.runtimePending = true;
+    return pending;
+  }
+
+  function waitForRuntimeConfig(expected, controller, credentials, changes) {
+    var startedAt = Date.now();
+    var attempt = 0;
+    function check() {
+      var remaining = CONFIG_STATE_WAIT_TIMEOUT - (Date.now() - startedAt);
+      if (remaining <= 0) return Promise.reject(runtimePendingError());
+      var requestTimeout = Math.max(1, Math.min(CONFIG_REQUEST_TIMEOUT, remaining));
+      var requests = [apiFetch(RUNTIME_CONFIG_PATH, { signal:controller.signal }, requestTimeout, credentials)];
+      if (changes) requests.push(apiFetch("/plugins/balance-query/config", { signal:controller.signal }, requestTimeout, credentials));
+      return Promise.all(requests).then(function (responses) {
+        var current = responses[0];
+        if (!changes) {
+          if (configsEqual(current, expected)) return normalizeConfig(expected);
+        } else {
+          var persisted = normalizeConfig(responses[1]);
+          if (!configMatchesChanges(persisted, expected, changes)) throw settingsConflict("设置已被其他页面再次修改，请重新载入后再保存");
+          if (configMatchesChanges(current, expected, changes) && configsEqual(current, persisted)) return persisted;
+        }
+        if (Date.now() - startedAt >= CONFIG_STATE_WAIT_TIMEOUT) throw runtimePendingError();
+        var delay = Math.min(500, 75 * Math.pow(2, Math.min(attempt, 3)));
+        attempt += 1;
+        return abortableDelay(delay, controller.signal).then(check);
+      }).catch(function (error) {
+        if (error && (error.cancelled || error.runtimePending || error.status === 401 || error.status === 403 || error.status === 409)) throw error;
+        if (Date.now() - startedAt >= CONFIG_STATE_WAIT_TIMEOUT) throw runtimePendingError();
+        var delay = Math.min(500, 75 * Math.pow(2, Math.min(attempt, 3)));
+        attempt += 1;
+        return abortableDelay(delay, controller.signal).then(check);
+      });
+    }
+    return check();
+  }
+
+  function waitForSynchronizedConfig(controller, credentials) {
+    var startedAt = Date.now();
+    var attempt = 0;
+    function check() {
+      var remaining = CONFIG_STATE_WAIT_TIMEOUT - (Date.now() - startedAt);
+      if (remaining <= 0) return Promise.reject(runtimePendingError("CPA 中的最新设置尚未完成应用，请稍后刷新"));
+      var requestTimeout = Math.max(1, Math.min(CONFIG_REQUEST_TIMEOUT, remaining));
+      return Promise.all([
+        apiFetch("/plugins/balance-query/config", { signal:controller.signal }, requestTimeout, credentials),
+        apiFetch(RUNTIME_CONFIG_PATH, { signal:controller.signal }, requestTimeout, credentials)
+      ]).then(function (responses) {
+        if (configsEqual(responses[0], responses[1])) return normalizeConfig(responses[0]);
+        if (Date.now() - startedAt >= CONFIG_STATE_WAIT_TIMEOUT) throw runtimePendingError("CPA 中的最新设置尚未完成应用，请稍后刷新");
+        var delay = Math.min(500, 75 * Math.pow(2, Math.min(attempt, 3)));
+        attempt += 1;
+        return abortableDelay(delay, controller.signal).then(check);
+      }).catch(function (error) {
+        if (error && (error.cancelled || error.runtimePending || error.status === 401 || error.status === 403)) throw error;
+        if (Date.now() - startedAt >= CONFIG_STATE_WAIT_TIMEOUT) throw runtimePendingError("CPA 中的最新设置尚未完成应用，请稍后刷新");
+        var delay = Math.min(500, 75 * Math.pow(2, Math.min(attempt, 3)));
+        attempt += 1;
+        return abortableDelay(delay, controller.signal).then(check);
+      });
+    }
+    return check();
+  }
+
+  function tolerantConfigFetch(path, controller, credentials) {
+    return optionalApiFetch(path, { signal:controller.signal }, CONFIG_REQUEST_TIMEOUT, credentials).then(function (data) {
+      return { data:data, error:null };
+    }).catch(function (error) {
+      if (error && (error.cancelled || error.status === 401 || error.status === 403)) throw error;
+      return { data:{}, error:error };
+    });
+  }
+
   function legacyNormalizeBaseForKey(value) { return String(value || "").trim().replace(/\/+$/, ""); }
   function normalizeBaseForKey(value) {
     var raw = String(value || "").trim();
@@ -1235,6 +1472,56 @@ select:hover{border-color:var(--border-hover)}
       "google":"Gemini"
     };
     return labels[normalized] || raw || "OpenAI 兼容";
+  }
+  function canonicalProviderSource(value, category) {
+    var raw = String(value || "").trim();
+    var categoryValue = String(category || "").trim();
+    if (!raw && !categoryValue) return "";
+    var normalized = raw.toLowerCase().replace(/[_\s]+/g, "-");
+    var aliases = {
+      "openai-compatibility":"openai-compatibility", "openai-compatible":"openai-compatibility", "openai":"openai-compatibility",
+      "claude-api-key":"claude-api-key", "claude":"claude-api-key", "anthropic":"claude-api-key",
+      "xai-api-key":"xai-api-key", "xai":"xai-api-key", "grok":"xai-api-key",
+      "codex-api-key":"codex-api-key", "codex":"codex-api-key",
+      "gemini-api-key":"gemini-api-key", "gemini":"gemini-api-key", "google":"gemini-api-key"
+    };
+    if (aliases[normalized]) return aliases[normalized];
+    var label = providerCategoryLabel(categoryValue || raw);
+    var categories = { "OpenAI 兼容":"openai-compatibility", "Claude":"claude-api-key", "xAI":"xai-api-key", "Codex":"codex-api-key", "Gemini":"gemini-api-key" };
+    return categories[label] || "";
+  }
+  function providerConfigSource(provider) {
+    return canonicalProviderSource(provider && provider.source, provider && provider.category);
+  }
+  function accountConfigSource(account, providers) {
+    var explicit = canonicalProviderSource(account && account.source, "");
+    if (explicit) return explicit;
+    var providerKey = String(account && account.provider_key || "");
+    var provider = (providers || []).filter(function (candidate) {
+      return String(candidate && candidate.mappingKey || "") === providerKey || String(candidate && candidate.legacyMappingKey || "") === providerKey;
+    })[0];
+    return providerConfigSource(provider);
+  }
+  function previewForFailedProviderSources(providers, accounts, failedSources) {
+    var failed = Object.create(null);
+    (failedSources || []).forEach(function (source) { failed[canonicalProviderSource(source, source)] = true; });
+    var previewProviders = (providers || []).reduce(function (list, provider) {
+      var source = providerConfigSource(provider);
+      if (!source || !failed[source]) return list;
+      var display = snapshotDisplayProvider(provider);
+      display.source = source;
+      list.push(display);
+      return list;
+    }, []);
+    var previewAccounts = (accounts || []).reduce(function (list, account) {
+      var source = accountConfigSource(account, providers);
+      if (!source || !failed[source]) return list;
+      var display = snapshotDisplayAccount(account);
+      display.source = source;
+      list.push(display);
+      return list;
+    }, []);
+    return { providers:previewProviders, accounts:previewAccounts };
   }
   function providerCategoryRank(value) {
     var order = { "OpenAI 兼容":10, "Claude":20, "xAI":30, "Codex":40, "Gemini":50 };
@@ -1281,6 +1568,7 @@ select:hover{border-color:var(--border-hover)}
       name: String(raw && raw.name || ("未命名提供商 " + (index + 1))),
       baseUrl: String(raw && raw["base-url"] || ""),
       category: providerCategoryLabel(sourceName),
+      source: canonicalProviderSource(sourceName, sourceName),
       disabled: Boolean(raw && raw.disabled),
       keys: keys,
       index: index
@@ -1363,6 +1651,8 @@ select:hover{border-color:var(--border-hover)}
     var mappings = raw && raw.provider_mappings && typeof raw.provider_mappings === "object" ? raw.provider_mappings : {};
     var ttl = Number(raw && raw.cache_ttl_seconds);
     if (!Number.isInteger(ttl)) ttl = INITIAL_TTL;
+    else if (ttl !== 0 && ttl < 10) ttl = 10;
+    else if (ttl > 86400) ttl = 86400;
     return { cache_ttl_seconds: ttl, provider_mappings: Object.assign({}, mappings) };
   }
 
@@ -1374,11 +1664,25 @@ select:hover{border-color:var(--border-hover)}
   function refreshDirtyState() {
     state.dirty = String(state.draftTTL) !== String(state.config.cache_ttl_seconds) || stableMappings(state.draftMappings) !== stableMappings(state.config.provider_mappings);
     setText(byID("save-state"), state.dirty ? "有未保存的更改" : "");
+    byID("save-button").disabled = !state.dataReady || state.saving || !state.dirty;
+    window.removeEventListener("beforeunload", guardUnsavedChanges);
+    if (state.dirty) window.addEventListener("beforeunload", guardUnsavedChanges);
     return state.dirty;
+  }
+
+  function guardUnsavedChanges(event) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+
+  function confirmDiscardSettingsDraft() {
+    if (!state.dirty) return true;
+    return window.confirm("当前有未保存的查询设置，确定放弃这些更改并重新连接吗？");
   }
 
   function cancelLoadRequests() {
     state.loadGeneration += 1;
+    state.snapshotGeneration += 1;
     if (state.loadController) state.loadController.abort();
     state.loadController = null;
   }
@@ -1417,9 +1721,16 @@ select:hover{border-color:var(--border-hover)}
     setText(byID("connection-state"), connected ? "已连接 CPA" : "正在连接 CPA");
   }
 
+  function setDataReady(ready) {
+    state.dataReady = Boolean(ready);
+    byID("tab-settings").disabled = !state.dataReady;
+    byID("refresh-button").disabled = !state.dataReady || state.querying;
+    byID("save-button").disabled = !state.dataReady || state.saving || !state.dirty;
+  }
+
   function setButtonBusy(button, busy, label) {
     if (!button) return;
-    button.disabled = busy;
+    button.disabled = Boolean(busy || (!state.dataReady && (button.id === "refresh-button" || button.id === "save-button")) || (button.id === "save-button" && !state.dirty));
     var labelNode = button.querySelector(".btn-label") || button.querySelector("span");
     if (labelNode && label) labelNode.textContent = label;
     var oldSpinner = button.querySelector(".spinner");
@@ -1447,6 +1758,7 @@ select:hover{border-color:var(--border-hover)}
   }
 
   function setView(view) {
+    if (view === "settings" && !state.dataReady) return;
     state.view = view === "settings" ? "settings" : "overview";
     var overview = state.view === "overview";
     byID("view-overview").hidden = !overview;
@@ -1535,9 +1847,75 @@ select:hover{border-color:var(--border-hover)}
           base_url: provider.baseUrl,
           api_key: keyEntry.apiKey,
           proxy_url: String(keyEntry.proxyUrl || "").trim() || state.globalProxyUrl,
-          query_type: queryType
+          query_type: queryType,
+          source: providerConfigSource(provider)
         });
       });
+    });
+    return accounts;
+  }
+
+  function displayProviders() {
+    var providers = state.providers.slice();
+    state.previewProviders.forEach(function (provider) {
+      if (!providers.some(function (candidate) { return candidate.mappingKey === provider.mappingKey; })) providers.push(provider);
+    });
+    return providers;
+  }
+
+  function resultMatchesAccount(result, account) {
+    var resultBase = normalizeBaseForKey(result && result.base_url || "");
+    var accountBase = normalizeBaseForKey(account && account.base_url || "");
+    if (!result || !result.__account_digest || result.__account_digest !== accountResultDigest(account || {})) return false;
+    return String(result && result.auth_id || "") === String(account && account.id || "") &&
+      String(result && result.provider_key || "") === String(account && account.provider_key || "") &&
+      (!resultBase || !accountBase || resultBase === accountBase);
+  }
+
+  function orderedResultsForAccounts(results, accounts) {
+    if (!Array.isArray(results) || !Array.isArray(accounts) || results.length !== accounts.length) return null;
+    var unmatched = results.slice();
+    var ordered = [];
+    for (var accountIndex = 0; accountIndex < accounts.length; accountIndex++) {
+      var resultIndex = unmatched.findIndex(function (result) { return resultMatchesAccount(result, accounts[accountIndex]); });
+      if (resultIndex < 0) return null;
+      ordered.push(unmatched.splice(resultIndex, 1)[0]);
+    }
+    return ordered;
+  }
+
+  function resultsMatchAccounts(results, accounts) {
+    return Boolean(orderedResultsForAccounts(results, accounts));
+  }
+
+  function resultsForAccounts(results, accounts) {
+    return (results || []).filter(function (result) {
+      return (accounts || []).some(function (account) { return resultMatchesAccount(result, account); });
+    });
+  }
+
+  function appendUnavailablePreviewResults(results, previousResults, liveAccounts, previewAccounts) {
+    var merged = (results || []).slice();
+    (previousResults || []).forEach(function (previous) {
+      var belongsToLiveAccount = (liveAccounts || []).some(function (account) { return resultMatchesAccount(previous, account); });
+      var previewAccount = (previewAccounts || []).filter(function (account) { return resultMatchesAccount(previous, account); })[0];
+      if (belongsToLiveAccount || !previewAccount) return;
+      var alreadyIncluded = merged.some(function (candidate) { return resultMatchesAccount(candidate, previewAccount); });
+      if (!alreadyIncluded) merged.push(previous);
+    });
+    return merged;
+  }
+
+  function displayAccounts() {
+    if (!state.dataReady && state.previewAccounts.length) return state.previewAccounts.slice();
+    var accounts = buildAccounts();
+    if (!state.previewAccounts.length || !state.results.length) return accounts;
+    state.previewAccounts.forEach(function (account) {
+      var visible = state.results.some(function (result) { return resultMatchesAccount(result, account); });
+      var alreadyLoaded = accounts.some(function (candidate) {
+        return String(candidate.id || "") === String(account.id || "") && String(candidate.provider_key || "") === String(account.provider_key || "");
+      });
+      if (visible && !alreadyLoaded) accounts.push(account);
     });
     return accounts;
   }
@@ -1549,10 +1927,10 @@ select:hover{border-color:var(--border-hover)}
   }
 
   function updateSummary() {
-    var keyCount = buildAccounts().length;
+    var keyCount = displayAccounts().length;
     var successCount = state.results.filter(function (result) { return !result.error; }).length;
     var partialCount = state.results.filter(function (result) { return !result.error && resultWarnings(result).length > 0; }).length;
-    setText(byID("stat-providers"), state.providers.length);
+    setText(byID("stat-providers"), displayProviders().length);
     setText(byID("stat-configured"), configuredProviderCount());
     setText(byID("stat-keys"), keyCount);
     setText(byID("stat-success"), successCount);
@@ -2217,22 +2595,23 @@ select:hover{border-color:var(--border-hover)}
   }
 
   function providerForKey(providerKey) {
-    for (var i = 0; i < state.providers.length; i++) {
-      if (state.providers[i].mappingKey === providerKey || state.providers[i].legacyMappingKey === providerKey) return state.providers[i];
+    var providers = displayProviders();
+    for (var i = 0; i < providers.length; i++) {
+      if (providers[i].mappingKey === providerKey || providers[i].legacyMappingKey === providerKey) return providers[i];
     }
     return null;
   }
 
   function overviewResultGroups(accounts) {
     var categories = Object.create(null);
-    state.results.forEach(function (result, index) {
-      var fallbackAccount = accounts[index] || {};
-      var providerKey = String(result.provider_key || fallbackAccount.provider_key || "");
+    state.results.forEach(function (result) {
+      var matchingAccount = accounts.filter(function (account) { return resultMatchesAccount(result, account); })[0] || {};
+      var providerKey = String(result.provider_key || matchingAccount.provider_key || "");
       var provider = providerForKey(providerKey);
       if (!provider) return;
       var category = providerCategoryLabel(provider.category);
       var baseURL = normalizeBaseForKey(provider.baseUrl || result.base_url || "");
-      var queryType = String(fallbackAccount.query_type || mappedQueryType(provider, state.config.provider_mappings) || "");
+      var queryType = String(matchingAccount.query_type || mappedQueryType(provider, state.config.provider_mappings) || "");
       var serviceKey = category + "\u0000" + baseURL + "\u0000" + queryType;
       if (!categories[category]) categories[category] = { category:category, services:Object.create(null) };
       var services = categories[category].services;
@@ -2875,18 +3254,19 @@ select:hover{border-color:var(--border-hover)}
     target.setAttribute("aria-busy", "false");
     clearOverviewNavigation();
     updateSummary();
-    if (!state.providers.length) {
+    var visibleProviders = displayProviders();
+    if (!visibleProviders.length) {
       setText(byID("query-meta"), "未发现 AI 提供商");
       emptyState(target, "暂无 AI 提供商", "请先在 CPA 的 AI 提供商页面添加提供商和接口密钥。", null, null);
       return;
     }
-    var activeProviders = state.providers.filter(function (provider) { return !provider.disabled; });
+    var activeProviders = visibleProviders.filter(function (provider) { return !provider.disabled; });
     if (!activeProviders.length) {
       setText(byID("query-meta"), "没有启用的 AI 提供商");
       emptyState(target, "所有 AI 提供商均已停用", "请先在 CPA 的 AI 提供商页面启用至少一个提供商。", null, null);
       return;
     }
-    var accounts = buildAccounts();
+    var accounts = displayAccounts();
     if (!accounts.length) {
       setText(byID("query-meta"), "尚无可查询账户");
       emptyState(target, "尚未完成查询设置", "请为提供商选择查询类型，并确认至少配置了一个接口密钥。", "前往查询设置", function () { setView("settings"); });
@@ -2952,16 +3332,37 @@ select:hover{border-color:var(--border-hover)}
     return chain.then(function () { return combined; });
   }
 
+  function mergeQueryResults(accounts, results, previousResults) {
+    var retainedFailures = 0;
+    var merged = results.map(function (result, index) {
+      var account = accounts[index];
+      attachResultAccountDigest(result, accountResultDigest(account));
+      var previous = previousResults.filter(function (candidate) { return resultMatchesAccount(candidate, account); })[0];
+      if ((result && (result.error || result.failure)) && previous && !previous.error && !previous.failure) {
+        retainedFailures += 1;
+        return previous;
+      }
+      return result;
+    });
+    merged = appendUnavailablePreviewResults(merged, previousResults, accounts, state.previewAccounts);
+    return { results:merged, retainedFailures:retainedFailures };
+  }
+
   function queryBalances(refresh) {
     var accounts = buildAccounts();
+    var previousResults = state.results.slice();
     state.needsQuery = false;
     if (state.queryController) state.queryController.abort();
     var generation = ++state.queryGeneration;
     if (!accounts.length) {
       state.queryController = null;
       state.querying = false;
-      state.results = [];
-      clearResultSnapshot();
+      if (!state.previewAccounts.length || !state.results.length) {
+        state.results = [];
+        clearResultSnapshot();
+      } else {
+        toast("部分 AI 提供商配置尚未同步，暂时保留上次结果", true);
+      }
       renderResults();
       return Promise.resolve();
     }
@@ -2975,9 +3376,15 @@ select:hover{border-color:var(--border-hover)}
     setText(byID("query-meta"), (refresh ? "正在刷新 " : "正在查询 ") + accounts.length + " 个账户");
     return fetchAccountBatches(accountBatches(accounts), refresh, controller, credentials).then(function (results) {
       if (generation !== state.queryGeneration) return;
-      state.results = results;
+      var merged = mergeQueryResults(accounts, results, previousResults);
+      state.results = merged.results;
       renderResults();
-      return persistResultSnapshot(accounts, results, state.config.cache_ttl_seconds, credentials);
+      if (merged.retainedFailures) {
+        setText(byID("query-meta"), state.results.length + " 个账户 · " + merged.retainedFailures + " 个刷新失败，继续显示上次成功结果");
+        toast(merged.retainedFailures + " 个账户刷新失败，已保留上次成功结果", true);
+      }
+      if (state.results.length !== accounts.length) return false;
+      return persistResultSnapshot(accounts, state.results, state.config.cache_ttl_seconds, credentials);
     }).catch(function (error) {
       if (generation !== state.queryGeneration || error && error.cancelled) return;
       renderResults();
@@ -3005,65 +3412,290 @@ select:hover{border-color:var(--border-hover)}
     return wrap;
   }
 
+  function clearSettingsNavigation() {
+    var nav = byID("settings-provider-nav");
+    nav.textContent = "";
+    nav.hidden = true;
+  }
+
+  function settingsTabID(category) { return "settings-tab-" + tinyHash(category); }
+
+  function revealSettingsTab(tab, nav) {
+    if (!tab || !nav || typeof tab.getBoundingClientRect !== "function") return;
+    var navRect = nav.getBoundingClientRect();
+    var tabRect = tab.getBoundingClientRect();
+    if (tabRect.left < navRect.left) nav.scrollLeft -= navRect.left - tabRect.left;
+    else if (tabRect.right > navRect.right) nav.scrollLeft += tabRect.right - navRect.right;
+  }
+
+  function activateSettingsCategory(category, focusTab) {
+    state.activeSettingsCategory = category;
+    renderSettings();
+    var selected = byID(settingsTabID(category));
+    if (selected) {
+      if (focusTab) {
+        try { selected.focus({ preventScroll:true }); } catch (_) { selected.focus(); }
+      }
+      revealSettingsTab(selected, byID("settings-provider-nav"));
+    }
+  }
+
+  function renderSettingsNavigation(groups) {
+    var nav = byID("settings-provider-nav");
+    var previousScrollLeft = nav.scrollLeft;
+    clearSettingsNavigation();
+    if (!groups.length) return;
+    nav.hidden = false;
+    nav.setAttribute("role", "tablist");
+    groups.forEach(function (group) {
+      var selected = group.category === state.activeSettingsCategory;
+      var tab = element("button", "provider-jump-link");
+      tab.type = "button";
+      tab.id = settingsTabID(group.category);
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", "settings-sheet");
+      tab.setAttribute("aria-selected", String(selected));
+      tab.setAttribute("data-category", group.category);
+      tab.tabIndex = selected ? 0 : -1;
+      tab.appendChild(icon("server"));
+      tab.appendChild(element("span", "", group.category));
+      tab.addEventListener("click", function () { activateSettingsCategory(group.category, true); });
+      tab.addEventListener("keydown", function (event) {
+        var tabs = Array.prototype.slice.call(nav.querySelectorAll('[role="tab"]'));
+        var current = tabs.indexOf(event.currentTarget);
+        var next = current;
+        if (event.key === "ArrowRight") next = (current + 1) % tabs.length;
+        else if (event.key === "ArrowLeft") next = (current - 1 + tabs.length) % tabs.length;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = tabs.length - 1;
+        else return;
+        event.preventDefault();
+        activateSettingsCategory(tabs[next].getAttribute("data-category"), true);
+      });
+      nav.appendChild(tab);
+    });
+    nav.scrollLeft = previousScrollLeft;
+    revealSettingsTab(byID(settingsTabID(state.activeSettingsCategory)), nav);
+  }
+
   function renderSettings() {
     var body = byID("settings-body");
     var empty = byID("settings-empty");
+    var tableWrap = byID("settings-table-wrap");
+    var sheet = byID("settings-sheet");
     body.textContent = "";
     byID("ttl-input").value = String(state.draftTTL);
-    if (!state.providers.length) {
+    var groups = groupedProviders();
+    if (!groups.length) {
+      clearSettingsNavigation();
+      tableWrap.hidden = true;
       empty.hidden = false;
+      sheet.removeAttribute("role");
+      sheet.removeAttribute("aria-labelledby");
       emptyState(empty, "暂无 AI 提供商", "请先在 CPA 的 AI 提供商页面添加提供商和接口密钥。", null, null);
       return;
     }
+    if (!groups.some(function (group) { return group.category === state.activeSettingsCategory; })) {
+      state.activeSettingsCategory = groups[0].category;
+    }
+    renderSettingsNavigation(groups);
+    var group = groups.filter(function (item) { return item.category === state.activeSettingsCategory; })[0];
+    sheet.setAttribute("role", "tabpanel");
+    sheet.setAttribute("aria-labelledby", settingsTabID(group.category));
+    tableWrap.hidden = false;
     empty.hidden = true;
-    groupedProviders().forEach(function (group) {
-      var groupRow = element("tr", "provider-group-row");
-      var groupCell = document.createElement("td");
-      groupCell.colSpan = 3;
-      var groupHeading = element("div", "provider-group-heading");
-      groupHeading.appendChild(icon("server"));
-      groupHeading.appendChild(element("span", "provider-group-title", group.category));
-      groupHeading.appendChild(element("span", "provider-group-hint", "按服务地址分别配置"));
-      groupCell.appendChild(groupHeading);
-      groupRow.appendChild(groupCell);
-      body.appendChild(groupRow);
-      group.providers.forEach(function (provider) {
-        var row = document.createElement("tr");
-        var providerCell = element("td", "provider-cell");
-        var titleLine = element("div", "provider-title-line");
-        titleLine.appendChild(element("span", "provider-title", provider.name));
-        if (provider.disabled) titleLine.appendChild(element("span", "provider-disabled", "已停用"));
-        providerCell.appendChild(titleLine);
-        providerCell.appendChild(element("div", "provider-base", provider.baseUrl || "官方默认服务地址"));
-        row.appendChild(providerCell);
-        var keysCell = document.createElement("td");
-        keysCell.appendChild(keyChips(provider));
-        row.appendChild(keysCell);
-        var queryCell = element("td", "query-cell");
-        var select = document.createElement("select");
-        select.setAttribute("aria-label", provider.name + " 的余额查询类型");
-        var blank = document.createElement("option");
-        blank.value = "";
-        blank.textContent = "不查询";
-        select.appendChild(blank);
-        PROVIDER_DEFINITIONS.forEach(function (definition) {
-          var option = document.createElement("option");
-          option.value = definition.value;
-          option.textContent = definition.label;
-          select.appendChild(option);
-        });
-        select.value = mappedQueryType(provider, state.draftMappings);
-        select.addEventListener("change", function () {
-          delete state.draftMappings[provider.legacyMappingKey];
-          if (select.value) state.draftMappings[provider.mappingKey] = select.value;
-          else delete state.draftMappings[provider.mappingKey];
-          refreshDirtyState();
-        });
-        queryCell.appendChild(select);
-        row.appendChild(queryCell);
-        body.appendChild(row);
+
+    var groupRow = element("tr", "provider-group-row");
+    var groupCell = document.createElement("td");
+    groupCell.colSpan = 3;
+    var groupHeading = element("div", "provider-group-heading");
+    groupHeading.appendChild(icon("server"));
+    groupHeading.appendChild(element("span", "provider-group-title", group.category));
+    groupHeading.appendChild(element("span", "provider-group-hint", group.providers.length + " 个服务地址 · 分别配置"));
+    groupCell.appendChild(groupHeading);
+    groupRow.appendChild(groupCell);
+    body.appendChild(groupRow);
+    group.providers.forEach(function (provider) {
+      var row = element("tr", "provider-settings-row");
+      var providerCell = element("td", "provider-cell");
+      providerCell.appendChild(element("span", "settings-field-label", "服务地址"));
+      var titleLine = element("div", "provider-title-line");
+      titleLine.appendChild(element("span", "provider-title", provider.name));
+      if (provider.disabled) titleLine.appendChild(element("span", "provider-disabled", "已停用"));
+      providerCell.appendChild(titleLine);
+      providerCell.appendChild(element("div", "provider-base", provider.baseUrl || "官方默认服务地址"));
+      row.appendChild(providerCell);
+      var keysCell = document.createElement("td");
+      keysCell.appendChild(element("span", "settings-field-label", "接口密钥"));
+      keysCell.appendChild(keyChips(provider));
+      row.appendChild(keysCell);
+      var queryCell = element("td", "query-cell");
+      queryCell.appendChild(element("span", "settings-field-label", "余额查询类型"));
+      var select = document.createElement("select");
+      select.setAttribute("aria-label", provider.name + " 的余额查询类型");
+      var blank = document.createElement("option");
+      blank.value = "";
+      blank.textContent = "不查询";
+      select.appendChild(blank);
+      PROVIDER_DEFINITIONS.forEach(function (definition) {
+        var option = document.createElement("option");
+        option.value = definition.value;
+        option.textContent = definition.label;
+        select.appendChild(option);
       });
+      select.value = mappedQueryType(provider, state.draftMappings);
+      select.addEventListener("change", function () {
+        delete state.draftMappings[provider.legacyMappingKey];
+        if (select.value) state.draftMappings[provider.mappingKey] = select.value;
+        else delete state.draftMappings[provider.mappingKey];
+        state.draftRevision += 1;
+        refreshDirtyState();
+      });
+      queryCell.appendChild(select);
+      row.appendChild(queryCell);
+      body.appendChild(row);
     });
+  }
+
+  // Web Locks is preferred below; bakery tickets keep older browsers from
+  // overlapping the read-merge-write sequence across tabs.
+  function configSaveLockError(message, lost) {
+    var error = new Error(message);
+    error.configSaveLock = true;
+    if (lost) error.lockLost = true;
+    else error.lockUnavailable = true;
+    return error;
+  }
+
+  function withLocalConfigSaveLock(lockName, controller, callback) {
+    var storage = sameOriginLocalStorage();
+    if (!storage) return Promise.reject(configSaveLockError("无法取得跨页面保存锁，本次设置未写入；请允许站点存储后重试", false));
+    var prefix = "balance-query-save-lock::" + tinyHash(lockName) + "::";
+    var owner = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+    var ownKey = prefix + owner;
+    // The lock spans config GET, PATCH, and runtime confirmation. Keep the
+    // lease longer than their combined bounded duration so background timer
+    // throttling cannot normally expire an active save between heartbeats.
+    var leaseMilliseconds = CONFIG_REQUEST_TIMEOUT + REQUEST_TIMEOUT + CONFIG_STATE_WAIT_TIMEOUT + 30000;
+    var ticket = 0;
+    var heartbeat = null;
+    var ownershipLost = false;
+    var coordinationFailed = false;
+
+    function writeIntent(choosing) {
+      storage.setItem(ownKey, JSON.stringify({ owner:owner, choosing:Boolean(choosing), ticket:ticket, expires_at:Date.now() + leaseMilliseconds }));
+    }
+    function ownRecord() {
+      var serialized = storage.getItem(ownKey);
+      if (!serialized) return null;
+      try { return JSON.parse(serialized); } catch (_) { return null; }
+    }
+    function ownsCurrentRecord(record) {
+      return Boolean(record && record.owner === owner && !record.choosing && Number(record.ticket) === ticket && Number(record.expires_at) > Date.now());
+    }
+    function refreshOwnership() {
+      if (!ownsCurrentRecord(ownRecord())) return false;
+      writeIntent(false);
+      return ownsCurrentRecord(ownRecord());
+    }
+    function assertOwnership() {
+      if (controller.signal.aborted) {
+        var cancelled = new Error("请求已取消");
+        cancelled.cancelled = true;
+        throw cancelled;
+      }
+      if (coordinationFailed) throw configSaveLockError("无法确认跨页面保存锁，本次设置未写入；请重试", false);
+      var owned = false;
+      try { owned = refreshOwnership(); } catch (_) {
+        coordinationFailed = true;
+        throw configSaveLockError("无法确认跨页面保存锁，本次设置未写入；请重试", false);
+      }
+      if (!owned || ownershipLost) {
+        ownershipLost = true;
+        throw configSaveLockError("跨页面保存锁已失效，本次设置未写入；请重试", true);
+      }
+    }
+    function contenders() {
+      var now = Date.now();
+      var found = [];
+      var keys = [];
+      for (var index = 0; index < storage.length; index++) {
+        var key = storage.key(index);
+        if (key && key.indexOf(prefix) === 0) keys.push(key);
+      }
+      keys.forEach(function (key) {
+        var record = null;
+        var serialized = storage.getItem(key);
+        try { record = JSON.parse(serialized || "null"); } catch (_) {}
+        if (!record || Number(record.expires_at) <= now) {
+          storage.removeItem(key);
+          return;
+        }
+        found.push(record);
+      });
+      return found;
+    }
+    function cleanup() {
+      if (heartbeat != null) window.clearInterval(heartbeat);
+      try { storage.removeItem(ownKey); } catch (_) {}
+    }
+    function acquire() {
+      if (controller.signal.aborted) {
+        cleanup();
+        var cancelled = new Error("请求已取消");
+        cancelled.cancelled = true;
+        return Promise.reject(cancelled);
+      }
+      try {
+        if (!refreshOwnership()) {
+          ownershipLost = true;
+          cleanup();
+          return Promise.reject(configSaveLockError("跨页面保存锁已失效，本次设置未写入；请重试", true));
+        }
+        var blocked = contenders().some(function (candidate) {
+          if (candidate.owner === owner) return false;
+          if (candidate.choosing) return true;
+          return Number(candidate.ticket) < ticket || (Number(candidate.ticket) === ticket && String(candidate.owner) < owner);
+        });
+        if (blocked) return abortableDelay(80, controller.signal).then(acquire).catch(function (error) {
+          cleanup();
+          throw error;
+        });
+        heartbeat = window.setInterval(function () {
+          try {
+            if (!refreshOwnership()) ownershipLost = true;
+          } catch (_) {
+            coordinationFailed = true;
+          }
+        }, Math.floor(leaseMilliseconds / 3));
+        return Promise.resolve().then(function () { return callback(assertOwnership); }).finally(cleanup);
+      } catch (_) {
+        cleanup();
+        return Promise.reject(configSaveLockError("无法取得跨页面保存锁，本次设置未写入；请重试", false));
+      }
+    }
+
+    try {
+      writeIntent(true);
+      ticket = contenders().reduce(function (maximum, candidate) { return Math.max(maximum, Number(candidate.ticket) || 0); }, 0) + 1;
+      writeIntent(false);
+    } catch (_) {
+      cleanup();
+      return Promise.reject(configSaveLockError("无法取得跨页面保存锁，本次设置未写入；请允许站点存储后重试", false));
+    }
+    return acquire();
+  }
+
+  function withConfigSaveLock(credentials, controller, callback) {
+    var lockName = "balance-query-config::" + String(credentials && credentials.apiBase || "");
+    try {
+      if (typeof navigator !== "undefined" && navigator.locks && typeof navigator.locks.request === "function") {
+        return navigator.locks.request(lockName, { mode:"exclusive", signal:controller.signal }, function () {
+          return callback(function () {});
+        });
+      }
+    } catch (_) {}
+    return withLocalConfigSaveLock(lockName, controller, callback);
   }
 
   function validateTTL() {
@@ -3073,52 +3705,141 @@ select:hover{border-color:var(--border-hover)}
     return value;
   }
 
+  function providerMappingChanged(provider, baselineMappings, draftMappings) {
+    return owns(baselineMappings, provider.mappingKey) !== owns(draftMappings, provider.mappingKey) ||
+      baselineMappings[provider.mappingKey] !== draftMappings[provider.mappingKey] ||
+      owns(baselineMappings, provider.legacyMappingKey) !== owns(draftMappings, provider.legacyMappingKey) ||
+      baselineMappings[provider.legacyMappingKey] !== draftMappings[provider.legacyMappingKey];
+  }
+
+  function submittedConfigChanges(baselineConfig, submittedMappings, submittedTTL) {
+    return {
+      ttlChanged:String(submittedTTL) !== String(baselineConfig.cache_ttl_seconds),
+      providers:state.providers.filter(function (provider) {
+        return providerMappingChanged(provider, baselineConfig.provider_mappings, submittedMappings);
+      })
+    };
+  }
+
+  function configMatchesChanges(currentRaw, expectedRaw, changes) {
+    var current = normalizeConfig(currentRaw);
+    var expected = normalizeConfig(expectedRaw);
+    if (changes.ttlChanged && current.cache_ttl_seconds !== expected.cache_ttl_seconds) return false;
+    return changes.providers.every(function (provider) {
+      return !providerMappingChanged(provider, current.provider_mappings, expected.provider_mappings);
+    });
+  }
+
+  function settingsConflict(message) {
+    var conflict = new Error(message);
+    conflict.status = 409;
+    return conflict;
+  }
+
+  function mergeSubmittedConfig(latestConfig, baselineConfig, submittedMappings, submittedTTL) {
+    var nextMappings = Object.assign({}, latestConfig.provider_mappings);
+    state.providers.forEach(function (provider) {
+      if (!providerMappingChanged(provider, baselineConfig.provider_mappings, submittedMappings)) return;
+      var baselineType = mappedQueryType(provider, baselineConfig.provider_mappings);
+      var latestType = mappedQueryType(provider, latestConfig.provider_mappings);
+      var submitted = resolvedProviderMapping(provider, submittedMappings);
+      if (latestType !== baselineType && latestType !== submitted.type) {
+        throw settingsConflict("“" + provider.name + "”已被其他页面修改，请重新载入后再保存");
+      }
+      delete nextMappings[provider.mappingKey];
+      delete nextMappings[provider.legacyMappingKey];
+      if (providerLabels[submitted.type]) nextMappings[submitted.key] = submitted.type;
+    });
+    var ttlChanged = String(submittedTTL) !== String(baselineConfig.cache_ttl_seconds);
+    if (ttlChanged && latestConfig.cache_ttl_seconds !== baselineConfig.cache_ttl_seconds && latestConfig.cache_ttl_seconds !== submittedTTL) {
+      throw settingsConflict("缓存时长已被其他页面修改，请重新载入后再保存");
+    }
+    return {
+      cache_ttl_seconds:ttlChanged ? submittedTTL : latestConfig.cache_ttl_seconds,
+      provider_mappings:nextMappings
+    };
+  }
+
+  function rebaseDraftMappings(nextBaseline, previousBaseline, currentDraft) {
+    var rebased = Object.assign({}, nextBaseline);
+    state.providers.forEach(function (provider) {
+      if (!providerMappingChanged(provider, previousBaseline, currentDraft)) return;
+      var resolved = resolvedProviderMapping(provider, currentDraft);
+      delete rebased[provider.mappingKey];
+      delete rebased[provider.legacyMappingKey];
+      if (providerLabels[resolved.type]) rebased[resolved.key] = resolved.type;
+    });
+    return rebased;
+  }
+
   function saveSettings() {
     if (state.saving) return Promise.resolve(false);
     var ttl = validateTTL();
     if (ttl == null) { toast("缓存时长应为 0，或 10 至 86400 之间的整数", true); byID("ttl-input").focus(); return Promise.resolve(false); }
-    var nextMappings = Object.assign({}, state.config.provider_mappings);
-    state.providers.forEach(function (provider) {
-      var primaryChanged = owns(state.config.provider_mappings, provider.mappingKey) !== owns(state.draftMappings, provider.mappingKey) || state.config.provider_mappings[provider.mappingKey] !== state.draftMappings[provider.mappingKey];
-      var legacyChanged = owns(state.config.provider_mappings, provider.legacyMappingKey) !== owns(state.draftMappings, provider.legacyMappingKey) || state.config.provider_mappings[provider.legacyMappingKey] !== state.draftMappings[provider.legacyMappingKey];
-      if (!primaryChanged && !legacyChanged) return;
-      var resolved = resolvedProviderMapping(provider, state.draftMappings);
-      delete nextMappings[provider.mappingKey];
-      delete nextMappings[provider.legacyMappingKey];
-      if (providerLabels[resolved.type]) nextMappings[resolved.key] = resolved.type;
-    });
-    var mappingChanged = stableMappings(nextMappings) !== stableMappings(state.config.provider_mappings);
+    var baselineConfig = normalizeConfig(state.config);
+    var submittedMappings = Object.assign({}, state.draftMappings);
+    var submittedRevision = state.draftRevision;
+    var changes = submittedConfigChanges(baselineConfig, submittedMappings, ttl);
     var credentials = Object.assign({}, state.credentials);
     var loadGeneration = state.loadGeneration;
     var generation = ++state.saveGeneration;
     var controller = new AbortController();
+    var nextConfig = null;
+    var persisted = false;
     state.saveController = controller;
     state.saving = true;
     setButtonBusy(byID("save-button"), true, "保存中");
     setText(byID("save-state"), "正在保存");
-    return apiFetch("/plugins/balance-query/config", {
-      method: "PATCH",
-      signal: controller.signal,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cache_ttl_seconds: ttl, provider_mappings: nextMappings })
-    }, REQUEST_TIMEOUT, credentials).then(function () {
+    return withConfigSaveLock(credentials, controller, function (assertOwnership) {
+      if (generation !== state.saveGeneration || loadGeneration !== state.loadGeneration) return null;
+      return apiFetch("/plugins/balance-query/config", { signal:controller.signal }, CONFIG_REQUEST_TIMEOUT, credentials).then(function (latestRaw) {
+        if (generation !== state.saveGeneration || loadGeneration !== state.loadGeneration) return null;
+        nextConfig = mergeSubmittedConfig(normalizeConfig(latestRaw), baselineConfig, submittedMappings, ttl);
+        var patchConfig = {};
+        if (changes.ttlChanged) patchConfig.cache_ttl_seconds = nextConfig.cache_ttl_seconds;
+        if (changes.providers.length) patchConfig.provider_mappings = nextConfig.provider_mappings;
+        assertOwnership();
+        return apiFetch("/plugins/balance-query/config", {
+          method: "PATCH",
+          signal: controller.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patchConfig)
+        }, REQUEST_TIMEOUT, credentials);
+      }).then(function (response) {
+        if (response == null || generation !== state.saveGeneration || loadGeneration !== state.loadGeneration) return null;
+        persisted = true;
+        setText(byID("save-state"), "已写入，正在等待插件生效");
+        return waitForRuntimeConfig(nextConfig, controller, credentials, changes);
+      });
+    }).then(function (appliedConfig) {
+      if (!appliedConfig) return false;
       if (generation !== state.saveGeneration || loadGeneration !== state.loadGeneration || credentials.apiBase !== state.credentials.apiBase || credentials.managementKey !== state.credentials.managementKey) return false;
+      var mappingChanged = state.providers.some(function (provider) {
+        return providerMappingChanged(provider, appliedConfig.provider_mappings, state.config.provider_mappings);
+      });
       if (mappingChanged) cancelQueryRequests();
-      state.config = { cache_ttl_seconds: ttl, provider_mappings: Object.assign({}, nextMappings) };
-      state.draftMappings = Object.assign({}, nextMappings);
-      state.draftTTL = String(ttl);
-      state.dirty = false;
+      var currentDraftTTL = state.draftTTL;
+      state.config = normalizeConfig(appliedConfig);
+      if (state.draftRevision === submittedRevision) {
+        state.draftMappings = Object.assign({}, state.config.provider_mappings);
+        state.draftTTL = String(state.config.cache_ttl_seconds);
+      } else {
+        state.draftMappings = rebaseDraftMappings(state.config.provider_mappings, submittedMappings, state.draftMappings);
+        state.draftTTL = String(currentDraftTTL) === String(ttl) ? String(state.config.cache_ttl_seconds) : String(currentDraftTTL);
+      }
+      refreshDirtyState();
       if (mappingChanged) {
         clearResultSnapshot();
         state.results = [];
         state.needsQuery = true;
-      } else if (ttl === 0) {
-        clearResultSnapshot();
       } else if (state.results.length) {
-        persistResultSnapshot(buildAccounts(), state.results, ttl, credentials);
+        var currentAccounts = buildAccounts();
+        if (resultsMatchAccounts(state.results, currentAccounts)) {
+          persistResultSnapshot(currentAccounts, state.results, state.config.cache_ttl_seconds, credentials);
+        }
       }
-      setText(byID("save-state"), "已保存");
-      toast("查询设置已保存", false);
+      setText(byID("save-state"), state.dirty ? "已保存先前更改，仍有未保存的更改" : "已保存并生效");
+      toast(state.dirty ? "先前更改已保存，请继续保存剩余更改" : "查询设置已保存并生效", false);
       if (state.view === "settings") renderSettings();
       renderResults();
       if (mappingChanged && state.view === "overview") {
@@ -3129,7 +3850,13 @@ select:hover{border-color:var(--border-hover)}
       return true;
     }).catch(function (error) {
       if (generation !== state.saveGeneration || loadGeneration !== state.loadGeneration || error && error.cancelled) return false;
-      setText(byID("save-state"), "保存失败");
+      if (persisted && error && !error.runtimePending && error.status !== 409) {
+        error.runtimePending = true;
+        error.message = error.status === 401 || error.status === 403 ?
+          "设置已写入 CPA，但管理凭据已失效，暂时无法确认插件是否已完成应用" :
+          "设置已写入 CPA，但暂时无法确认插件是否已完成应用";
+      }
+      setText(byID("save-state"), error && error.runtimePending ? "已写入，但尚未确认生效" : error && error.status === 409 ? "配置有冲突" : "保存失败");
       toast(error && error.message ? error.message : "保存设置失败", true);
       return false;
     }).finally(function () {
@@ -3145,59 +3872,139 @@ select:hover{border-color:var(--border-hover)}
     cancelQueryRequests();
     if (state.loadController) state.loadController.abort();
     var generation = ++state.loadGeneration;
+    state.snapshotGeneration += 1;
     var controller = new AbortController();
     var credentials = Object.assign({}, state.credentials);
+    var retainedResults = state.results.slice();
+    var retainedProviders = displayProviders().map(snapshotDisplayProvider);
+    var retainedAccounts = displayAccounts().map(snapshotDisplayAccount);
     state.loadController = controller;
+    setView("overview");
+    setDataReady(false);
     showApp(false);
-    showSkeletons();
-    setText(byID("query-meta"), "正在读取 AI 提供商");
-    return Promise.all([
-      apiFetch("/openai-compatibility", { signal:controller.signal }, REQUEST_TIMEOUT, credentials),
-      optionalApiFetch("/claude-api-key", { signal:controller.signal }, REQUEST_TIMEOUT, credentials),
-      optionalApiFetch("/xai-api-key", { signal:controller.signal }, REQUEST_TIMEOUT, credentials),
-      optionalApiFetch("/codex-api-key", { signal:controller.signal }, REQUEST_TIMEOUT, credentials),
-      optionalApiFetch("/gemini-api-key", { signal:controller.signal }, REQUEST_TIMEOUT, credentials),
-      apiFetch("/plugins/balance-query/config", { signal:controller.signal }, REQUEST_TIMEOUT, credentials),
-      optionalApiFetch("/proxy-url", { signal:controller.signal }, REQUEST_TIMEOUT, credentials)
+    if (state.results.length) {
+      renderResults();
+      setText(byID("query-meta"), "正在同步 AI 提供商配置");
+    } else {
+      showSkeletons();
+      setText(byID("query-meta"), "正在恢复上次结果并同步配置");
+    }
+    var preview = readResultSnapshotPreview(credentials).then(function (snapshot) {
+      if (generation !== state.loadGeneration || !snapshot || state.results.length) return snapshot;
+      state.providers = snapshot.providers;
+      state.previewProviders = snapshot.providers.slice();
+      state.config = snapshot.config;
+      state.previewAccounts = snapshot.accounts;
+      state.results = snapshot.results;
+      showApp(false);
+      renderResults();
+      setText(byID("query-meta"), snapshot.results.length + " 个账户 · 上次结果 · 正在同步配置");
+      return snapshot;
+    });
+    var requests = Promise.all([
+      tolerantConfigFetch("/openai-compatibility", controller, credentials),
+      tolerantConfigFetch("/claude-api-key", controller, credentials),
+      tolerantConfigFetch("/xai-api-key", controller, credentials),
+      tolerantConfigFetch("/codex-api-key", controller, credentials),
+      tolerantConfigFetch("/gemini-api-key", controller, credentials),
+      apiFetch("/plugins/balance-query/config", { signal:controller.signal }, CONFIG_REQUEST_TIMEOUT, credentials),
+      optionalApiFetch("/proxy-url", { signal:controller.signal }, CONFIG_REQUEST_TIMEOUT, credentials).then(function (data) {
+        return { data:data, error:null };
+      }).catch(function (error) {
+        error.proxyConfigUnavailable = true;
+        throw error;
+      }),
+      tolerantConfigFetch(RUNTIME_CONFIG_PATH, controller, credentials)
     ]).then(function (responses) {
+      return { responses:responses, error:null };
+    }).catch(function (error) {
+      return { responses:null, error:error };
+    });
+    return Promise.all([preview, requests]).then(function (loaded) {
       if (generation !== state.loadGeneration) return null;
-      var list = responses[0] && responses[0]["openai-compatibility"];
-      state.providers = (Array.isArray(list) ? list : []).map(function (entry, index) {
+      if (loaded[1].error) throw loaded[1].error;
+      var responses = loaded[1].responses;
+      var list = responses[0].data && responses[0].data["openai-compatibility"];
+      var providers = (Array.isArray(list) ? list : []).map(function (entry, index) {
         return normalizeProvider(entry, index, "openai-compatibility");
       });
-      state.providers = state.providers
-        .concat(normalizeNativeProviders(responses[1], "claude-api-key"))
-        .concat(normalizeNativeProviders(responses[2], "xai-api-key"))
-        .concat(normalizeNativeProviders(responses[3], "codex-api-key"))
-        .concat(normalizeNativeProviders(responses[4], "gemini-api-key"));
-      state.config = normalizeConfig(responses[5]);
-      state.globalProxyUrl = String(responses[6] && responses[6]["proxy-url"] || "").trim();
+      providers = providers
+        .concat(normalizeNativeProviders(responses[1].data, "claude-api-key"))
+        .concat(normalizeNativeProviders(responses[2].data, "xai-api-key"))
+        .concat(normalizeNativeProviders(responses[3].data, "codex-api-key"))
+        .concat(normalizeNativeProviders(responses[4].data, "gemini-api-key"));
+      var loadedConfig = normalizeConfig(responses[5]);
+      var failedProviderSources = PROVIDER_CONFIG_SOURCES.filter(function (_source, index) { return Boolean(responses[index].error); });
+      var live = {
+        providers:providers,
+        config:loadedConfig,
+        globalProxyUrl:String(responses[6].data && responses[6].data["proxy-url"] || "").trim(),
+        failedProviderSources:failedProviderSources,
+        partialFailures:failedProviderSources.length,
+        preview:loaded[0]
+      };
+      if (!responses[7].error && configsEqual(responses[7].data, loadedConfig)) return live;
+      setText(byID("query-meta"), state.results.length ? "上次结果 · 正在等待插件应用最新设置" : "正在等待插件应用最新设置");
+      return waitForSynchronizedConfig(controller, credentials).then(function (synchronizedConfig) {
+        live.config = synchronizedConfig;
+        return live;
+      });
+    }).then(function (live) {
+      if (!live || generation !== state.loadGeneration) return null;
+      state.providers = live.providers;
+      state.config = live.config;
+      state.globalProxyUrl = live.globalProxyUrl;
+      var previewProviderCandidates = retainedResults.length ? retainedProviders : live.preview ? live.preview.providers : retainedProviders;
+      var previewAccountCandidates = retainedResults.length ? retainedAccounts : live.preview ? live.preview.accounts : retainedAccounts;
+      var failedPreview = previewForFailedProviderSources(previewProviderCandidates, previewAccountCandidates, live.failedProviderSources);
+      state.previewProviders = failedPreview.providers;
+      state.previewAccounts = failedPreview.accounts;
       state.draftMappings = Object.assign({}, state.config.provider_mappings);
       state.draftTTL = String(state.config.cache_ttl_seconds);
-      state.results = [];
-      state.dirty = false;
+      state.draftRevision = 0;
+      refreshDirtyState();
       state.needsQuery = false;
+      setDataReady(true);
       renderSettings();
       updateSummary();
       var accounts = buildAccounts();
+      var visibleResults = state.results.slice();
+      var fallbackResults = visibleResults.length ? visibleResults : retainedResults;
+      var compatibleResults = resultsForAccounts(fallbackResults, accounts.concat(state.previewAccounts));
       return readResultSnapshot(accounts, state.config.cache_ttl_seconds, credentials).then(function (snapshot) {
         if (generation !== state.loadGeneration) return;
         showApp(true);
         if (snapshot) {
-          state.results = snapshot.results;
+          state.results = appendUnavailablePreviewResults(snapshot.results, fallbackResults, accounts, state.previewAccounts);
           renderResults();
-          if (snapshot.fresh && snapshot.complete) return;
+          if (live.partialFailures) toast("部分 AI 提供商配置暂时无法读取，已显示其余数据", true);
+          if (snapshot.fresh) return;
+        } else if (compatibleResults.length) {
+          state.results = compatibleResults;
+          renderResults();
+        } else {
+          state.results = [];
+          clearResultSnapshot();
         }
         if (!accounts.length) {
           renderResults();
+          if (live.partialFailures) toast("部分 AI 提供商配置暂时无法读取，已显示其余数据", true);
           return;
         }
+        if (live.partialFailures) toast("部分 AI 提供商配置暂时无法读取，已显示其余数据", true);
         return queryBalances(false);
       });
     }).catch(function (error) {
       if (generation !== state.loadGeneration || error && error.cancelled) return;
       var authError = error && (error.status === 401 || error.status === 403);
       if (authError) state.credentials.managementKey = "";
+      if (!authError && state.results.length) {
+        showApp(false);
+        setDataReady(false);
+        setText(byID("query-meta"), error && error.proxyConfigUnavailable ? "正在显示上次结果 · 无法确认当前代理设置" : error && error.runtimePending ? "正在显示上次结果 · 最新设置尚未完成应用" : "正在显示上次结果 · 配置同步失败");
+        toast(error && error.message ? error.message : "配置同步失败，已保留上次结果", true);
+        return;
+      }
       showConnection(authError ? "管理密钥无效，请重新输入。" : (error && error.message ? error.message : "无法连接 CPA。"));
     }).finally(function () {
       if (generation === state.loadGeneration) state.loadController = null;
@@ -3210,6 +4017,7 @@ select:hover{border-color:var(--border-hover)}
   byID("refresh-button").addEventListener("click", function () { if (!state.querying) queryBalances(true); });
   byID("save-button").addEventListener("click", saveSettings);
   byID("reconnect-button").addEventListener("click", function () {
+    if (!confirmDiscardSettingsDraft()) return;
     cancelLoadRequests();
     cancelQueryRequests();
     cancelSaveRequests();
@@ -3218,6 +4026,7 @@ select:hover{border-color:var(--border-hover)}
   });
   byID("ttl-input").addEventListener("input", function () {
     state.draftTTL = byID("ttl-input").value;
+    state.draftRevision += 1;
     refreshDirtyState();
   });
   byID("connection-form").addEventListener("submit", function (event) {
@@ -3230,6 +4039,8 @@ select:hover{border-color:var(--border-hover)}
     state.credentials = { apiBase: base, managementKey: key };
     if (connectionChanged) {
       state.results = [];
+      state.previewAccounts = [];
+      state.previewProviders = [];
       state.needsQuery = false;
     }
     byID("management-key-input").value = "";
@@ -3240,11 +4051,6 @@ select:hover{border-color:var(--border-hover)}
     loading.finally(function () {
       if (generation === state.loadGeneration) setButtonBusy(byID("connect-button"), false, "连接");
     });
-  });
-  window.addEventListener("beforeunload", function (event) {
-    if (!state.dirty) return;
-    event.preventDefault();
-    event.returnValue = "";
   });
   window.setInterval(refreshCountdowns, 30000);
 

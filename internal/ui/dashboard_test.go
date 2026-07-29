@@ -242,7 +242,6 @@ func TestRenderDashboardGroupsOverviewByCategoryAndMultipleKeys(t *testing.T) {
 		}
 	}
 	for _, unwanted := range []string{
-		`scrollIntoView`,
 		`IntersectionObserver`,
 		`expandedCategories`,
 		`category-toggle`,
@@ -476,7 +475,7 @@ func TestRenderDashboardGroupsProvidersByCategoryAndServiceAddress(t *testing.T)
 		`"xai-api-key":"https://api.x.ai/v1"`,
 		`provider-group-row`,
 		`provider-group-title`,
-		`按服务地址分别配置`,
+		`个服务地址 · 分别配置`,
 		`provider.baseUrl || "官方默认服务地址"`,
 		`normalizeBaseForKey(left.baseUrl).localeCompare`,
 		`category === "OpenAI 兼容" ? identity`,
@@ -490,6 +489,59 @@ func TestRenderDashboardGroupsProvidersByCategoryAndServiceAddress(t *testing.T)
 	}
 	if strings.Contains(page, `var groupKey = baseURL.toLowerCase()`) {
 		t.Fatal("dashboard must preserve case-sensitive URL paths while grouping services")
+	}
+}
+
+func TestRenderDashboardSettingsUseCategoryTabsAndMobileCards(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, want := range []string{
+		`id="settings-provider-nav"`,
+		`aria-label="查询设置提供商分组"`,
+		`id="settings-sheet" class="settings-sheet"`,
+		`settings-policy-card`,
+		`activeSettingsCategory`,
+		`function activateSettingsCategory(category, focusTab)`,
+		`function renderSettingsNavigation(groups)`,
+		`function revealSettingsTab(tab, nav)`,
+		`tab.setAttribute("aria-controls", "settings-sheet")`,
+		`sheet.setAttribute("aria-labelledby", settingsTabID(group.category))`,
+		`sheet.setAttribute("role", "tabpanel")`,
+		`sheet.removeAttribute("role")`,
+		`provider-settings-row`,
+		`settings-field-label`,
+		`.settings-table .provider-settings-row td+td`,
+		`.settings-provider-nav{flex-wrap:nowrap;overflow-x:auto`,
+		`scrollbar-width:thin`,
+		`.settings-sheet{border:0;background:transparent;box-shadow:none;overflow:visible}`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing settings category/mobile marker %q", want)
+		}
+	}
+	if strings.Contains(page, `table,thead,tbody,tr,th,td{display:block}`) {
+		t.Fatal("mobile table rules still leak outside the settings table")
+	}
+}
+
+func TestRenderDashboardWaitsForRuntimeConfigAndPreservesInFlightDrafts(t *testing.T) {
+	page := string(RenderDashboard(300))
+	for _, want := range []string{
+		`var RUNTIME_CONFIG_PATH = "/balance-query/config-state";`,
+		`function waitForRuntimeConfig(expected, controller, credentials, changes)`,
+		`function withConfigSaveLock(credentials, controller, callback)`,
+		`return withConfigSaveLock(credentials, controller, function (assertOwnership)`,
+		`if (configMatchesChanges(current, expected, changes) && configsEqual(current, persisted))`,
+		`assertOwnership();`,
+		`setText(byID("save-state"), "已写入，正在等待插件生效")`,
+		`var submittedRevision = state.draftRevision;`,
+		`if (state.draftRevision === submittedRevision)`,
+		`rebaseDraftMappings(state.config.provider_mappings`,
+		`mergeSubmittedConfig(normalizeConfig(latestRaw)`,
+		`state.draftRevision += 1;`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing verified-save marker %q", want)
+		}
 	}
 }
 
@@ -565,7 +617,9 @@ func TestRenderDashboardRestoresSafeSessionSnapshotsAndCoordinatesRequests(t *te
 		`function persistResultSnapshot(accounts, results, ttlSeconds, credentials)`,
 		`function readResultSnapshot(accounts, ttlSeconds, credentials)`,
 		`(!Array.isArray(result.warnings) || result.warnings.length === 0)`,
-		`if (snapshot.fresh && snapshot.complete) return;`,
+		`var RESULT_SNAPSHOT_VERSION = 2;`,
+		`function readResultSnapshotPreview(credentials)`,
+		`if (snapshot.fresh) return;`,
 		`if (generation !== state.loadGeneration`,
 		`if (generation !== state.queryGeneration`,
 		`saveGeneration: 0`,
@@ -579,12 +633,13 @@ func TestRenderDashboardRestoresSafeSessionSnapshotsAndCoordinatesRequests(t *te
 		`function queryTimeoutForBatch(accountCount)`,
 		`responseErrorMessage(data, response.status, requestCredentials)`,
 		`optionalApiFetch("/proxy-url"`,
+		`error.proxyConfigUnavailable = true`,
 		`draftTTL: String(INITIAL_TTL)`,
-		`var nextMappings = Object.assign({}, state.config.provider_mappings);`,
-		`if (!primaryChanged && !legacyChanged) return;`,
+		`var nextMappings = Object.assign({}, latestConfig.provider_mappings);`,
+		`if (!providerMappingChanged(provider, baselineConfig.provider_mappings, submittedMappings)) return;`,
 		`if (mappingChanged) cancelQueryRequests();`,
 		`mapping_key: resolvedMapping.key`,
-		`var keyCount = buildAccounts().length;`,
+		`var keyCount = displayAccounts().length;`,
 		`function latestFetchedAt(results)`,
 		`failure.title`,
 		`failure.reason`,

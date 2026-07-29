@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -405,17 +406,25 @@ func TestDashboardSessionSnapshotIsHashedRedactedAndTTLBound(t *testing.T) {
 	page := string(RenderDashboard(300))
 	start := strings.Index(page, "  function utf8Bytes(value)")
 	end := strings.Index(page, "  function deobfuscate(raw)")
-	if start < 0 || end <= start {
+	sourceStart := strings.Index(page, "  function canonicalProviderSource(value, category)")
+	sourceEnd := strings.Index(page, "  function providerCategoryRank(value)")
+	matchStart := strings.Index(page, "  function resultMatchesAccount(result, account)")
+	matchEnd := strings.Index(page, "  function resultsForAccounts(results, accounts)")
+	if start < 0 || end <= start || sourceStart < 0 || sourceEnd <= sourceStart || matchStart < 0 || matchEnd <= matchStart {
 		t.Fatal("cannot locate dashboard snapshot helpers")
 	}
 	script := `
 var QUERY_BATCH_SIZE = 128;
 var RESULT_SNAPSHOT_KEY = "balance-query-results::v1";
-var RESULT_SNAPSHOT_VERSION = 1;
+var RESULT_SNAPSHOT_VERSION = 2;
 var RESULT_SNAPSHOT_MAX_BYTES = 2 * 1024 * 1024;
 var RESULT_SNAPSHOT_MAX_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 var SECRET_SALT = "cli-proxy-api-webui::secure-storage";
-var state = { snapshotGeneration:0 };
+var state = {
+  snapshotGeneration:0,
+  providers:[{name:"服务一",baseUrl:"https://provider.example/v1",category:"OpenAI 兼容",source:"openai-compatibility",disabled:false,mappingKey:"provider-1",legacyMappingKey:"provider-1",keys:[]}],
+  config:{cache_ttl_seconds:300,provider_mappings:{"provider-1":"newapi"}}
+};
 var memory = Object.create(null);
 var storage = {
   getItem:function (key) { return Object.prototype.hasOwnProperty.call(memory, key) ? memory[key] : null; },
@@ -425,25 +434,38 @@ var storage = {
 var window = { crypto:null, sessionStorage:storage, location:{origin:"https://cpa.example",host:"cpa.example"} };
 window.parent = window;
 function maskKey(value) { return "masked-" + String(value).slice(-2); }
+function providerCategoryLabel(value) { return String(value || "OpenAI 兼容"); }
+function normalizeBaseForKey(value) { return String(value || "").replace(/\/+$/, ""); }
+function normalizeConfig(value) { return {cache_ttl_seconds:Number(value.cache_ttl_seconds),provider_mappings:Object.assign({},value.provider_mappings || {})}; }
 var now = Date.parse("2099-07-29T00:00:00Z");
 Date.now = function () { return now; };
-` + page[start:end] + `
+` + page[start:end] + page[sourceStart:sourceEnd] + page[matchStart:matchEnd] + `
 (async function () {
   var credentials = {apiBase:"https://cpa.example",managementKey:"management-secret"};
   var accounts = [{
     id:"account-1",provider_key:"provider-1",mapping_key:"provider-1",account_name:"账户一",
-    base_url:"https://provider.example/v1",proxy_url:"",query_type:"newapi",api_key:"sk-provider-secret"
+    base_url:"https://provider.example/v1",proxy_url:"",query_type:"newapi",api_key:"sk-provider-secret",source:"openai-compatibility"
   }];
-  var results = [{account_name:"账户一",fetched_at:"2099-07-29T00:00:00Z",extra:{note:"sk-provider-secret / management-secret"}}];
+  var results = [attachResultAccountDigest({
+    auth_id:"account-1",provider_key:"provider-1",base_url:"https://provider.example/v1",
+    account_name:"账户一",fetched_at:"2099-07-29T00:00:00Z",extra:{note:"sk-provider-secret / management-secret"}
+  }, accountResultDigest(accounts[0]))];
   var wrote = await persistResultSnapshot(accounts, results, 300, credentials);
   var serialized = storage.getItem(RESULT_SNAPSHOT_KEY) || "";
+  var legacyRecord = JSON.parse(serialized);
+  delete legacyRecord.display_providers[0].source;
+  delete legacyRecord.display_accounts[0].source;
+  storage.setItem(RESULT_SNAPSHOT_KEY, JSON.stringify(legacyRecord));
+  var legacyPreview = await readResultSnapshotPreview(credentials);
   var restored = await readResultSnapshot(accounts, 300, credentials);
-  var warningResults = [{
+  var warningResults = [attachResultAccountDigest({
+    auth_id:"account-1",provider_key:"provider-1",base_url:"https://provider.example/v1",
     account_name:"账户一",fetched_at:"2099-07-29T00:00:00Z",balance:12.5,
     warnings:[{kind:"service_unavailable",title:"费用数据暂缺",reason:"sk-provider-secret / management-secret",suggestion:"稍后重试"}]
-  }];
+  }, accountResultDigest(accounts[0]))];
   await persistResultSnapshot(accounts, warningResults, 300, credentials);
   var warningSerialized = storage.getItem(RESULT_SNAPSHOT_KEY) || "";
+  var warningRecord = JSON.parse(warningSerialized);
   var warningRestored = await readResultSnapshot(accounts, 300, credentials);
   await persistResultSnapshot(accounts, results, 300, credentials);
   now += 301000;
@@ -451,8 +473,32 @@ Date.now = function () { return now; };
   var changed = JSON.parse(JSON.stringify(accounts));
   changed[0].api_key = "sk-provider-changed";
   var mismatch = await readResultSnapshot(changed, 300, credentials);
+  var secondAccount = {
+    id:"account-2",provider_key:"provider-2",mapping_key:"provider-2",account_name:"账户二",
+    base_url:"https://second.example/v1",proxy_url:"",query_type:"deepseek",api_key:"sk-second-provider-secret",source:"claude-api-key"
+  };
+  var orderedAccounts = [accounts[0], secondAccount];
+  var orderedResults = [
+    attachResultAccountDigest({auth_id:"account-1",provider_key:"provider-1",base_url:"https://provider.example/v1",account_name:"账户一",fetched_at:"2099-07-29T00:00:00Z",extra:{marker:"first"}}, accountResultDigest(accounts[0])),
+    attachResultAccountDigest({auth_id:"account-2",provider_key:"provider-2",base_url:"https://second.example/v1",account_name:"账户二",fetched_at:"2099-07-29T00:00:00Z",extra:{marker:"second"}}, accountResultDigest(secondAccount))
+  ];
+  await persistResultSnapshot(orderedAccounts, [orderedResults[1], orderedResults[0]], 300, credentials);
+  var storedOrderedMarkers = JSON.parse(storage.getItem(RESULT_SNAPSHOT_KEY)).results.map(function (result) { return result.extra.marker; });
+  var reordered = await readResultSnapshot([secondAccount, accounts[0]], 300, credentials);
+  var preview = await readResultSnapshotPreview(credentials);
+  var changedQuery = JSON.parse(JSON.stringify(accounts[0]));
+  changedQuery.query_type = "deepseek";
+  var changedProxy = JSON.parse(JSON.stringify(accounts[0]));
+  changedProxy.proxy_url = "http://proxy.example:8080";
   await persistResultSnapshot(accounts, results, 300, credentials);
-  await readResultSnapshot(accounts, 0, credentials);
+  var ttlZero = await readResultSnapshot(accounts, 0, credentials);
+  state.providers[0].name = "写入开始前";
+  state.config.provider_mappings = {"provider-1":"newapi"};
+  var pendingCapture = persistResultSnapshot(accounts, results, 300, credentials);
+  state.providers = [{name:"异步期间的新状态",baseUrl:"https://new.example",category:"其他",mappingKey:"new",legacyMappingKey:"new",keys:[]}];
+  state.config.provider_mappings = {new:"deepseek"};
+  await pendingCapture;
+  var capturedRecord = JSON.parse(storage.getItem(RESULT_SNAPSHOT_KEY));
   process.stdout.write(JSON.stringify({
     wrote:wrote,
     contains_api_key:serialized.indexOf("sk-provider-secret") !== -1,
@@ -466,9 +512,24 @@ Date.now = function () { return now; };
     warning_complete:warningRestored && warningRestored.complete,
     warning_count:warningRestored && warningRestored.results[0].warnings.length,
     warning_reason:warningRestored && warningRestored.results[0].warnings[0].reason,
+    warning_expires_in:warningRecord.expires_at - warningRecord.stored_at,
     stale_fresh:stale && stale.fresh,
     mismatch:mismatch,
-    cleared:storage.getItem(RESULT_SNAPSHOT_KEY) == null,
+    stored_ordered_markers:storedOrderedMarkers,
+    reordered_markers:reordered && reordered.results.map(function (result) { return result.extra.marker; }),
+    preview_accounts:preview && preview.accounts.length,
+    preview_digest_matches:preview && accountResultDigest(preview.accounts[0]) === accountResultDigest(accounts[0]) && preview.results[0].__account_digest === accountResultDigest(accounts[0]),
+    preview_rejects_api_key:preview && accountResultDigest(preview.accounts[0]) !== accountResultDigest(changed[0]),
+    preview_rejects_query:preview && accountResultDigest(preview.accounts[0]) !== accountResultDigest(changedQuery),
+    preview_rejects_proxy:preview && accountResultDigest(preview.accounts[0]) !== accountResultDigest(changedProxy),
+    legacy_provider_source:legacyPreview && legacyPreview.providers[0].source,
+    legacy_account_source:legacyPreview && legacyPreview.accounts[0].source,
+    ttl_zero_fresh:ttlZero && ttlZero.fresh,
+    retained:storage.getItem(RESULT_SNAPSHOT_KEY) != null,
+    captured_provider:capturedRecord.display_providers[0].name,
+    captured_mapping:capturedRecord.config.provider_mappings["provider-1"],
+    captured_provider_source:capturedRecord.display_providers[0].source,
+    captured_account_source:capturedRecord.display_accounts[0].source,
     fallback_sha:fallbackSHA256("abc")
   }));
 })().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
@@ -478,22 +539,37 @@ Date.now = function () { return now; };
 		t.Fatalf("execute dashboard snapshot helpers: %v\n%s", err, output)
 	}
 	var got struct {
-		Wrote                 bool   `json:"wrote"`
-		ContainsAPIKey        bool   `json:"contains_api_key"`
-		ContainsManagementKey bool   `json:"contains_management_key"`
-		RestoredFresh         bool   `json:"restored_fresh"`
-		RestoredComplete      bool   `json:"restored_complete"`
-		RestoredNote          string `json:"restored_note"`
-		WarningContainsAPIKey bool   `json:"warning_contains_api_key"`
-		WarningContainsMgmt   bool   `json:"warning_contains_management_key"`
-		WarningFresh          bool   `json:"warning_fresh"`
-		WarningComplete       bool   `json:"warning_complete"`
-		WarningCount          int    `json:"warning_count"`
-		WarningReason         string `json:"warning_reason"`
-		StaleFresh            bool   `json:"stale_fresh"`
-		Mismatch              any    `json:"mismatch"`
-		Cleared               bool   `json:"cleared"`
-		FallbackSHA           string `json:"fallback_sha"`
+		Wrote                  bool     `json:"wrote"`
+		ContainsAPIKey         bool     `json:"contains_api_key"`
+		ContainsManagementKey  bool     `json:"contains_management_key"`
+		RestoredFresh          bool     `json:"restored_fresh"`
+		RestoredComplete       bool     `json:"restored_complete"`
+		RestoredNote           string   `json:"restored_note"`
+		WarningContainsAPIKey  bool     `json:"warning_contains_api_key"`
+		WarningContainsMgmt    bool     `json:"warning_contains_management_key"`
+		WarningFresh           bool     `json:"warning_fresh"`
+		WarningComplete        bool     `json:"warning_complete"`
+		WarningCount           int      `json:"warning_count"`
+		WarningReason          string   `json:"warning_reason"`
+		WarningExpiresIn       int64    `json:"warning_expires_in"`
+		StaleFresh             bool     `json:"stale_fresh"`
+		Mismatch               any      `json:"mismatch"`
+		StoredOrderedMarkers   []string `json:"stored_ordered_markers"`
+		ReorderedMarkers       []string `json:"reordered_markers"`
+		PreviewAccounts        int      `json:"preview_accounts"`
+		PreviewDigestMatches   bool     `json:"preview_digest_matches"`
+		PreviewRejectsAPIKey   bool     `json:"preview_rejects_api_key"`
+		PreviewRejectsQuery    bool     `json:"preview_rejects_query"`
+		PreviewRejectsProxy    bool     `json:"preview_rejects_proxy"`
+		LegacyProviderSource   string   `json:"legacy_provider_source"`
+		LegacyAccountSource    string   `json:"legacy_account_source"`
+		TTLZeroFresh           bool     `json:"ttl_zero_fresh"`
+		Retained               bool     `json:"retained"`
+		CapturedProvider       string   `json:"captured_provider"`
+		CapturedMapping        string   `json:"captured_mapping"`
+		CapturedProviderSource string   `json:"captured_provider_source"`
+		CapturedAccountSource  string   `json:"captured_account_source"`
+		FallbackSHA            string   `json:"fallback_sha"`
 	}
 	if err := json.Unmarshal(output, &got); err != nil {
 		t.Fatalf("decode dashboard snapshot result: %v\n%s", err, output)
@@ -507,11 +583,131 @@ Date.now = function () { return now; };
 	if !got.WarningFresh || got.WarningComplete || got.WarningCount != 1 || got.WarningContainsAPIKey || got.WarningContainsMgmt || strings.Contains(got.WarningReason, "secret") {
 		t.Fatalf("partial warning snapshot was not safely restored for background retry: %#v", got)
 	}
-	if got.StaleFresh || got.Mismatch != nil || !got.Cleared {
+	if got.WarningExpiresIn != 20_000 {
+		t.Fatalf("warning snapshot expiry = %d, want 20 seconds", got.WarningExpiresIn)
+	}
+	if got.StaleFresh || got.TTLZeroFresh || got.Mismatch != nil || !got.Retained {
 		t.Fatalf("snapshot TTL/fingerprint invalidation failed: %#v", got)
+	}
+	if len(got.StoredOrderedMarkers) != 2 || got.StoredOrderedMarkers[0] != "first" || got.StoredOrderedMarkers[1] != "second" ||
+		len(got.ReorderedMarkers) != 2 || got.ReorderedMarkers[0] != "second" || got.ReorderedMarkers[1] != "first" || got.PreviewAccounts != 2 {
+		t.Fatalf("snapshot did not restore display data across account ordering: %#v", got)
+	}
+	if !got.PreviewDigestMatches || !got.PreviewRejectsAPIKey || !got.PreviewRejectsQuery || !got.PreviewRejectsProxy {
+		t.Fatalf("preview account digest did not preserve the full query identity: %#v", got)
+	}
+	if got.LegacyProviderSource != "openai-compatibility" || got.LegacyAccountSource != "openai-compatibility" {
+		t.Fatalf("legacy snapshot provider source was not inferred: %#v", got)
+	}
+	if got.CapturedProvider != "写入开始前" || got.CapturedMapping != "newapi" {
+		t.Fatalf("snapshot mixed async state: %#v", got)
+	}
+	if got.CapturedProviderSource != "openai-compatibility" || got.CapturedAccountSource != "openai-compatibility" {
+		t.Fatalf("snapshot did not persist provider source metadata: %#v", got)
 	}
 	if got.FallbackSHA != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
 		t.Fatalf("fallback SHA-256 = %q", got.FallbackSHA)
+	}
+}
+
+func TestDashboardOverviewGroupsReorderedResultsByMatchingAccount(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	page := string(RenderDashboard(300))
+	start := strings.Index(page, "  function providerForKey(providerKey)")
+	end := strings.Index(page, "  function canonicalQuotaUnit(unit)")
+	if start < 0 || end <= start {
+		t.Fatal("cannot locate dashboard overview grouping helpers")
+	}
+	script := `
+var providers = [
+  {name:"服务 A",baseUrl:"https://shared.example/v1",category:"OpenAI 兼容",mappingKey:"provider-a",legacyMappingKey:"provider-a"},
+  {name:"服务 B",baseUrl:"https://shared.example/v1",category:"OpenAI 兼容",mappingKey:"provider-b",legacyMappingKey:"provider-b"}
+];
+var state = {
+  config:{provider_mappings:{"provider-a":"fallback-a","provider-b":"fallback-b"}},
+  results:[
+    {marker:"second",auth_id:"account-b",provider_key:"provider-b",base_url:"https://shared.example/v1",__account_digest:"digest-b"},
+    {marker:"first",auth_id:"account-a",provider_key:"provider-a",base_url:"https://shared.example/v1",__account_digest:"digest-a"}
+  ]
+};
+function displayProviders() { return providers; }
+function providerCategoryLabel(value) { return String(value || ""); }
+function normalizeBaseForKey(value) { return String(value || "").replace(/\/+$/, ""); }
+function mappedQueryType(provider, mappings) { return mappings[provider.mappingKey] || ""; }
+function providerCategoryRank() { return 0; }
+function serviceName(category, baseURL) { return category + " · " + baseURL; }
+function resultWarnings() { return []; }
+function resultMatchesAccount(result, account) {
+  return result.__account_digest === account.__account_digest && result.auth_id === account.id && result.provider_key === account.provider_key;
+}
+` + page[start:end] + `
+var accounts = [
+  {id:"account-a",provider_key:"provider-a",query_type:"newapi",__account_digest:"digest-a"},
+  {id:"account-b",provider_key:"provider-b",query_type:"deepseek",__account_digest:"digest-b"}
+];
+var assignments = {};
+overviewResultGroups(accounts)[0].services.forEach(function (service) {
+  service.results.forEach(function (result) { assignments[result.marker] = service.provider.queryType; });
+});
+process.stdout.write(JSON.stringify(assignments));
+`
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute dashboard reordered grouping: %v\n%s", err, output)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode dashboard reordered grouping: %v\n%s", err, output)
+	}
+	if got["first"] != "newapi" || got["second"] != "deepseek" {
+		t.Fatalf("reordered results used positional account metadata: %#v", got)
+	}
+}
+
+func TestDashboardReconnectRequiresConfirmationForDirtyDraft(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	page := string(RenderDashboard(300))
+	start := strings.Index(page, "  function confirmDiscardSettingsDraft()")
+	end := strings.Index(page, "  function cancelLoadRequests()")
+	if start < 0 || end <= start {
+		t.Fatal("cannot locate dashboard reconnect confirmation helper")
+	}
+	if !strings.Contains(page, `if (!confirmDiscardSettingsDraft()) return;`) {
+		t.Fatal("reconnect action does not stop when dirty-draft confirmation is denied")
+	}
+	script := `
+var state = {dirty:false};
+var decisions = [false, true];
+var messages = [];
+var window = {confirm:function (message) { messages.push(message); return decisions.shift(); }};
+` + page[start:end] + `
+var clean = confirmDiscardSettingsDraft();
+state.dirty = true;
+var denied = confirmDiscardSettingsDraft();
+var accepted = confirmDiscardSettingsDraft();
+process.stdout.write(JSON.stringify({clean:clean,denied:denied,accepted:accepted,messages:messages}));
+`
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute dashboard reconnect confirmation: %v\n%s", err, output)
+	}
+	var got struct {
+		Clean    bool     `json:"clean"`
+		Denied   bool     `json:"denied"`
+		Accepted bool     `json:"accepted"`
+		Messages []string `json:"messages"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode dashboard reconnect confirmation: %v\n%s", err, output)
+	}
+	if !got.Clean || got.Denied || !got.Accepted || len(got.Messages) != 2 || !strings.Contains(got.Messages[0], "未保存") {
+		t.Fatalf("dirty reconnect confirmation = %#v", got)
 	}
 }
 
@@ -532,7 +728,7 @@ var QUERY_BATCH_MAX_BYTES = 900 * 1024;
 var state = {
   credentials:{apiBase:"https://cpa.example",managementKey:"management-secret"},
   config:{cache_ttl_seconds:300},results:[{id:"visible-old"}],needsQuery:false,
-  queryController:null,queryGeneration:0,querying:false
+  previewAccounts:[],queryController:null,queryGeneration:0,querying:false
 };
 var currentAccounts = [{id:"request-old"}];
 var deferred = [];
@@ -540,6 +736,10 @@ var buttonStates = [];
 var persisted = [];
 var resultNode = { setAttribute:function () {} };
 function buildAccounts() { return currentAccounts.slice(); }
+function resultMatchesAccount() { return false; }
+function accountResultDigest(account) { return String(account && account.id || ""); }
+function attachResultAccountDigest(result, digest) { Object.defineProperty(result, "__account_digest", {value:String(digest),configurable:true}); return result; }
+function appendUnavailablePreviewResults(results) { return results; }
 function serializedByteLength(value) { return Buffer.byteLength(value, "utf8"); }
 function byID(id) { return id === "results" ? resultNode : {}; }
 function setButtonBusy(_button, busy) { buttonStates.push(Boolean(busy)); }
@@ -614,6 +814,127 @@ function apiFetch(_path, options, timeout) {
 	}
 }
 
+func TestDashboardQueryKeepsLastSuccessAndUnavailableProviderPreview(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	page := string(RenderDashboard(300))
+	start := strings.Index(page, "  function mergeQueryResults(accounts, results, previousResults)")
+	end := strings.Index(page, "  function queryBalances(refresh)")
+	if start < 0 || end <= start {
+		t.Fatal("cannot locate dashboard result merge helper")
+	}
+	script := `
+var state = {previewAccounts:[{id:"stale",provider_key:"offline",digest:"offline-v1"}]};
+function accountResultDigest(account) { return String(account && (account.__account_digest || account.digest) || ""); }
+function attachResultAccountDigest(result, digest) { Object.defineProperty(result, "__account_digest", {value:String(digest),configurable:true}); return result; }
+function resultMatchesAccount(result, account) {
+  return Boolean(result && result.__account_digest) && result.__account_digest === accountResultDigest(account) &&
+    String(result && result.auth_id || "") === String(account && account.id || "") &&
+    String(result && result.provider_key || "") === String(account && account.provider_key || "");
+}
+function appendUnavailablePreviewResults(results, previousResults, liveAccounts, previewAccounts) {
+  var merged = results.slice();
+  previousResults.forEach(function (previous) {
+    var live = liveAccounts.some(function (account) { return resultMatchesAccount(previous, account); });
+    var preview = previewAccounts.filter(function (account) { return resultMatchesAccount(previous, account); })[0];
+    if (!live && preview && !merged.some(function (candidate) { return resultMatchesAccount(candidate, preview); })) merged.push(previous);
+  });
+  return merged;
+}
+` + page[start:end] + `
+var accounts = [{id:"a",provider_key:"live",digest:"a-v2"},{id:"b",provider_key:"live",digest:"b-v2"}];
+var previous = [
+  {auth_id:"a",provider_key:"live",quota_display:"上次成功",__account_digest:"a-v2"},
+  {auth_id:"b",provider_key:"live",quota_display:"旧密钥的成功结果",__account_digest:"b-v1"},
+  {auth_id:"stale",provider_key:"offline",quota_display:"离线来源的上次结果",__account_digest:"offline-v1"}
+];
+var current = [
+  {auth_id:"a",provider_key:"live",error:"HTTP 503",failure:{retryable:true}},
+  {auth_id:"b",provider_key:"live",error:"HTTP 401",failure:{retryable:false}}
+];
+var merged = mergeQueryResults(accounts, current, previous);
+process.stdout.write(JSON.stringify(merged));
+`
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute dashboard result merge helper: %v\n%s", err, output)
+	}
+	var got struct {
+		RetainedFailures int `json:"retainedFailures"`
+		Results          []struct {
+			AuthID       string `json:"auth_id"`
+			QuotaDisplay string `json:"quota_display"`
+			Error        string `json:"error"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode dashboard result merge: %v\n%s", err, output)
+	}
+	if got.RetainedFailures != 1 || len(got.Results) != 3 || got.Results[0].QuotaDisplay != "上次成功" || got.Results[0].Error != "" || got.Results[1].Error == "" || got.Results[1].QuotaDisplay != "" || got.Results[2].AuthID != "stale" {
+		t.Fatalf("last-success/preview merge = %#v", got)
+	}
+}
+
+func TestDashboardPartialProviderPreviewOnlyRetainsFailedSources(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	page := string(RenderDashboard(300))
+	start := strings.Index(page, "  function canonicalProviderSource(value, category)")
+	end := strings.Index(page, "  function providerCategoryRank(value)")
+	if start < 0 || end <= start {
+		t.Fatal("cannot locate dashboard provider-source helpers")
+	}
+	script := `
+function providerCategoryLabel(value) {
+  var labels = {"openai-compatibility":"OpenAI 兼容","claude-api-key":"Claude","xai-api-key":"xAI","codex-api-key":"Codex","gemini-api-key":"Gemini"};
+  return labels[String(value || "")] || String(value || "OpenAI 兼容");
+}
+function snapshotDisplayProvider(provider) { return Object.assign({}, provider, {keys:[]}); }
+function snapshotDisplayAccount(account) { return Object.assign({}, account); }
+` + page[start:end] + `
+var providers = [
+  {name:"已删除但来源读取成功",category:"OpenAI 兼容",mappingKey:"openai-old",legacyMappingKey:"openai-old"},
+  {name:"Claude 上次配置",category:"Claude",mappingKey:"claude-old",legacyMappingKey:"claude-old"},
+  {name:"Gemini 上次配置",category:"Gemini",source:"gemini-api-key",mappingKey:"gemini-old",legacyMappingKey:"gemini-old"}
+];
+var accounts = [
+  {id:"openai-account",provider_key:"openai-old"},
+  {id:"claude-account",provider_key:"claude-old"},
+  {id:"gemini-account",provider_key:"gemini-old"}
+];
+var preview = previewForFailedProviderSources(providers, accounts, ["claude-api-key"]);
+process.stdout.write(JSON.stringify({
+  provider_names:preview.providers.map(function (provider) { return provider.name; }),
+  provider_sources:preview.providers.map(function (provider) { return provider.source; }),
+  account_ids:preview.accounts.map(function (account) { return account.id; }),
+  account_sources:preview.accounts.map(function (account) { return account.source; })
+}));
+`
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute dashboard provider-source helpers: %v\n%s", err, output)
+	}
+	var got struct {
+		ProviderNames   []string `json:"provider_names"`
+		ProviderSources []string `json:"provider_sources"`
+		AccountIDs      []string `json:"account_ids"`
+		AccountSources  []string `json:"account_sources"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode dashboard provider-source result: %v\n%s", err, output)
+	}
+	if !reflect.DeepEqual(got.ProviderNames, []string{"Claude 上次配置"}) ||
+		!reflect.DeepEqual(got.ProviderSources, []string{"claude-api-key"}) ||
+		!reflect.DeepEqual(got.AccountIDs, []string{"claude-account"}) ||
+		!reflect.DeepEqual(got.AccountSources, []string{"claude-api-key"}) {
+		t.Fatalf("partial provider preview retained unrelated sources: %#v", got)
+	}
+}
+
 func TestDashboardSaveIgnoresResponseAfterReconnectWithSameCredentials(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -629,10 +950,12 @@ func TestDashboardSaveIgnoresResponseAfterReconnectWithSameCredentials(t *testin
 	}
 	script := `
 var REQUEST_TIMEOUT = 30000;
+var CONFIG_REQUEST_TIMEOUT = 10000;
 var providerLabels = Object.create(null);
 var state = {
   credentials:{apiBase:"https://cpa.example",managementKey:"same-secret"},
   providers:[],config:{cache_ttl_seconds:300,provider_mappings:{}},draftMappings:{},draftTTL:"600",
+  draftRevision:1,dataReady:true,
   results:[{id:"new-load-result"}],view:"settings",dirty:true,needsQuery:false,
   saving:false,saveGeneration:0,saveController:null,loadGeneration:7,loadController:null,
   querying:false,queryGeneration:0,queryController:null
@@ -650,7 +973,12 @@ function setText(_node, value) { saveStates.push(String(value || "")); }
 function toast() { toastCount += 1; }
 function owns(value, key) { return Object.prototype.hasOwnProperty.call(value || {}, key); }
 function stableMappings(value) { return JSON.stringify(value || {}); }
+function normalizeConfig(value) { return {cache_ttl_seconds:Number(value.cache_ttl_seconds),provider_mappings:Object.assign({},value.provider_mappings || {})}; }
 function resolvedProviderMapping() { return {key:"",type:""}; }
+function mappedQueryType() { return ""; }
+function refreshDirtyState() { return state.dirty; }
+function waitForRuntimeConfig() { return Promise.resolve(state.config); }
+function withConfigSaveLock(_credentials, _controller, callback) { return callback(function () {}); }
 function apiFetch(_path, options) {
   requestSignal = options.signal;
   return new Promise(function (resolve) { resolveRequest = resolve; });
@@ -658,6 +986,7 @@ function apiFetch(_path, options) {
 function clearResultSnapshot() {}
 function persistResultSnapshot() { persistCount += 1; return Promise.resolve(true); }
 function buildAccounts() { return []; }
+function resultsMatchAccounts() { return false; }
 function renderSettings() { renderCount += 1; }
 function renderResults() { renderCount += 1; }
 function queryBalances() { renderCount += 1; return Promise.resolve(); }
@@ -717,6 +1046,713 @@ var window = {setTimeout:function () {}};
 	}
 	if got.FalseBusyCount != 1 {
 		t.Fatalf("stale save finally changed the new UI state: %#v", got)
+	}
+}
+
+func TestDashboardWaitsForRuntimeConfigToMatch(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	page := string(RenderDashboard(300))
+	start := strings.Index(page, "  function abortableDelay(milliseconds, signal)")
+	end := strings.Index(page, "  function legacyNormalizeBaseForKey(value)")
+	if start < 0 || end <= start {
+		t.Fatal("cannot locate runtime-config wait helpers")
+	}
+	script := `
+var CONFIG_REQUEST_TIMEOUT = 10000;
+var CONFIG_STATE_WAIT_TIMEOUT = 15000;
+var RUNTIME_CONFIG_PATH = "/balance-query/config-state";
+var providerLabels = {newapi:"New API",deepseek:"DeepSeek"};
+var calls = 0;
+var replies = [
+  {cache_ttl_seconds:300,provider_mappings:{one:"newapi"}},
+  {cache_ttl_seconds:600,provider_mappings:{one:"newapi"}},
+  {cache_ttl_seconds:600,provider_mappings:{two:"deepseek",one:"newapi"}}
+];
+var window = {setTimeout:function (fn) { return setTimeout(fn, 0); },clearTimeout:clearTimeout};
+function normalizeConfig(raw) { return {cache_ttl_seconds:Number(raw.cache_ttl_seconds),provider_mappings:Object.assign({},raw.provider_mappings || {})}; }
+function stableMappings(value) { return JSON.stringify(Object.keys(value || {}).sort().map(function (key) { return [key,value[key]]; })); }
+function apiFetch() { var reply = replies[Math.min(calls, replies.length - 1)]; calls += 1; return Promise.resolve(reply); }
+function optionalApiFetch() { return Promise.resolve({}); }
+` + page[start:end] + `
+(async function () {
+  var expected = {cache_ttl_seconds:600,provider_mappings:{one:"newapi",two:"deepseek"}};
+  var resolved = await waitForRuntimeConfig(expected, new AbortController(), {});
+  process.stdout.write(JSON.stringify({calls:calls,resolved:resolved,equal:configsEqual(resolved, expected)}));
+})().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
+`
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute runtime-config wait helpers: %v\n%s", err, output)
+	}
+	var got struct {
+		Calls    int  `json:"calls"`
+		Equal    bool `json:"equal"`
+		Resolved struct {
+			TTL int `json:"cache_ttl_seconds"`
+		} `json:"resolved"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode runtime-config wait result: %v\n%s", err, output)
+	}
+	if got.Calls != 3 || !got.Equal || got.Resolved.TTL != 600 {
+		t.Fatalf("runtime config was accepted before both fields matched: %#v", got)
+	}
+}
+
+func TestDashboardLoadReconcilesMovingPersistedAndRuntimeConfig(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	page := string(RenderDashboard(300))
+	start := strings.Index(page, "  function abortableDelay(milliseconds, signal)")
+	end := strings.Index(page, "  function legacyNormalizeBaseForKey(value)")
+	if start < 0 || end <= start {
+		t.Fatal("cannot locate synchronized config helpers")
+	}
+	script := `
+var CONFIG_REQUEST_TIMEOUT = 10000;
+var CONFIG_STATE_WAIT_TIMEOUT = 15000;
+var RUNTIME_CONFIG_PATH = "/balance-query/config-state";
+var providerLabels = {newapi:"New API",deepseek:"DeepSeek"};
+var hostCalls = 0;
+var runtimeCalls = 0;
+var configA = {cache_ttl_seconds:300,provider_mappings:{one:"newapi"}};
+var configB = {cache_ttl_seconds:600,provider_mappings:{one:"deepseek"}};
+var window = {setTimeout:function (fn) { return setTimeout(fn, 0); },clearTimeout:clearTimeout};
+function normalizeConfig(raw) { return {cache_ttl_seconds:Number(raw.cache_ttl_seconds),provider_mappings:Object.assign({},raw.provider_mappings || {})}; }
+function stableMappings(value) { return JSON.stringify(Object.keys(value || {}).sort().map(function (key) { return [key,value[key]]; })); }
+function apiFetch(path) {
+  if (path === "/plugins/balance-query/config") {
+    hostCalls += 1;
+    return Promise.resolve(hostCalls === 1 ? configA : configB);
+  }
+  runtimeCalls += 1;
+  return Promise.resolve(configB);
+}
+function optionalApiFetch() { return Promise.resolve({}); }
+` + page[start:end] + `
+(async function () {
+  var resolved = await waitForSynchronizedConfig(new AbortController(), {});
+  process.stdout.write(JSON.stringify({host_calls:hostCalls,runtime_calls:runtimeCalls,resolved:resolved}));
+})().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
+`
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute synchronized config helpers: %v\n%s", err, output)
+	}
+	var got struct {
+		HostCalls    int `json:"host_calls"`
+		RuntimeCalls int `json:"runtime_calls"`
+		Resolved     struct {
+			TTL      int               `json:"cache_ttl_seconds"`
+			Mappings map[string]string `json:"provider_mappings"`
+		} `json:"resolved"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode synchronized config result: %v\n%s", err, output)
+	}
+	if got.HostCalls != 2 || got.RuntimeCalls != 2 || got.Resolved.TTL != 600 || got.Resolved.Mappings["one"] != "deepseek" {
+		t.Fatalf("moving host/runtime target did not converge: %#v", got)
+	}
+}
+
+func TestDashboardSaveWaitsForUnrelatedRuntimeChanges(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	page := string(RenderDashboard(300))
+	start := strings.Index(page, "  function abortableDelay(milliseconds, signal)")
+	end := strings.Index(page, "  function legacyNormalizeBaseForKey(value)")
+	if start < 0 || end <= start {
+		t.Fatal("cannot locate runtime config confirmation helpers")
+	}
+	script := `
+var CONFIG_REQUEST_TIMEOUT = 10000;
+var CONFIG_STATE_WAIT_TIMEOUT = 15000;
+var RUNTIME_CONFIG_PATH = "/balance-query/config-state";
+var providerLabels = {newapi:"New API",deepseek:"DeepSeek"};
+var runtimeCalls = 0;
+var persisted = {cache_ttl_seconds:300,provider_mappings:{a:"newapi",b:"deepseek"}};
+var runtimeReplies = [
+  {cache_ttl_seconds:300,provider_mappings:{a:"newapi"}},
+  {cache_ttl_seconds:300,provider_mappings:{a:"newapi",b:"deepseek"}}
+];
+var window = {setTimeout:function (fn) { return setTimeout(fn, 0); },clearTimeout:clearTimeout};
+function normalizeConfig(raw) { return {cache_ttl_seconds:Number(raw.cache_ttl_seconds),provider_mappings:Object.assign({},raw.provider_mappings || {})}; }
+function stableMappings(value) { return JSON.stringify(Object.keys(value || {}).sort().map(function (key) { return [key,value[key]]; })); }
+function configMatchesChanges(current, expected) { return current.provider_mappings.a === expected.provider_mappings.a; }
+function settingsConflict(message) { var error = new Error(message); error.status = 409; return error; }
+function apiFetch(path) {
+  if (path === RUNTIME_CONFIG_PATH) {
+    var reply = runtimeReplies[Math.min(runtimeCalls, runtimeReplies.length - 1)];
+    runtimeCalls += 1;
+    return Promise.resolve(reply);
+  }
+  return Promise.resolve(persisted);
+}
+function optionalApiFetch() { return Promise.resolve({}); }
+` + page[start:end] + `
+(async function () {
+  var expected = {cache_ttl_seconds:300,provider_mappings:{a:"newapi"}};
+  var resolved = await waitForRuntimeConfig(expected, new AbortController(), {}, {ttlChanged:false,providers:[{mappingKey:"a",legacyMappingKey:"a"}]});
+  process.stdout.write(JSON.stringify({runtime_calls:runtimeCalls,resolved:resolved}));
+})().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
+`
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute runtime config delta confirmation: %v\n%s", err, output)
+	}
+	var got struct {
+		RuntimeCalls int `json:"runtime_calls"`
+		Resolved     struct {
+			Mappings map[string]string `json:"provider_mappings"`
+		} `json:"resolved"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode runtime config delta confirmation: %v\n%s", err, output)
+	}
+	if got.RuntimeCalls != 2 || got.Resolved.Mappings["b"] != "deepseek" {
+		t.Fatalf("save was confirmed before unrelated runtime config converged: %#v", got)
+	}
+}
+
+func TestDashboardProxyConfigFailureKeepsPreviewAndBlocksQuery(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	page := string(RenderDashboard(300))
+	start := strings.Index(page, "  function loadData()")
+	end := strings.Index(page, `  document.querySelectorAll(".segment")`)
+	if start < 0 || end <= start {
+		t.Fatal("cannot locate dashboard load helper")
+	}
+	script := `
+var CONFIG_REQUEST_TIMEOUT = 10000;
+var RUNTIME_CONFIG_PATH = "/balance-query/config-state";
+var state = {
+  credentials:{apiBase:"https://cpa.example",managementKey:"secret"},
+  providers:[],previewProviders:[],previewAccounts:[],
+  config:{cache_ttl_seconds:300,provider_mappings:{old:"newapi"}},
+  draftMappings:{},draftTTL:"300",draftRevision:0,results:[],
+  loadController:null,loadGeneration:0,snapshotGeneration:0,dataReady:true
+};
+var queryCalls = 0;
+var connectionCalls = 0;
+var messages = [];
+function cancelSaveRequests() {}
+function cancelQueryRequests() {}
+function displayProviders() { return state.providers.slice(); }
+function displayAccounts() { return state.previewAccounts.slice(); }
+function snapshotDisplayAccount(account) { return Object.assign({}, account); }
+function snapshotDisplayProvider(provider) { return Object.assign({}, provider, {keys:[]}); }
+function setView() {}
+function setDataReady(value) { state.dataReady = Boolean(value); }
+function showApp() {}
+function renderResults() {}
+function setText(_node, value) { messages.push(String(value || "")); }
+function byID() { return {}; }
+function showSkeletons() {}
+function readResultSnapshotPreview() {
+  return new Promise(function (resolve) {
+    setTimeout(function () { resolve({
+      providers:[{name:"上次的服务",mappingKey:"old",legacyMappingKey:"old",disabled:false}],
+      accounts:[{id:"account",provider_key:"old"}],
+      config:{cache_ttl_seconds:300,provider_mappings:{old:"newapi"}},
+      results:[{auth_id:"account",provider_key:"old",quota_display:"上次成功"}]
+    }); }, 5);
+  });
+}
+function tolerantConfigFetch() { return Promise.resolve({data:{},error:null}); }
+function optionalApiFetch(path) {
+  if (path === "/proxy-url") {
+    var error = new Error("代理配置接口暂时不可用");
+    error.status = 503;
+    return Promise.reject(error);
+  }
+  return Promise.resolve({});
+}
+function apiFetch() { return Promise.resolve({cache_ttl_seconds:300,provider_mappings:{old:"newapi"}}); }
+function queryBalances() { queryCalls += 1; return Promise.resolve(); }
+function showConnection() { connectionCalls += 1; }
+function toast(message) { messages.push(String(message || "")); }
+` + page[start:end] + `
+(async function () {
+  await loadData();
+  process.stdout.write(JSON.stringify({
+    query_calls:queryCalls,connection_calls:connectionCalls,result_count:state.results.length,
+    data_ready:state.dataReady,messages:messages
+  }));
+})().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
+`
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute proxy failure load helper: %v\n%s", err, output)
+	}
+	var got struct {
+		QueryCalls      int      `json:"query_calls"`
+		ConnectionCalls int      `json:"connection_calls"`
+		ResultCount     int      `json:"result_count"`
+		DataReady       bool     `json:"data_ready"`
+		Messages        []string `json:"messages"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode proxy failure result: %v\n%s", err, output)
+	}
+	joined := strings.Join(got.Messages, " ")
+	if got.QueryCalls != 0 || got.ConnectionCalls != 0 || got.ResultCount != 1 || got.DataReady || !strings.Contains(joined, "无法确认当前代理设置") {
+		t.Fatalf("proxy failure did not preserve a non-querying preview: %#v", got)
+	}
+}
+
+func TestDashboardFallbackConfigSaveLockSerializesTabs(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	page := string(RenderDashboard(300))
+	storageStart := strings.Index(page, "  function sameOriginLocalStorage()")
+	storageEnd := strings.Index(page, "  function discardStoredResultSnapshot")
+	delayStart := strings.Index(page, "  function abortableDelay(milliseconds, signal)")
+	delayEnd := strings.Index(page, "  function configsEqual(left, right)")
+	lockStart := strings.Index(page, "  function configSaveLockError(message, lost)")
+	lockEnd := strings.Index(page, "  function validateTTL()")
+	if storageStart < 0 || storageEnd <= storageStart || delayStart < 0 || delayEnd <= delayStart || lockStart < 0 || lockEnd <= lockStart {
+		t.Fatal("cannot locate dashboard fallback lock helpers")
+	}
+	script := `
+var memory = Object.create(null);
+var REQUEST_TIMEOUT = 30000;
+var CONFIG_REQUEST_TIMEOUT = 10000;
+var CONFIG_STATE_WAIT_TIMEOUT = 15000;
+var storage = {
+  get length() { return Object.keys(memory).length; },
+  key:function (index) { return Object.keys(memory)[index] || null; },
+  getItem:function (key) { return Object.prototype.hasOwnProperty.call(memory, key) ? memory[key] : null; },
+  setItem:function (key, value) { memory[key] = String(value); },
+  removeItem:function (key) { delete memory[key]; }
+};
+var window = {
+  localStorage:storage,location:{origin:"https://cpa.example"},
+  setTimeout:setTimeout,clearTimeout:clearTimeout,setInterval:setInterval,clearInterval:clearInterval
+};
+window.parent = window;
+var navigator = {};
+function tinyHash(value) { return String(value).replace(/[^a-z0-9]/gi, ""); }
+` + page[storageStart:storageEnd] + page[delayStart:delayEnd] + page[lockStart:lockEnd] + `
+(async function () {
+  var order = [];
+  var credentials = {apiBase:"https://cpa.example"};
+  var first = withConfigSaveLock(credentials, new AbortController(), async function () {
+    order.push("first-start");
+    await new Promise(function (resolve) { setTimeout(resolve, 25); });
+    order.push("first-end");
+  });
+  var second = withConfigSaveLock(credentials, new AbortController(), async function () {
+    order.push("second-start");
+    order.push("second-end");
+  });
+  await Promise.all([first, second]);
+  process.stdout.write(JSON.stringify({order:order,remaining:storage.length}));
+})().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
+`
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute fallback config lock: %v\n%s", err, output)
+	}
+	var got struct {
+		Order     []string `json:"order"`
+		Remaining int      `json:"remaining"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode fallback config lock result: %v\n%s", err, output)
+	}
+	want := []string{"first-start", "first-end", "second-start", "second-end"}
+	if !reflect.DeepEqual(got.Order, want) || got.Remaining != 0 {
+		t.Fatalf("fallback config lock = %#v, want order %#v and cleanup", got, want)
+	}
+}
+
+func TestDashboardFallbackConfigSaveLockFailsClosedWithoutStorage(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	page := string(RenderDashboard(300))
+	storageStart := strings.Index(page, "  function sameOriginLocalStorage()")
+	storageEnd := strings.Index(page, "  function discardStoredResultSnapshot")
+	delayStart := strings.Index(page, "  function abortableDelay(milliseconds, signal)")
+	delayEnd := strings.Index(page, "  function configsEqual(left, right)")
+	lockStart := strings.Index(page, "  function configSaveLockError(message, lost)")
+	lockEnd := strings.Index(page, "  function validateTTL()")
+	if storageStart < 0 || storageEnd <= storageStart || delayStart < 0 || delayEnd <= delayStart || lockStart < 0 || lockEnd <= lockStart {
+		t.Fatal("cannot locate dashboard fallback lock helpers")
+	}
+	script := `
+var REQUEST_TIMEOUT = 30000;
+var CONFIG_REQUEST_TIMEOUT = 10000;
+var CONFIG_STATE_WAIT_TIMEOUT = 15000;
+var window = {
+  localStorage:null,location:{origin:"https://cpa.example"},
+  setTimeout:setTimeout,clearTimeout:clearTimeout,setInterval:setInterval,clearInterval:clearInterval
+};
+window.parent = window;
+var navigator = {};
+function tinyHash(value) { return String(value).replace(/[^a-z0-9]/gi, ""); }
+` + page[storageStart:storageEnd] + page[delayStart:delayEnd] + page[lockStart:lockEnd] + `
+async function attempt(storage) {
+  window.localStorage = storage;
+  var callbackCalls = 0;
+  try {
+    await withConfigSaveLock({apiBase:"https://cpa.example"}, new AbortController(), function () {
+      callbackCalls += 1;
+    });
+    return {rejected:false,callback_calls:callbackCalls,message:"",unavailable:false};
+  } catch (error) {
+    return {rejected:true,callback_calls:callbackCalls,message:String(error && error.message || ""),unavailable:Boolean(error && error.lockUnavailable)};
+  }
+}
+(async function () {
+  var noStorage = await attempt(null);
+  var deniedStorage = await attempt({
+    get length() { return 0; },key:function () { return null; },getItem:function () { return null; },
+    setItem:function () { throw new Error("storage denied"); },removeItem:function () {}
+  });
+  process.stdout.write(JSON.stringify({no_storage:noStorage,denied_storage:deniedStorage}));
+})().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
+`
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute fallback lock fail-closed helpers: %v\n%s", err, output)
+	}
+	var got struct {
+		NoStorage struct {
+			Rejected      bool   `json:"rejected"`
+			CallbackCalls int    `json:"callback_calls"`
+			Message       string `json:"message"`
+			Unavailable   bool   `json:"unavailable"`
+		} `json:"no_storage"`
+		DeniedStorage struct {
+			Rejected      bool   `json:"rejected"`
+			CallbackCalls int    `json:"callback_calls"`
+			Message       string `json:"message"`
+			Unavailable   bool   `json:"unavailable"`
+		} `json:"denied_storage"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode fallback lock fail-closed result: %v\n%s", err, output)
+	}
+	for name, result := range map[string]struct {
+		Rejected      bool
+		CallbackCalls int
+		Message       string
+		Unavailable   bool
+	}{
+		"no storage":     {got.NoStorage.Rejected, got.NoStorage.CallbackCalls, got.NoStorage.Message, got.NoStorage.Unavailable},
+		"denied storage": {got.DeniedStorage.Rejected, got.DeniedStorage.CallbackCalls, got.DeniedStorage.Message, got.DeniedStorage.Unavailable},
+	} {
+		if !result.Rejected || result.CallbackCalls != 0 || !result.Unavailable || !strings.Contains(result.Message, "未写入") {
+			t.Fatalf("%s fallback lock did not fail closed: %#v", name, result)
+		}
+	}
+}
+
+func TestDashboardFallbackConfigSaveLockGuardRejectsExpiredOwnership(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	page := string(RenderDashboard(300))
+	storageStart := strings.Index(page, "  function sameOriginLocalStorage()")
+	storageEnd := strings.Index(page, "  function discardStoredResultSnapshot")
+	delayStart := strings.Index(page, "  function abortableDelay(milliseconds, signal)")
+	delayEnd := strings.Index(page, "  function configsEqual(left, right)")
+	lockStart := strings.Index(page, "  function configSaveLockError(message, lost)")
+	lockEnd := strings.Index(page, "  function validateTTL()")
+	if storageStart < 0 || storageEnd <= storageStart || delayStart < 0 || delayEnd <= delayStart || lockStart < 0 || lockEnd <= lockStart {
+		t.Fatal("cannot locate dashboard fallback lock helpers")
+	}
+	script := `
+var REQUEST_TIMEOUT = 30000;
+var CONFIG_REQUEST_TIMEOUT = 10000;
+var CONFIG_STATE_WAIT_TIMEOUT = 15000;
+var now = 1000;
+Date.now = function () { return now; };
+var memory = Object.create(null);
+var storage = {
+  get length() { return Object.keys(memory).length; },
+  key:function (index) { return Object.keys(memory)[index] || null; },
+  getItem:function (key) { return Object.prototype.hasOwnProperty.call(memory, key) ? memory[key] : null; },
+  setItem:function (key, value) { memory[key] = String(value); },
+  removeItem:function (key) { delete memory[key]; }
+};
+var window = {
+  localStorage:storage,location:{origin:"https://cpa.example"},
+  setTimeout:setTimeout,clearTimeout:clearTimeout,setInterval:setInterval,clearInterval:clearInterval
+};
+window.parent = window;
+var navigator = {};
+function tinyHash(value) { return String(value).replace(/[^a-z0-9]/gi, ""); }
+` + page[storageStart:storageEnd] + page[delayStart:delayEnd] + page[lockStart:lockEnd] + `
+(async function () {
+  var patchCalls = 0;
+  var leaseDuration = 0;
+  var caught = null;
+  try {
+    await withConfigSaveLock({apiBase:"https://cpa.example"}, new AbortController(), function (assertOwnership) {
+      var key = Object.keys(memory)[0];
+      var record = JSON.parse(memory[key]);
+      leaseDuration = Number(record.expires_at) - now;
+      now = Number(record.expires_at) + 1;
+      assertOwnership();
+      patchCalls += 1;
+    });
+  } catch (error) {
+    caught = error;
+  }
+  process.stdout.write(JSON.stringify({
+    patch_calls:patchCalls,lease_duration:leaseDuration,remaining:storage.length,
+    rejected:Boolean(caught),lost:Boolean(caught && caught.lockLost),message:String(caught && caught.message || "")
+  }));
+})().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
+`
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute fallback lock ownership guard: %v\n%s", err, output)
+	}
+	var got struct {
+		PatchCalls    int    `json:"patch_calls"`
+		LeaseDuration int    `json:"lease_duration"`
+		Remaining     int    `json:"remaining"`
+		Rejected      bool   `json:"rejected"`
+		Lost          bool   `json:"lost"`
+		Message       string `json:"message"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode fallback lock ownership result: %v\n%s", err, output)
+	}
+	boundedSaveDuration := 30000 + 10000 + 15000
+	if got.PatchCalls != 0 || got.LeaseDuration <= boundedSaveDuration || got.Remaining != 0 || !got.Rejected || !got.Lost || !strings.Contains(got.Message, "未写入") {
+		t.Fatalf("expired fallback ownership was not rejected before write: %#v", got)
+	}
+}
+
+func TestDashboardSavePreservesEditsMadeWhileRequestIsInFlight(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	page := string(RenderDashboard(300))
+	start := strings.Index(page, "  function validateTTL()")
+	end := strings.Index(page, "  function loadData()")
+	if start < 0 || end <= start {
+		t.Fatal("cannot locate dashboard save helpers")
+	}
+	script := `
+var REQUEST_TIMEOUT = 30000;
+var CONFIG_REQUEST_TIMEOUT = 10000;
+var providerLabels = {newapi:"New API",deepseek:"DeepSeek"};
+var state = {
+  credentials:{apiBase:"https://cpa.example",managementKey:"secret"},
+  providers:[
+    {name:"服务 A",mappingKey:"a",legacyMappingKey:"legacy-a"},
+    {name:"服务 B",mappingKey:"b",legacyMappingKey:"legacy-b"}
+  ],
+  config:{cache_ttl_seconds:300,provider_mappings:{a:"newapi"}},
+  draftMappings:{a:"deepseek"},draftTTL:"600",draftRevision:1,
+  results:[],view:"settings",dirty:true,needsQuery:false,dataReady:true,
+  saving:false,saveGeneration:0,saveController:null,loadGeneration:4,
+  querying:false,queryGeneration:0,queryController:null
+};
+var patchResolve;
+var patched = null;
+var saveStates = [];
+var toasts = [];
+function byID() { return {}; }
+function setButtonBusy() {}
+function setText(_node, value) { saveStates.push(String(value || "")); }
+function toast(message) { toasts.push(message); }
+function owns(value, key) { return Object.prototype.hasOwnProperty.call(value || {}, key); }
+function stableMappings(value) { return JSON.stringify(Object.keys(value || {}).sort().map(function (key) { return [key,value[key]]; })); }
+function normalizeConfig(value) { return {cache_ttl_seconds:Number(value.cache_ttl_seconds),provider_mappings:Object.assign({},value.provider_mappings || {})}; }
+function mappedQueryType(provider, mappings) { return mappings[provider.mappingKey] || mappings[provider.legacyMappingKey] || ""; }
+function resolvedProviderMapping(provider, mappings) {
+  if (mappings[provider.mappingKey]) return {key:provider.mappingKey,type:mappings[provider.mappingKey]};
+  if (mappings[provider.legacyMappingKey]) return {key:provider.legacyMappingKey,type:mappings[provider.legacyMappingKey]};
+  return {key:provider.mappingKey,type:""};
+}
+function refreshDirtyState() {
+  state.dirty = String(state.draftTTL) !== String(state.config.cache_ttl_seconds) || stableMappings(state.draftMappings) !== stableMappings(state.config.provider_mappings);
+  return state.dirty;
+}
+function apiFetch(_path, options) {
+  if (!options.method) return Promise.resolve({cache_ttl_seconds:300,provider_mappings:{a:"newapi",external:"claude"}});
+  patched = JSON.parse(options.body);
+  return new Promise(function (resolve) { patchResolve = resolve; });
+}
+function waitForRuntimeConfig(expected) { return Promise.resolve(normalizeConfig(expected)); }
+function withConfigSaveLock(_credentials, _controller, callback) { return callback(function () {}); }
+function cancelQueryRequests() { state.querying = false; state.queryGeneration += 1; }
+function clearResultSnapshot() {}
+function persistResultSnapshot() { return Promise.resolve(true); }
+function buildAccounts() { return []; }
+function resultsMatchAccounts() { return false; }
+function renderSettings() {}
+function renderResults() {}
+function queryBalances() { throw new Error("query must not start while settings view is active"); }
+var window = {setTimeout:function () {}};
+` + page[start:end] + `
+(async function () {
+  var saving = saveSettings();
+  while (!patchResolve) await Promise.resolve();
+  state.draftMappings.a = "newapi";
+  state.draftMappings.b = "newapi";
+  state.draftTTL = "300";
+  state.draftRevision += 1;
+  patchResolve({});
+  var saved = await saving;
+  process.stdout.write(JSON.stringify({
+    saved:saved,patched:patched,config:state.config,draft:state.draftMappings,draft_ttl:state.draftTTL,
+    dirty:state.dirty,saving:state.saving,save_states:saveStates,toasts:toasts
+  }));
+})().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
+`
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute in-flight save helpers: %v\n%s", err, output)
+	}
+	var got struct {
+		Saved   bool           `json:"saved"`
+		Dirty   bool           `json:"dirty"`
+		Saving  bool           `json:"saving"`
+		Patched map[string]any `json:"patched"`
+		Config  struct {
+			TTL      int               `json:"cache_ttl_seconds"`
+			Mappings map[string]string `json:"provider_mappings"`
+		} `json:"config"`
+		Draft      map[string]string `json:"draft"`
+		DraftTTL   string            `json:"draft_ttl"`
+		SaveStates []string          `json:"save_states"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode in-flight save result: %v\n%s", err, output)
+	}
+	if !got.Saved || !got.Dirty || got.Saving || got.Config.TTL != 600 || got.DraftTTL != "300" || got.Config.Mappings["a"] != "deepseek" || got.Draft["a"] != "newapi" || got.Draft["b"] != "newapi" {
+		t.Fatalf("save response discarded a newer draft: %#v", got)
+	}
+	patchedMappings, ok := got.Patched["provider_mappings"].(map[string]any)
+	if !ok || patchedMappings["a"] != "deepseek" || patchedMappings["external"] != "claude" {
+		t.Fatalf("submitted config = %#v, want service A update plus the latest unrelated mapping", got.Patched)
+	}
+	if len(got.SaveStates) == 0 || !strings.Contains(got.SaveStates[len(got.SaveStates)-1], "仍有未保存") {
+		t.Fatalf("save state did not report the remaining draft: %#v", got.SaveStates)
+	}
+}
+
+func TestDashboardSaveReportsPersistedWhenRuntimeAuthCheckFails(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	page := string(RenderDashboard(300))
+	start := strings.Index(page, "  function validateTTL()")
+	end := strings.Index(page, "  function loadData()")
+	if start < 0 || end <= start {
+		t.Fatal("cannot locate dashboard save helpers")
+	}
+	script := `
+var REQUEST_TIMEOUT = 30000;
+var CONFIG_REQUEST_TIMEOUT = 10000;
+var providerLabels = Object.create(null);
+var state = null;
+var currentStatus = 0;
+var patchCalls = 0;
+var saveStates = [];
+var toasts = [];
+function resetState() {
+  state = {
+    credentials:{apiBase:"https://cpa.example",managementKey:"secret"},providers:[],
+    config:{cache_ttl_seconds:300,provider_mappings:{}},draftMappings:{},draftTTL:"600",draftRevision:1,
+    results:[],view:"settings",dirty:true,needsQuery:false,dataReady:true,
+    saving:false,saveGeneration:0,saveController:null,loadGeneration:4,
+    querying:false,queryGeneration:0,queryController:null
+  };
+  patchCalls = 0;
+  saveStates = [];
+  toasts = [];
+}
+function byID() { return {}; }
+function setButtonBusy() {}
+function setText(_node, value) { saveStates.push(String(value || "")); }
+function toast(message) { toasts.push(String(message || "")); }
+function owns(value, key) { return Object.prototype.hasOwnProperty.call(value || {}, key); }
+function stableMappings(value) { return JSON.stringify(Object.keys(value || {}).sort().map(function (key) { return [key,value[key]]; })); }
+function normalizeConfig(value) { return {cache_ttl_seconds:Number(value.cache_ttl_seconds),provider_mappings:Object.assign({},value.provider_mappings || {})}; }
+function mappedQueryType() { return ""; }
+function resolvedProviderMapping() { return {key:"",type:""}; }
+function refreshDirtyState() {
+  state.dirty = String(state.draftTTL) !== String(state.config.cache_ttl_seconds) || stableMappings(state.draftMappings) !== stableMappings(state.config.provider_mappings);
+  return state.dirty;
+}
+function apiFetch(_path, options) {
+  if (options && options.method === "PATCH") { patchCalls += 1; return Promise.resolve({}); }
+  return Promise.resolve({cache_ttl_seconds:300,provider_mappings:{}});
+}
+function waitForRuntimeConfig() {
+  var error = new Error("管理密钥无效或权限不足");
+  error.status = currentStatus;
+  return Promise.reject(error);
+}
+function withConfigSaveLock(_credentials, _controller, callback) { return callback(function () {}); }
+function cancelQueryRequests() {}
+function clearResultSnapshot() {}
+function persistResultSnapshot() { return Promise.resolve(true); }
+function buildAccounts() { return []; }
+function resultsMatchAccounts() { return false; }
+function renderSettings() {}
+function renderResults() {}
+function queryBalances() { return Promise.resolve(); }
+var window = {setTimeout:function () {}};
+` + page[start:end] + `
+async function run(status) {
+  resetState();
+  currentStatus = status;
+  var saved = await saveSettings();
+  return {status:status,saved:saved,patch_calls:patchCalls,saving:state.saving,save_states:saveStates,toasts:toasts};
+}
+(async function () {
+  process.stdout.write(JSON.stringify([await run(401),await run(403)]));
+})().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
+`
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute persisted auth-check save helper: %v\n%s", err, output)
+	}
+	var got []struct {
+		Status     int      `json:"status"`
+		Saved      bool     `json:"saved"`
+		PatchCalls int      `json:"patch_calls"`
+		Saving     bool     `json:"saving"`
+		SaveStates []string `json:"save_states"`
+		Toasts     []string `json:"toasts"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode persisted auth-check save result: %v\n%s", err, output)
+	}
+	if len(got) != 2 {
+		t.Fatalf("persisted auth-check cases = %d, want 2", len(got))
+	}
+	for _, result := range got {
+		states := strings.Join(result.SaveStates, " ")
+		messages := strings.Join(result.Toasts, " ")
+		if result.Saved || result.PatchCalls != 1 || result.Saving || !strings.Contains(states, "已写入，但尚未确认生效") || !strings.Contains(messages, "设置已写入 CPA") || !strings.Contains(messages, "管理凭据") {
+			t.Fatalf("post-PATCH %d was reported as an ordinary save failure: %#v", result.Status, result)
+		}
 	}
 }
 
