@@ -58,7 +58,7 @@ import (
 
 const (
 	pluginID      = "balance-query"
-	pluginVersion = "0.8.3"
+	pluginVersion = "0.8.4"
 	abiVersion    = 1
 	schemaVersion = 1
 
