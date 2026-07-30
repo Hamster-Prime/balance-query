@@ -292,7 +292,7 @@ func TestMiniMaxRetriesUnderscoreAuthenticationCode(t *testing.T) {
 	}
 }
 
-func TestKimiCodeRejectsPayloadWithoutQuotaFields(t *testing.T) {
+func TestKimiCodeTreatsPayloadWithoutUsageRowsAsNoData(t *testing.T) {
 	for _, response := range []kimiUsageResp{
 		{},
 		{Usage: map[string]any{"resetTime": "2026-07-29T10:00:00Z"}},
@@ -302,7 +302,7 @@ func TestKimiCodeRejectsPayloadWithoutQuotaFields(t *testing.T) {
 		{BoosterWallet: map[string]any{"balance": map[string]any{"type": "OTHER", "amount": float64(100)}}},
 	} {
 		result := parseKimiUsage("kimi", response)
-		if result.Failure == nil || result.Failure.Kind != balance.FailureInvalidResponse {
+		if result.Error != "" || result.Failure != nil || result.QuotaDisplay != "暂无用量数据" || len(result.QuotaWindows) != 0 {
 			t.Fatalf("payload %#v result = %#v", response, result)
 		}
 	}

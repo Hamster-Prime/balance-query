@@ -23,7 +23,7 @@ func TestParseKimiUsageTopLevelWindowsAndBooster(t *testing.T) {
 			"resetAt": "2026-08-01T00:00:00Z",
 		},
 		Limits: []map[string]any{{
-			"detail": map[string]any{"remaining": float64(80), "limit": float64(100)},
+			"detail": map[string]any{"used": float64(20), "limit": float64(100)},
 			"window": map[string]any{"duration": float64(300), "timeUnit": "MINUTE"},
 		}},
 		BoosterWallet: map[string]any{
@@ -108,51 +108,99 @@ func TestKimiQuotaIsPercentageNotRequestCount(t *testing.T) {
 	}
 }
 
-func TestKimiMissingWeeklyQuotaIsExplicitlyUnknown(t *testing.T) {
+func TestKimiMissingWeeklyQuotaDoesNotPoisonRollingQuota(t *testing.T) {
 	result := parseKimiUsage("kimi", kimiUsageResp{
 		Limits: []map[string]any{{
 			"detail": map[string]any{"used": float64(0), "limit": float64(100)},
 			"window": map[string]any{"duration": float64(300), "timeUnit": "MINUTE"},
 		}},
 	})
-	if len(result.QuotaWindows) != 2 {
+	if len(result.QuotaWindows) != 1 {
 		t.Fatalf("Kimi missing-weekly windows = %#v", result.QuotaWindows)
 	}
-	weekly := result.QuotaWindows[0]
-	if !weekly.Unknown || weekly.Group != "订阅配额" || weekly.Status != "接口未返回周配额，无法判断账户是否可用" {
-		t.Fatalf("Kimi missing weekly quota = %#v", weekly)
-	}
-	rolling := result.QuotaWindows[1]
-	if rolling.Unknown || rolling.Group != "滚动限流" || rolling.RemainingPercent != 100 {
+	rolling := result.QuotaWindows[0]
+	if rolling.Unknown || rolling.Group != "滚动限流" || rolling.RemainingPercent != 100 || result.QuotaDisplay != "5 小时配额：剩余 100%" {
 		t.Fatalf("Kimi rolling quota = %#v", rolling)
 	}
 }
 
-func TestKimiLimitWithoutUsageIsUnknownInsteadOfFull(t *testing.T) {
+func TestKimiLimitWithoutUsageDefaultsToUnused(t *testing.T) {
 	window, ok := kimiQuotaWindow(map[string]any{"limit": float64(100)}, "5 小时配额")
-	if !ok || !window.Unknown || window.RemainingPercent != 0 || window.Status != "接口未返回已用或剩余额度" {
+	if !ok || window.Unknown || window.UsedPercent != 0 || window.RemainingPercent != 100 || window.Status != "" || window.ResetAt != "" {
 		t.Fatalf("Kimi limit-only quota = %#v, ok=%v", window, ok)
 	}
 	zero, ok := kimiQuotaWindow(map[string]any{"limit": float64(0), "used": float64(0)}, "5 小时配额")
-	if !ok || !zero.Unknown || zero.Status != "接口未返回有效配额上限" {
+	if !ok || zero.Unknown || zero.UsedPercent != 0 || zero.RemainingPercent != 100 || zero.Status != "" {
 		t.Fatalf("Kimi zero-limit quota = %#v, ok=%v", zero, ok)
 	}
 }
 
-func TestKimiExplicitRemainingPreventsFalseFullQuota(t *testing.T) {
-	window, ok := kimiQuotaWindow(map[string]any{
-		"limit": float64(100), "used": float64(0), "remaining": float64(0),
-	}, "5 小时配额")
-	if !ok || window.Unknown || window.RemainingPercent != 0 || window.UsedPercent != 100 || window.Status != "已用尽" {
-		t.Fatalf("Kimi conflicting exhausted quota = %#v, ok=%v", window, ok)
+func TestKimiNullUsageDefaultsToUnused(t *testing.T) {
+	window, ok := kimiQuotaWindow(map[string]any{"limit": "100", "used": nil}, "每周配额")
+	if !ok || window.Unknown || window.UsedPercent != 0 || window.RemainingPercent != 100 {
+		t.Fatalf("Kimi null-used quota = %#v, ok=%v", window, ok)
 	}
 }
 
-func TestKimiConflictingUsageFieldsUseLowerRemainingValue(t *testing.T) {
+func TestKimiUsageWithoutLimitMatchesOfficialZeroLimitBehavior(t *testing.T) {
+	window, ok := kimiQuotaWindow(map[string]any{"used": "12"}, "每周配额")
+	if !ok || window.Unknown || window.UsedPercent != 0 || window.RemainingPercent != 100 || window.Status != "" || window.ResetAt != "" {
+		t.Fatalf("Kimi missing-limit quota = %#v, ok=%v", window, ok)
+	}
+}
+
+func TestKimiFreshlyResetUsageDefaultsMissingUsedToZero(t *testing.T) {
+	result := parseKimiUsage("kimi", kimiUsageResp{
+		Usage: map[string]any{
+			"limit": "1000", "resetTime": "2030-01-08T00:00:00Z",
+		},
+		Limits: []map[string]any{{
+			"detail": map[string]any{
+				"limit": "100", "resetTime": "2030-01-01T05:00:00Z",
+			},
+			"window": map[string]any{"duration": "300", "timeUnit": "TIME_UNIT_MINUTE"},
+		}},
+	})
+	if result.Error != "" || len(result.QuotaWindows) != 2 {
+		t.Fatalf("fresh Kimi quota = %#v", result)
+	}
+	for _, window := range result.QuotaWindows {
+		if window.Unknown || window.UsedPercent != 0 || window.RemainingPercent != 100 {
+			t.Fatalf("fresh Kimi window = %#v", window)
+		}
+	}
+	if result.QuotaDisplay != "每周配额：剩余 100%" || result.ResetAt != "2030-01-08T00:00:00Z" {
+		t.Fatalf("fresh Kimi summary = %#v", result)
+	}
+}
+
+func TestKimiSkipsLimitRowsWithoutDetail(t *testing.T) {
+	result := parseKimiUsage("kimi", kimiUsageResp{
+		Usage: map[string]any{"used": float64(0), "limit": float64(100)},
+		Limits: []map[string]any{{
+			"used": float64(2), "limit": float64(20),
+			"window": map[string]any{"duration": float64(300), "timeUnit": "TIME_UNIT_MINUTE"},
+		}},
+	})
+	if len(result.QuotaWindows) != 1 || result.QuotaWindows[0].Label != "每周配额" || result.QuotaWindows[0].Unknown {
+		t.Fatalf("Kimi detail-less limits = %#v", result.QuotaWindows)
+	}
+}
+
+func TestKimiFreshResetIgnoresLegacyRemainingWithoutUsed(t *testing.T) {
+	window, ok := kimiQuotaWindow(map[string]any{
+		"limit": float64(100), "remaining": float64(0),
+	}, "5 小时配额")
+	if !ok || window.Unknown || window.RemainingPercent != 100 || window.UsedPercent != 0 || window.Status != "" {
+		t.Fatalf("Kimi refreshed quota with legacy remaining = %#v, ok=%v", window, ok)
+	}
+}
+
+func TestKimiOfficialUsageIgnoresConflictingLegacyRemaining(t *testing.T) {
 	window, ok := kimiQuotaWindow(map[string]any{
 		"limit": float64(100), "used": float64(10), "remaining": float64(35),
 	}, "每周配额")
-	if !ok || window.Unknown || window.RemainingPercent != 35 || window.UsedPercent != 65 || window.Status != "接口额度字段不一致，已按较低剩余额度显示" {
+	if !ok || window.Unknown || window.RemainingPercent != 90 || window.UsedPercent != 10 || window.Status != "" {
 		t.Fatalf("Kimi inconsistent quota = %#v, ok=%v", window, ok)
 	}
 }
@@ -176,6 +224,16 @@ func TestKimiTotalQuotaCanBlockOtherwiseFullRollingWindow(t *testing.T) {
 	}
 	if rolling.Label != "5 小时配额" || rolling.RemainingPercent != 100 {
 		t.Fatalf("Kimi full rolling quota = %#v", rolling)
+	}
+}
+
+func TestKimiIgnoresUnrecognizedTotalQuota(t *testing.T) {
+	result := parseKimiUsage("kimi", kimiUsageResp{
+		Usage:      map[string]any{"used": float64(0), "limit": float64(100)},
+		TotalQuota: map[string]any{"name": "membership"},
+	})
+	if len(result.QuotaWindows) != 1 || result.QuotaWindows[0].Label != "每周配额" || result.QuotaWindows[0].Unknown {
+		t.Fatalf("Kimi unrecognized total quota = %#v", result.QuotaWindows)
 	}
 }
 
@@ -206,16 +264,25 @@ func TestKimiBoosterUsesOfficialWholeCentRounding(t *testing.T) {
 	}
 }
 
-func TestKimiDisabledMonthlyChargeLimitIsExplicitlyUnavailable(t *testing.T) {
-	result := balance.Result{Extra: map[string]string{}}
-	parseKimiBoosterWallet(&result, map[string]any{
-		"balance": map[string]any{
-			"type": "BOOSTER", "amount": float64(200_000_000), "amountLeft": float64(100_000_000),
+func TestKimiMissingOrDisabledMonthlyChargeLimitIsUnlimited(t *testing.T) {
+	for _, wallet := range []map[string]any{
+		{
+			"balance": map[string]any{
+				"type": "BOOSTER", "amount": float64(200_000_000), "amountLeft": float64(100_000_000),
+			},
 		},
-		"monthlyChargeLimitEnabled": false,
-	})
-	if len(result.QuotaWindows) != 1 || !result.QuotaWindows[0].Unavailable {
-		t.Fatalf("disabled monthly charge window = %#v", result.QuotaWindows)
+		{
+			"balance": map[string]any{
+				"type": "BOOSTER", "amount": float64(200_000_000), "amountLeft": float64(100_000_000),
+			},
+			"monthlyChargeLimitEnabled": false,
+		},
+	} {
+		result := balance.Result{Extra: map[string]string{}}
+		parseKimiBoosterWallet(&result, wallet)
+		if len(result.QuotaWindows) != 1 || !result.QuotaWindows[0].Unlimited || !result.QuotaWindows[0].ShowUsedWhenUnlimited || result.QuotaWindows[0].Unknown || result.Extra["每月付费上限"] != "不限量" {
+			t.Fatalf("uncapped monthly charge window = %#v, extra = %#v", result.QuotaWindows, result.Extra)
+		}
 	}
 }
 
@@ -233,6 +300,26 @@ func TestKimiZeroMonthlyChargeLimitIsUnlimited(t *testing.T) {
 	window := result.QuotaWindows[0]
 	if !window.Unlimited || !window.ShowUsedWhenUnlimited || window.Used != 1.25 || window.Unknown {
 		t.Fatalf("zero-limit monthly window = %#v", window)
+	}
+}
+
+func TestKimiWeekWindowLabel(t *testing.T) {
+	label := kimiWindowLabel(map[string]any{
+		"window": map[string]any{"duration": float64(1), "timeUnit": "TIME_UNIT_WEEK"},
+	}, map[string]any{}, 0)
+	if label != "每周配额" {
+		t.Fatalf("weekly Kimi window label = %q", label)
+	}
+}
+
+func TestKimiCurrentResetTimeTakesPriorityOverLegacyAliases(t *testing.T) {
+	window, ok := kimiQuotaWindow(map[string]any{
+		"limit":     "100",
+		"resetTime": "2030-01-08T00:00:00Z",
+		"resetAt":   "2029-01-08T00:00:00Z",
+	}, "每周配额")
+	if !ok || window.ResetAt != "2030-01-08T00:00:00Z" {
+		t.Fatalf("Kimi reset time = %#v, ok=%v", window, ok)
 	}
 }
 

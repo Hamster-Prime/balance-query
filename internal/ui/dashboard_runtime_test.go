@@ -216,6 +216,16 @@ func TestDashboardDistinguishesPartialAndCompleteQuotaExhaustion(t *testing.T) {
 	}
 }
 
+func TestDashboardTreatsFreshlyResetKimiQuotasAsNormal(t *testing.T) {
+	windows := `[
+  {"group":"订阅配额","label":"每周配额","used_percent":0,"remaining_percent":100,"capacity_percent":100},
+  {"group":"滚动限流","label":"5 小时配额","used_percent":0,"remaining_percent":100,"capacity_percent":100}
+]`
+	if got := runDashboardQuotaResultState(t, windows); got != "normal" {
+		t.Fatalf("fresh Kimi quota result state = %q, want normal", got)
+	}
+}
+
 func TestDashboardAggregationTreatsUnavailableAsKnownPlanCoverage(t *testing.T) {
 	windows := runDashboardAggregation(t, `[
   {"quota_windows":[{"group":"视频模型","label":"每日配额","aggregation_key":"video-daily","aggregation_scope":"key","unit":"次","total":3,"remaining":2}]},

@@ -33,6 +33,37 @@ func jsonResponse(body string) *http.Response {
 	}
 }
 
+func TestKimiCodeFetchTreatsOmittedZeroUsageAsFreshQuota(t *testing.T) {
+	useTestHTTPClient(t, func(r *http.Request) (*http.Response, error) {
+		if got := r.URL.String(); got != "https://api.kimi.com/coding/v1/usages" {
+			t.Fatalf("request URL = %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer kimi-access-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		return jsonResponse(`{
+  "usage": {"limit":"1000","resetTime":"2030-01-08T00:00:00.000Z"},
+  "limits": [{
+    "window":{"duration":"300","timeUnit":"TIME_UNIT_MINUTE"},
+    "detail":{"limit":"100","resetTime":"2030-01-01T05:00:00.000Z"}
+  }]
+}`), nil
+	})
+
+	result := (KimiCode{}).Fetch("kimi", "kimi-access-token", "")
+	if result.Error != "" || len(result.QuotaWindows) != 2 {
+		t.Fatalf("KimiCode.Fetch() result = %#v", result)
+	}
+	for _, window := range result.QuotaWindows {
+		if window.Unknown || window.Unavailable || window.UsedPercent != 0 || window.RemainingPercent != 100 {
+			t.Fatalf("fresh Kimi quota window = %#v", window)
+		}
+	}
+	if result.QuotaDisplay != "每周配额：剩余 100%" || result.ResetAt != "2030-01-08T00:00:00Z" {
+		t.Fatalf("fresh Kimi quota summary = %#v", result)
+	}
+}
+
 func TestNewAPIFetchUsesAPIKeyBillingEndpoints(t *testing.T) {
 	seen := map[string]bool{}
 	useTestHTTPClient(t, func(r *http.Request) (*http.Response, error) {

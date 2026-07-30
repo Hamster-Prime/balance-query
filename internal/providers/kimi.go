@@ -130,7 +130,7 @@ func normalizeKimiUsage(resp kimiUsageResp) kimiUsageResp {
 	if resp.Data == nil {
 		return resp
 	}
-	if !hasKimiQuotaNumber(resp.Usage) && hasKimiQuotaNumber(resp.Data.Usage) {
+	if !hasKimiUsageRow(resp.Usage) && hasKimiUsageRow(resp.Data.Usage) {
 		resp.Usage = resp.Data.Usage
 	}
 	if !hasKimiLimitPayload(resp.Limits) && hasKimiLimitPayload(resp.Data.Limits) {
@@ -146,17 +146,10 @@ func normalizeKimiUsage(resp kimiUsageResp) kimiUsageResp {
 	return resp
 }
 
-func hasKimiUsagePayload(resp kimiUsageResp) bool {
-	if hasKimiQuotaNumber(resp.Usage) {
-		return true
-	}
-	if hasKimiTotalQuota(resp.TotalQuota) {
-		return true
-	}
-	if hasKimiLimitPayload(resp.Limits) {
-		return true
-	}
-	return hasKimiBoosterPayload(resp.BoosterWallet)
+func hasKimiUsageRow(values map[string]any) bool {
+	_, totalOK := firstNumber(values, "limit")
+	_, usedOK := firstNumber(values, "used")
+	return totalOK || usedOK
 }
 
 func hasKimiQuotaNumber(values map[string]any) bool {
@@ -173,11 +166,11 @@ func hasKimiTotalQuota(value any) bool {
 
 func hasKimiLimitPayload(limits []map[string]any) bool {
 	for _, item := range limits {
-		detail := item
-		if nested, ok := item["detail"].(map[string]any); ok {
-			detail = nested
+		detail, ok := item["detail"].(map[string]any)
+		if !ok {
+			continue
 		}
-		if hasKimiQuotaNumber(detail) {
+		if hasKimiUsageRow(detail) {
 			return true
 		}
 	}
@@ -195,9 +188,6 @@ func hasKimiBoosterPayload(wallet map[string]any) bool {
 
 func parseKimiUsage(authID string, resp kimiUsageResp) balance.Result {
 	label := balance.ProviderLabel[balance.ProviderKimiCode]
-	if !hasKimiUsagePayload(resp) {
-		return errResult(authID, label, invalidResponseError("Kimi Code 官方接口未返回可识别的配额字段"))
-	}
 	r := balance.Result{
 		Provider:  label,
 		AuthID:    authID,
@@ -205,47 +195,36 @@ func parseKimiUsage(authID string, resp kimiUsageResp) balance.Result {
 		Extra:     map[string]string{},
 	}
 
-	weekly, ok := kimiQuotaWindow(resp.Usage, "每周配额")
-	if !ok {
-		weekly = balance.QuotaWindow{
-			Label:            "每周配额",
-			Unknown:          true,
-			Status:           "接口未返回周配额，无法判断账户是否可用",
-			AggregationScope: "account",
-			AggregationKey:   "kimi:每周配额",
+	primaryApplied := false
+	if weekly, ok := kimiQuotaWindow(resp.Usage, "每周配额"); ok {
+		weekly.Group = "订阅配额"
+		r.QuotaWindows = append(r.QuotaWindows, weekly)
+		if !weekly.Unknown {
+			applyPrimaryWindow(&r, weekly)
+			primaryApplied = true
 		}
 	}
-	weekly.Group = "订阅配额"
-	r.QuotaWindows = append(r.QuotaWindows, weekly)
-	applyPrimaryWindow(&r, weekly)
-	if resp.TotalQuota != nil {
-		totalWindow := balance.QuotaWindow{
-			Group:            "订阅配额",
-			Label:            "会员总额度",
-			Unknown:          true,
-			Status:           "接口返回的会员总额度格式无法识别",
-			AggregationScope: "account",
-			AggregationKey:   "kimi:total-quota",
+	if values, ok := resp.TotalQuota.(map[string]any); ok {
+		if totalWindow, recognized := kimiTotalQuotaWindow(values, "会员总额度"); recognized {
+			totalWindow.Group = "订阅配额"
+			totalWindow.Label = "会员总额度"
+			totalWindow.AggregationKey = "kimi:total-quota"
+			r.QuotaWindows = append(r.QuotaWindows, totalWindow)
 		}
-		if values, ok := resp.TotalQuota.(map[string]any); ok {
-			if parsed, recognized := kimiQuotaWindow(values, "会员总额度"); recognized {
-				totalWindow = parsed
-				totalWindow.Group = "订阅配额"
-				totalWindow.Label = "会员总额度"
-				totalWindow.AggregationKey = "kimi:total-quota"
-			}
-		}
-		r.QuotaWindows = append(r.QuotaWindows, totalWindow)
 	}
 	for index, item := range resp.Limits {
-		detail := item
-		if nested, ok := item["detail"].(map[string]any); ok {
-			detail = nested
+		detail, ok := item["detail"].(map[string]any)
+		if !ok {
+			continue
 		}
 		fallback := kimiWindowLabel(item, detail, index)
 		if window, ok := kimiQuotaWindow(detail, fallback); ok {
 			window.Group = "滚动限流"
 			r.QuotaWindows = append(r.QuotaWindows, window)
+			if !primaryApplied && !window.Unknown {
+				applyPrimaryWindow(&r, window)
+				primaryApplied = true
+			}
 		}
 	}
 	parseKimiBoosterWallet(&r, resp.BoosterWallet)
@@ -254,7 +233,9 @@ func parseKimiUsage(authID string, resp kimiUsageResp) balance.Result {
 		r.Extra = nil
 	}
 	if len(r.QuotaWindows) == 0 && len(r.Extra) == 0 {
-		return errResult(authID, label, invalidResponseError("官方接口未返回可识别的配额明细"))
+		// Kimi's official client treats a valid 2xx response with no usable rows
+		// as a successful query and renders a no-data message.
+		r.QuotaDisplay = "暂无用量数据"
 	}
 	return r
 }
@@ -265,28 +246,56 @@ func kimiQuotaWindow(values map[string]any, fallbackLabel string) (balance.Quota
 	}
 	total, totalOK := firstNumber(values, "limit")
 	used, usedOK := firstNumber(values, "used")
-	remaining, remainingOK := firstNumber(values, "remaining")
-	if !totalOK && !usedOK && !remainingOK {
-		window := kimiQuotaWindowBase(values, fallbackLabel)
-		window.Unknown = true
-		window.Status = "接口未返回配额用量"
-		return window, true
+	if !totalOK && !usedOK {
+		return balance.QuotaWindow{}, false
+	}
+	if !totalOK {
+		total = 0
+	}
+	if !usedOK {
+		used = 0
 	}
 	window := kimiQuotaWindowBase(values, fallbackLabel)
-	if !totalOK || total <= 0 {
-		window.Unknown = true
-		window.Status = "接口未返回有效配额上限"
-		return window, true
-	}
-	if !usedOK && !remainingOK {
-		window.Unknown = true
-		window.Status = "接口未返回已用或剩余额度"
+	if total <= 0 {
+		// The official client defaults an omitted limit to zero and renders any
+		// non-positive limit as 0% used. Preserve that behavior instead of
+		// turning a valid usage row into an incomplete window.
+		window.RemainingPercent = 100
+		window.UsedPercent = 0
+		window.CapacityPercent = 100
 		return window, true
 	}
 	used = maxFloat(used, 0)
-	remaining = maxFloat(remaining, 0)
 	used = minFloat(used, total)
-	remaining = minFloat(remaining, total)
+	resolvedRemaining := maxFloat(total-used, 0)
+	window.RemainingPercent = clampPercent(percentFromValues(resolvedRemaining, total))
+	window.UsedPercent = clampPercent(100 - window.RemainingPercent)
+	window.CapacityPercent = 100
+	if window.RemainingPercent <= 0 {
+		window.Status = "已用尽"
+	}
+	return window, true
+}
+
+// kimiTotalQuotaWindow preserves the older, undocumented totalQuota extension
+// without letting it affect the official usage/limits schema. Unlike official
+// rows, this optional object has historically exposed `remaining`.
+func kimiTotalQuotaWindow(values map[string]any, fallbackLabel string) (balance.QuotaWindow, bool) {
+	if len(values) == 0 {
+		return balance.QuotaWindow{}, false
+	}
+	total, totalOK := firstNumber(values, "limit")
+	used, usedOK := firstNumber(values, "used")
+	remaining, remainingOK := firstNumber(values, "remaining")
+	if !totalOK || total <= 0 {
+		return balance.QuotaWindow{}, false
+	}
+	if !usedOK && !remainingOK {
+		used = 0
+		usedOK = true
+	}
+	used = minFloat(maxFloat(used, 0), total)
+	remaining = minFloat(maxFloat(remaining, 0), total)
 	resolvedRemaining := remaining
 	inconsistent := false
 	if usedOK {
@@ -298,6 +307,7 @@ func kimiQuotaWindow(values map[string]any, fallbackLabel string) (balance.Quota
 			resolvedRemaining = remainingFromUsed
 		}
 	}
+	window := kimiQuotaWindowBase(values, fallbackLabel)
 	window.RemainingPercent = clampPercent(percentFromValues(resolvedRemaining, total))
 	window.UsedPercent = clampPercent(100 - window.RemainingPercent)
 	window.CapacityPercent = 100
@@ -315,7 +325,7 @@ func kimiQuotaWindowBase(values map[string]any, fallbackLabel string) balance.Qu
 		AggregationScope: "account",
 	}
 	window.AggregationKey = "kimi:" + strings.ToLower(strings.TrimSpace(window.Label))
-	window.ResetAt = normalizedTimestampForDisplay(firstValue(values, "reset_at", "resetAt", "reset_time", "resetTime"))
+	window.ResetAt = normalizedTimestampForDisplay(firstValue(values, "resetTime", "reset_at", "resetAt", "reset_time"))
 	if resetIn, ok := int64Value(firstValue(values, "reset_in", "resetIn", "ttl", "window")); ok && resetIn > 0 {
 		window.ResetInSeconds = resetIn
 	}
@@ -345,6 +355,8 @@ func kimiWindowLabel(item, detail map[string]any, index int) string {
 			multiplier = 3600
 		case strings.Contains(unit, "DAY"):
 			multiplier = 86400
+		case strings.Contains(unit, "WEEK"):
+			multiplier = 604800
 		}
 		if duration <= math.MaxInt64/multiplier {
 			return durationWindowLabel(duration * multiplier)
@@ -384,7 +396,7 @@ func parseKimiBoosterWallet(result *balance.Result, wallet map[string]any) {
 
 	limitCents, limitOK := firstNumber(monthlyLimit, "priceInCents")
 	usedCents, usedOK := firstNumber(monthlyUsed, "priceInCents")
-	enabled, enabledPresent := wallet["monthlyChargeLimitEnabled"].(bool)
+	enabled, _ := wallet["monthlyChargeLimitEnabled"].(bool)
 	if enabled && limitOK && limitCents > 0 {
 		used := 0.0
 		if usedOK {
@@ -404,7 +416,7 @@ func parseKimiBoosterWallet(result *balance.Result, wallet map[string]any) {
 			AggregationScope: "account",
 			AggregationKey:   "kimi:booster-monthly",
 		})
-	} else if enabled && limitOK && limitCents == 0 {
+	} else {
 		used := 0.0
 		if usedOK {
 			used = math.Trunc(usedCents) / 100
@@ -412,20 +424,8 @@ func parseKimiBoosterWallet(result *balance.Result, wallet map[string]any) {
 		result.Extra["每月付费上限"] = "不限量"
 		result.QuotaWindows = append(result.QuotaWindows, balance.QuotaWindow{
 			Group: "加量包", Label: "每月付费上限", Unit: currency, Used: used,
-			Unlimited: true, ShowUsedWhenUnlimited: usedOK,
+			Unlimited: true, ShowUsedWhenUnlimited: true,
 			Status: "不限量", AggregationScope: "account", AggregationKey: "kimi:booster-monthly",
-		})
-	} else if enabled {
-		result.Extra["每月付费上限"] = "已启用"
-		result.QuotaWindows = append(result.QuotaWindows, balance.QuotaWindow{
-			Group: "加量包", Label: "每月付费上限", Unit: currency, Unknown: true,
-			Status: "接口未返回额度数值", AggregationScope: "account", AggregationKey: "kimi:booster-monthly",
-		})
-	} else if enabledPresent {
-		result.Extra["每月付费上限"] = "未启用"
-		result.QuotaWindows = append(result.QuotaWindows, balance.QuotaWindow{
-			Group: "加量包", Label: "每月付费上限", Unit: currency, Unavailable: true,
-			Status: "未启用", AggregationScope: "account", AggregationKey: "kimi:booster-monthly",
 		})
 	}
 }
