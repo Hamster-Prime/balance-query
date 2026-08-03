@@ -104,6 +104,109 @@ provider_mappings:
 	}
 }
 
+func TestMalformedReconfigureKeepsRegistrationAndLastValidRuntimeState(t *testing.T) {
+	previousState := snapshotState()
+	stateMu.RLock()
+	previousApplyError := runtimeConfigApplyError
+	stateMu.RUnlock()
+	runtimeConfigMu.Lock()
+	previousPendingConfig := append([]byte(nil), pendingRuntimeConfig...)
+	runtimeConfigMu.Unlock()
+	t.Cleanup(func() {
+		runtimeConfigMu.Lock()
+		defer runtimeConfigMu.Unlock()
+		resultCache.Reset(time.Duration(previousState.CacheTTLSeconds) * time.Second)
+		pendingRuntimeConfig = previousPendingConfig
+		stateMu.Lock()
+		state = previousState
+		runtimeConfigApplyError = previousApplyError
+		stateMu.Unlock()
+	})
+
+	stateMu.Lock()
+	state = balance.PluginConfig{
+		CacheTTLSeconds:  600,
+		ProviderMappings: map[string]balance.ProviderType{"provider-one": balance.ProviderKimiCode},
+	}
+	runtimeConfigApplyError = ""
+	stateMu.Unlock()
+
+	raw, err := json.Marshal(lifecycleRequest{ConfigYAML: []byte("cache_ttl_seconds: [not-an-integer]\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := handleMethod("plugin.reconfigure", raw)
+	if err != nil {
+		t.Fatalf("malformed plugin.reconfigure returned an ABI error: %v", err)
+	}
+	var registered registration
+	decodeOKEnvelope(t, response, &registered)
+	if registered.Metadata.Version != pluginVersion || !registered.Capabilities.ManagementAPI {
+		t.Fatalf("malformed reconfigure dropped registration: %#v", registered)
+	}
+	got := currentConfigState()
+	if got.CacheTTLSeconds != 600 || got.ProviderMappings["provider-one"] != balance.ProviderKimiCode {
+		t.Fatalf("malformed reconfigure replaced last valid runtime state: %#v", got)
+	}
+	if strings.TrimSpace(got.ApplyError) == "" {
+		t.Fatal("malformed reconfigure did not expose the retained-state warning")
+	}
+
+	validRaw, err := json.Marshal(lifecycleRequest{ConfigYAML: []byte("cache_ttl_seconds: 900\nprovider_mappings: {}\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = handleMethod("plugin.reconfigure", validRaw); err != nil {
+		t.Fatalf("valid plugin.reconfigure error: %v", err)
+	}
+	got = currentConfigState()
+	if got.CacheTTLSeconds != 900 || got.ApplyError != "" {
+		t.Fatalf("valid reconfigure did not recover runtime state: %#v", got)
+	}
+}
+
+func TestConfigStateRetriesPendingRuntimeConfig(t *testing.T) {
+	previousState := snapshotState()
+	stateMu.RLock()
+	previousApplyError := runtimeConfigApplyError
+	stateMu.RUnlock()
+	runtimeConfigMu.Lock()
+	previousPendingConfig := append([]byte(nil), pendingRuntimeConfig...)
+	runtimeConfigMu.Unlock()
+	t.Cleanup(func() {
+		runtimeConfigMu.Lock()
+		defer runtimeConfigMu.Unlock()
+		resultCache.Reset(time.Duration(previousState.CacheTTLSeconds) * time.Second)
+		pendingRuntimeConfig = previousPendingConfig
+		stateMu.Lock()
+		state = previousState
+		runtimeConfigApplyError = previousApplyError
+		stateMu.Unlock()
+	})
+
+	raw, err := json.Marshal(lifecycleRequest{ConfigYAML: []byte("cache_ttl_seconds: 750\nprovider_mappings:\n  provider-one: kimi_code\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeConfigMu.Lock()
+	pendingRuntimeConfig = append([]byte(nil), raw...)
+	stateMu.Lock()
+	runtimeConfigApplyError = "上一次应用失败"
+	stateMu.Unlock()
+	runtimeConfigMu.Unlock()
+
+	got := currentConfigState()
+	if got.CacheTTLSeconds != 750 || got.ProviderMappings["provider-one"] != balance.ProviderKimiCode || got.ApplyError != "" {
+		t.Fatalf("config-state did not retry the pending valid config: %#v", got)
+	}
+	runtimeConfigMu.Lock()
+	pending := len(pendingRuntimeConfig)
+	runtimeConfigMu.Unlock()
+	if pending != 0 {
+		t.Fatalf("pending runtime config was not cleared after recovery: %d bytes", pending)
+	}
+}
+
 func TestApplyRuntimeConfigEmptyYAMLResetsState(t *testing.T) {
 	previousState := snapshotState()
 	t.Cleanup(func() {

@@ -58,7 +58,7 @@ import (
 
 const (
 	pluginID      = "balance-query"
-	pluginVersion = "0.8.5"
+	pluginVersion = "0.8.6"
 	abiVersion    = 1
 	schemaVersion = 1
 
@@ -79,11 +79,14 @@ var (
 	fetchCalls   = map[string]*accountFetchCall{}
 	buildFetcher = providers.Build
 
-	stateMu sync.RWMutex
-	state   = balance.PluginConfig{
+	stateMu         sync.RWMutex
+	runtimeConfigMu sync.Mutex
+	state           = balance.PluginConfig{
 		CacheTTLSeconds:  defaultTTLSeconds,
 		ProviderMappings: map[string]balance.ProviderType{},
 	}
+	runtimeConfigApplyError string
+	pendingRuntimeConfig    []byte
 )
 
 type accountFetchCall struct {
@@ -164,13 +167,22 @@ func cliproxyPluginFree(ptr unsafe.Pointer, _ C.size_t) {
 
 //export cliproxyPluginShutdown
 func cliproxyPluginShutdown() {
+	defer func() {
+		// A shutdown hook must never let a provider transport or cache cleanup
+		// panic cross the C ABI boundary and terminate the CPA process.
+		_ = recover()
+	}()
 	providers.CloseIdleConnections()
-	stateMu.Lock()
+	runtimeConfigMu.Lock()
+	defer runtimeConfigMu.Unlock()
 	resultCache.Reset(defaultTTLSeconds * time.Second)
+	stateMu.Lock()
 	state = balance.PluginConfig{
 		CacheTTLSeconds:  defaultTTLSeconds,
 		ProviderMappings: map[string]balance.ProviderType{},
 	}
+	runtimeConfigApplyError = ""
+	pendingRuntimeConfig = nil
 	stateMu.Unlock()
 }
 
@@ -219,9 +231,11 @@ type registrationCapabilities struct {
 }
 
 func handleRegister(raw []byte) ([]byte, error) {
-	if err := applyRuntimeConfig(raw); err != nil {
-		return nil, err
-	}
+	// CPA removes a plugin's capabilities and management routes when
+	// plugin.reconfigure fails. Preserve the last valid runtime state, remember
+	// an unapplied request for config-state polling to retry, and still return
+	// registration metadata so the dashboard remains reachable.
+	_ = applyRuntimeConfigSafely(raw)
 	return okEnvelope(registration{
 		SchemaVersion: schemaVersion,
 		Metadata: pluginMetadata{
@@ -247,7 +261,33 @@ func handleRegister(raw []byte) ([]byte, error) {
 	})
 }
 
+func applyRuntimeConfigSafely(raw []byte) error {
+	return applyRuntimeConfig(raw)
+}
+
 func applyRuntimeConfig(raw []byte) error {
+	runtimeConfigMu.Lock()
+	defer runtimeConfigMu.Unlock()
+	return applyRuntimeConfigLocked(raw)
+}
+
+func applyRuntimeConfigLocked(raw []byte) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = fmt.Errorf("应用插件配置时发生内部错误")
+		}
+		if err != nil {
+			pendingRuntimeConfig = append(pendingRuntimeConfig[:0], raw...)
+			stateMu.Lock()
+			runtimeConfigApplyError = "CPA 中的最新设置暂时无法应用；插件正在保留上一次有效配置"
+			stateMu.Unlock()
+			return
+		}
+		pendingRuntimeConfig = nil
+		stateMu.Lock()
+		runtimeConfigApplyError = ""
+		stateMu.Unlock()
+	}()
 	if len(raw) == 0 {
 		return nil
 	}
@@ -259,8 +299,8 @@ func applyRuntimeConfig(raw []byte) error {
 		// Clear cached results before publishing the reset configuration. Once the
 		// runtime state endpoint exposes the new TTL, callers must not be able to
 		// observe entries created under the previous cache policy.
-		stateMu.Lock()
 		resultCache.Reset(defaultTTLSeconds * time.Second)
+		stateMu.Lock()
 		state = balance.PluginConfig{
 			CacheTTLSeconds:  defaultTTLSeconds,
 			ProviderMappings: map[string]balance.ProviderType{},
@@ -292,19 +332,32 @@ func applyRuntimeConfig(raw []byte) error {
 		}
 	}
 
-	// Serialize cache-policy changes and runtime-state publication so concurrent
-	// reconfigure calls cannot leave the cache TTL and the visible state out of
-	// sync with one another.
-	stateMu.Lock()
-	if state.CacheTTLSeconds != next.CacheTTLSeconds {
+	// Serialize cache-policy changes and runtime-state publication without
+	// nesting the state and cache mutexes. A cleanup failure therefore cannot
+	// poison the runtime-state lock used by every management request.
+	stateMu.RLock()
+	previousTTL := state.CacheTTLSeconds
+	stateMu.RUnlock()
+	if previousTTL != next.CacheTTLSeconds {
 		resultCache.Reset(time.Duration(next.CacheTTLSeconds) * time.Second)
 	}
 	// Publish the new runtime state only after a TTL change has atomically
 	// cleared the old cache. The dashboard uses this state as its confirmation
 	// barrier before issuing queries under the new settings.
+	stateMu.Lock()
 	state = next
 	stateMu.Unlock()
 	return nil
+}
+
+func retryPendingRuntimeConfig() {
+	runtimeConfigMu.Lock()
+	defer runtimeConfigMu.Unlock()
+	if len(pendingRuntimeConfig) == 0 {
+		return
+	}
+	raw := append([]byte(nil), pendingRuntimeConfig...)
+	_ = applyRuntimeConfigLocked(raw)
 }
 
 func normalizeTTL(value int) int {
@@ -326,16 +379,25 @@ func currentTTL() int {
 	return state.CacheTTLSeconds
 }
 
-func currentConfigState() balance.PluginConfig {
+type runtimeConfigState struct {
+	balance.PluginConfig
+	ApplyError string `json:"config_apply_error,omitempty"`
+}
+
+func currentConfigState() runtimeConfigState {
+	retryPendingRuntimeConfig()
 	stateMu.RLock()
 	defer stateMu.RUnlock()
 	mappings := make(map[string]balance.ProviderType, len(state.ProviderMappings))
 	for key, providerType := range state.ProviderMappings {
 		mappings[key] = providerType
 	}
-	return balance.PluginConfig{
-		CacheTTLSeconds:  state.CacheTTLSeconds,
-		ProviderMappings: mappings,
+	return runtimeConfigState{
+		PluginConfig: balance.PluginConfig{
+			CacheTTLSeconds:  state.CacheTTLSeconds,
+			ProviderMappings: mappings,
+		},
+		ApplyError: runtimeConfigApplyError,
 	}
 }
 

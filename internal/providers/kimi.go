@@ -198,6 +198,7 @@ func parseKimiUsage(authID string, resp kimiUsageResp) balance.Result {
 	primaryApplied := false
 	if weekly, ok := kimiQuotaWindow(resp.Usage, "每周配额"); ok {
 		weekly.Group = "订阅配额"
+		weekly.Blocking = true
 		r.QuotaWindows = append(r.QuotaWindows, weekly)
 		if !weekly.Unknown {
 			applyPrimaryWindow(&r, weekly)
@@ -209,6 +210,7 @@ func parseKimiUsage(authID string, resp kimiUsageResp) balance.Result {
 			totalWindow.Group = "订阅配额"
 			totalWindow.Label = "会员总额度"
 			totalWindow.AggregationKey = "kimi:total-quota"
+			totalWindow.Blocking = true
 			r.QuotaWindows = append(r.QuotaWindows, totalWindow)
 		}
 	}
@@ -220,6 +222,7 @@ func parseKimiUsage(authID string, resp kimiUsageResp) balance.Result {
 		fallback := kimiWindowLabel(item, detail, index)
 		if window, ok := kimiQuotaWindow(detail, fallback); ok {
 			window.Group = "滚动限流"
+			window.Blocking = true
 			r.QuotaWindows = append(r.QuotaWindows, window)
 			if !primaryApplied && !window.Unknown {
 				applyPrimaryWindow(&r, window)
@@ -386,6 +389,7 @@ func parseKimiBoosterWallet(result *balance.Result, wallet map[string]any) {
 	if remainingOK {
 		remaining = kimiFixedPointDollars(remainingRaw)
 	}
+	remaining = minFloat(maxFloat(remaining, 0), total)
 	currency := "USD"
 	monthlyLimit, _ := wallet["monthlyChargeLimit"].(map[string]any)
 	monthlyUsed, _ := wallet["monthlyUsed"].(map[string]any)
@@ -397,6 +401,32 @@ func parseKimiBoosterWallet(result *balance.Result, wallet map[string]any) {
 	limitCents, limitOK := firstNumber(monthlyLimit, "priceInCents")
 	usedCents, usedOK := firstNumber(monthlyUsed, "priceInCents")
 	enabled, _ := wallet["monthlyChargeLimitEnabled"].(bool)
+	monthlyCapAvailable := !enabled || !limitOK || limitCents <= 0 || !usedOK || usedCents < limitCents
+	boosterStatus := "Extra Usage 开关未知"
+	boosterDetail := "检测到可用余额；接口未返回 Extra Usage 开关状态"
+	if remaining <= 0 {
+		boosterStatus = "余额已用尽"
+		boosterDetail = boosterStatus
+	} else if !monthlyCapAvailable {
+		boosterStatus = "月消费上限已用尽"
+		boosterDetail = boosterStatus
+	}
+	result.Extra["加量包接续状态"] = boosterDetail
+	boosterUsed := maxFloat(total-remaining, 0)
+	result.QuotaWindows = append(result.QuotaWindows, balance.QuotaWindow{
+		Group:            "加量包",
+		Label:            "加量包余额",
+		Used:             boosterUsed,
+		Total:            total,
+		Remaining:        remaining,
+		Unit:             currency,
+		UsedPercent:      clampPercent(percentFromValues(boosterUsed, total)),
+		RemainingPercent: clampPercent(percentFromValues(remaining, total)),
+		CapacityPercent:  100,
+		Status:           boosterStatus,
+		AggregationScope: "account",
+		AggregationKey:   "kimi:booster-balance",
+	})
 	if enabled && limitOK && limitCents > 0 {
 		used := 0.0
 		if usedOK {

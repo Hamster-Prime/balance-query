@@ -776,6 +776,10 @@ select:hover{border-color:var(--border-hover)}
     loadController: null,
     queryController: null,
     saveController: null,
+    configRecoveryTimer: null,
+    configRecoveryController: null,
+    configRecoveryAttempt: 0,
+    runtimeSyncPending: false,
     activeOverviewCategory: "",
     activeSettingsCategory: "",
     expandedProviders: Object.create(null)
@@ -1361,6 +1365,10 @@ select:hover{border-color:var(--border-hover)}
       stableMappings(runtimeMappings(normalizedLeft.provider_mappings)) === stableMappings(runtimeMappings(normalizedRight.provider_mappings));
   }
 
+  function runtimeConfigApplyError(raw) {
+    return String(raw && raw.config_apply_error || "").trim();
+  }
+
   function runtimePendingError(message) {
     var pending = new Error(message || "设置已写入 CPA，但未能确认插件已完成应用，请稍后重试");
     pending.runtimePending = true;
@@ -1378,6 +1386,8 @@ select:hover{border-color:var(--border-hover)}
       if (changes) requests.push(apiFetch("/plugins/balance-query/config", { signal:controller.signal }, requestTimeout, credentials));
       return Promise.all(requests).then(function (responses) {
         var current = responses[0];
+        var applyError = runtimeConfigApplyError(current);
+        if (applyError) throw runtimePendingError(applyError);
         if (!changes) {
           if (configsEqual(current, expected)) return normalizeConfig(expected);
         } else {
@@ -1411,6 +1421,8 @@ select:hover{border-color:var(--border-hover)}
         apiFetch("/plugins/balance-query/config", { signal:controller.signal }, requestTimeout, credentials),
         apiFetch(RUNTIME_CONFIG_PATH, { signal:controller.signal }, requestTimeout, credentials)
       ]).then(function (responses) {
+        var applyError = runtimeConfigApplyError(responses[1]);
+        if (applyError) throw runtimePendingError(applyError);
         if (configsEqual(responses[0], responses[1])) return normalizeConfig(responses[0]);
         if (Date.now() - startedAt >= CONFIG_STATE_WAIT_TIMEOUT) throw runtimePendingError("CPA 中的最新设置尚未完成应用，请稍后刷新");
         var delay = Math.min(500, 75 * Math.pow(2, Math.min(attempt, 3)));
@@ -1663,8 +1675,8 @@ select:hover{border-color:var(--border-hover)}
 
   function refreshDirtyState() {
     state.dirty = String(state.draftTTL) !== String(state.config.cache_ttl_seconds) || stableMappings(state.draftMappings) !== stableMappings(state.config.provider_mappings);
-    setText(byID("save-state"), state.dirty ? "有未保存的更改" : "");
-    byID("save-button").disabled = !state.dataReady || state.saving || !state.dirty;
+    setText(byID("save-state"), state.dirty ? "有未保存的更改" : state.runtimeSyncPending ? "插件配置同步中，可重新保存重试" : "");
+    byID("save-button").disabled = !state.dataReady || state.saving || (!state.dirty && !state.runtimeSyncPending);
     window.removeEventListener("beforeunload", guardUnsavedChanges);
     if (state.dirty) window.addEventListener("beforeunload", guardUnsavedChanges);
     return state.dirty;
@@ -1685,6 +1697,7 @@ select:hover{border-color:var(--border-hover)}
     state.snapshotGeneration += 1;
     if (state.loadController) state.loadController.abort();
     state.loadController = null;
+    cancelConfigRecovery(true);
   }
 
   function cancelQueryRequests() {
@@ -1704,7 +1717,60 @@ select:hover{border-color:var(--border-hover)}
     setText(byID("save-state"), "");
   }
 
+  function cancelConfigRecovery(resetAttempt) {
+    if (state.configRecoveryTimer != null) window.clearTimeout(state.configRecoveryTimer);
+    state.configRecoveryTimer = null;
+    if (state.configRecoveryController) state.configRecoveryController.abort();
+    state.configRecoveryController = null;
+    if (resetAttempt) state.configRecoveryAttempt = 0;
+  }
+
+  function scheduleConfigRecovery(message) {
+    state.runtimeSyncPending = true;
+    showAppRecovering(message);
+    if (state.configRecoveryTimer != null || state.configRecoveryController) return;
+    var credentials = Object.assign({}, state.credentials);
+    var generation = state.loadGeneration;
+    var delays = [1000, 2000, 5000, 10000, 30000];
+    var delay = delays[Math.min(state.configRecoveryAttempt, delays.length - 1)];
+    state.configRecoveryAttempt += 1;
+    state.configRecoveryTimer = window.setTimeout(function () {
+      state.configRecoveryTimer = null;
+      if (generation !== state.loadGeneration || credentials.apiBase !== state.credentials.apiBase || credentials.managementKey !== state.credentials.managementKey) return;
+      if (state.saving || state.querying) {
+        scheduleConfigRecovery(message);
+        return;
+      }
+      var controller = new AbortController();
+      state.configRecoveryController = controller;
+      waitForSynchronizedConfig(controller, credentials).then(function () {
+        if (controller.signal.aborted || generation !== state.loadGeneration) return false;
+        state.configRecoveryController = null;
+        state.configRecoveryAttempt = 0;
+        state.runtimeSyncPending = false;
+        toast("插件配置已自动恢复同步", false);
+        if (state.dirty) {
+          showApp(true);
+          setDataReady(true);
+          renderSettings();
+          refreshDirtyState();
+          return true;
+        }
+        return loadData({ fromRecovery:true });
+      }).catch(function (error) {
+        if (controller.signal.aborted || generation !== state.loadGeneration || error && error.cancelled) return false;
+        state.configRecoveryController = null;
+        scheduleConfigRecovery(error && error.message ? error.message : message);
+        return false;
+      }).finally(function () {
+        if (state.configRecoveryController === controller) state.configRecoveryController = null;
+      });
+    }, delay);
+  }
+
   function showConnection(message) {
+    cancelConfigRecovery(true);
+    state.runtimeSyncPending = false;
     byID("app").hidden = true;
     byID("connection-view").hidden = false;
     var defaultBase = state.credentials.apiBase || normalizeApiBase(window.location.origin);
@@ -1721,16 +1787,24 @@ select:hover{border-color:var(--border-hover)}
     setText(byID("connection-state"), connected ? "已连接 CPA" : "正在连接 CPA");
   }
 
+  function showAppRecovering(message) {
+    showApp(true);
+    byID("connection-dot").classList.add("pending");
+    setText(byID("connection-state"), "已连接 CPA · 插件配置同步中");
+    if (message) setText(byID("query-meta"), message);
+  }
+
   function setDataReady(ready) {
     state.dataReady = Boolean(ready);
     byID("tab-settings").disabled = !state.dataReady;
-    byID("refresh-button").disabled = !state.dataReady || state.querying;
-    byID("save-button").disabled = !state.dataReady || state.saving || !state.dirty;
+    byID("refresh-button").disabled = !state.dataReady || state.runtimeSyncPending || state.querying;
+    byID("save-button").disabled = !state.dataReady || state.saving || (!state.dirty && !state.runtimeSyncPending);
+    byID("ttl-input").disabled = !state.dataReady;
   }
 
   function setButtonBusy(button, busy, label) {
     if (!button) return;
-    button.disabled = Boolean(busy || (!state.dataReady && (button.id === "refresh-button" || button.id === "save-button")) || (button.id === "save-button" && !state.dirty));
+    button.disabled = Boolean(busy || (state.runtimeSyncPending && button.id === "refresh-button") || (!state.dataReady && (button.id === "refresh-button" || button.id === "save-button")) || (button.id === "save-button" && !state.dirty && !state.runtimeSyncPending));
     var labelNode = button.querySelector(".btn-label") || button.querySelector("span");
     if (labelNode && label) labelNode.textContent = label;
     var oldSpinner = button.querySelector(".spinner");
@@ -2242,9 +2316,19 @@ select:hover{border-color:var(--border-hover)}
     return quotaWindowIsExhausted(item) ? "exhausted" : "available";
   }
 
+  function quotaBlockingExhaustedWindow(items) {
+    return (Array.isArray(items) ? items : []).filter(function (item) {
+      return Boolean(item && item.blocking) && quotaWindowIsExhausted(item);
+    })[0] || null;
+  }
+
   function quotaResultState(items) {
+    items = Array.isArray(items) ? items : [];
+    var blockingItems = items.filter(function (item) { return Boolean(item && item.blocking); });
+    if (quotaBlockingExhaustedWindow(blockingItems)) return "blocked";
+    if (blockingItems.length) items = blockingItems;
     var counts = { available:0, exhausted:0, incomplete:0, neutral:0 };
-    (Array.isArray(items) ? items : []).forEach(function (item) {
+    items.forEach(function (item) {
       counts[quotaWindowState(item)] += 1;
     });
     if (counts.exhausted && counts.available) return "partial-exhausted";
@@ -2277,6 +2361,21 @@ select:hover{border-color:var(--border-hover)}
     if (label === "7d" || label.indexOf("weekly") !== -1 || label.indexOf("周配额") !== -1) return 30;
     if (label.indexOf("monthly") !== -1 || label.indexOf("月配额") !== -1) return 40;
     return 50;
+  }
+
+  function quotaGroupRank(name) {
+    name = String(name || "").trim();
+    if (name === "滚动限流") return 10;
+    if (name === "订阅配额") return 20;
+    if (name === "加量包") return 30;
+    return 100;
+  }
+
+  function orderedQuotaGroups(groups) {
+    return (Array.isArray(groups) ? groups : []).slice().sort(function (left, right) {
+      var rank = quotaGroupRank(left && left.name) - quotaGroupRank(right && right.name);
+      return rank || Number(left && left.order || 0) - Number(right && right.order || 0);
+    });
   }
 
   function quotaResetNode(item, fetchedAt) {
@@ -2434,13 +2533,13 @@ select:hover{border-color:var(--border-hover)}
     windows.forEach(function (item) {
       var name = String(item.group || "").trim() || "配额周期";
       if (!groupByName[name]) {
-        groupByName[name] = { name:name, windows:[] };
+        groupByName[name] = { name:name, windows:[], order:groups.length };
         groups.push(groupByName[name]);
       }
       groupByName[name].windows.push(item);
     });
     var shell = element("div", "quota-groups");
-    groups.forEach(function (group) {
+    orderedQuotaGroups(groups).forEach(function (group) {
       group.windows.sort(function (left, right) {
         var rank = quotaWindowRank(left) - quotaWindowRank(right);
         return rank || translateWindowLabel(left.label).localeCompare(translateWindowLabel(right.label), "zh-CN");
@@ -2804,6 +2903,7 @@ select:hover{border-color:var(--border-hover)}
         aggregate_success_count:successful.length,
         aggregate_total_count:results.length
       };
+      if (bucket.entries.some(function (entry) { return Boolean(entry.item.blocking); })) aggregate.blocking = true;
       var resetCandidates = finiteEntries.concat(unlimitedEntries, unknownEntries);
       var resetSummary = quotaResetSummary(resetCandidates);
       if (resetSummary.resetAt) aggregate.reset_at = resetSummary.resetAt;
@@ -3159,6 +3259,7 @@ select:hover{border-color:var(--border-hover)}
     var partial = warningItems.length > 0;
     var resultWindows = Array.isArray(result.quota_windows) ? result.quota_windows : [];
     var quotaState = failed ? "normal" : quotaResultState(resultWindows);
+    var blockedWindow = quotaState === "blocked" ? quotaBlockingExhaustedWindow(resultWindows) : null;
     var quotaWarning = quotaState !== "normal";
     var detailKeys = !failed ? extraDetailKeys(result) : [];
     var detailsID = "account-details-" + index + "-" + tinyHash(String(result.account_name || "") + "|" + String(result.base_url || ""));
@@ -3175,7 +3276,7 @@ select:hover{border-color:var(--border-hover)}
     var badge = element("span", "badge " + (failed ? "failure" : partial || quotaWarning ? "warning" : "success"));
     badge.appendChild(icon(failed || partial || quotaWarning ? "alert" : "check"));
     var hasWindows = resultWindows.length > 0;
-    badge.appendChild(element("span", "", failed ? failure.kindLabel : partial ? "部分数据" : quotaState === "all-exhausted" ? "全部配额已用尽" : quotaState === "partial-exhausted" ? "部分配额已用尽" : quotaState === "incomplete" ? "配额数据不完整" : hasWindows ? "配额已更新" : "查询成功"));
+    badge.appendChild(element("span", "", failed ? failure.kindLabel : partial ? "部分数据" : quotaState === "blocked" ? translateWindowLabel(blockedWindow && blockedWindow.label || "当前配额") + "已用尽" : quotaState === "all-exhausted" ? "全部配额已用尽" : quotaState === "partial-exhausted" ? "部分配额已用尽" : quotaState === "incomplete" ? "配额数据不完整" : hasWindows ? "配额已更新" : "查询成功"));
     var actions = element("div", "result-actions");
     actions.appendChild(badge);
     var detailButton = null;
@@ -3533,6 +3634,7 @@ select:hover{border-color:var(--border-hover)}
       queryCell.appendChild(element("span", "settings-field-label", "余额查询类型"));
       var select = document.createElement("select");
       select.setAttribute("aria-label", provider.name + " 的余额查询类型");
+      select.disabled = !state.dataReady;
       var blank = document.createElement("option");
       blank.value = "";
       blank.textContent = "不查询";
@@ -3774,8 +3876,10 @@ select:hover{border-color:var(--border-hover)}
 
   function saveSettings() {
     if (state.saving) return Promise.resolve(false);
+    var retryingRuntimeConfig = state.runtimeSyncPending;
     var ttl = validateTTL();
     if (ttl == null) { toast("缓存时长应为 0，或 10 至 86400 之间的整数", true); byID("ttl-input").focus(); return Promise.resolve(false); }
+    if (retryingRuntimeConfig) cancelConfigRecovery(false);
     var baselineConfig = normalizeConfig(state.config);
     var submittedMappings = Object.assign({}, state.draftMappings);
     var submittedRevision = state.draftRevision;
@@ -3798,6 +3902,10 @@ select:hover{border-color:var(--border-hover)}
         var patchConfig = {};
         if (changes.ttlChanged) patchConfig.cache_ttl_seconds = nextConfig.cache_ttl_seconds;
         if (changes.providers.length) patchConfig.provider_mappings = nextConfig.provider_mappings;
+        if (retryingRuntimeConfig) {
+          patchConfig.cache_ttl_seconds = nextConfig.cache_ttl_seconds;
+          patchConfig.provider_mappings = nextConfig.provider_mappings;
+        }
         assertOwnership();
         return apiFetch("/plugins/balance-query/config", {
           method: "PATCH",
@@ -3814,6 +3922,10 @@ select:hover{border-color:var(--border-hover)}
     }).then(function (appliedConfig) {
       if (!appliedConfig) return false;
       if (generation !== state.saveGeneration || loadGeneration !== state.loadGeneration || credentials.apiBase !== state.credentials.apiBase || credentials.managementKey !== state.credentials.managementKey) return false;
+      cancelConfigRecovery(true);
+      state.runtimeSyncPending = false;
+      showApp(true);
+      setDataReady(true);
       var mappingChanged = state.providers.some(function (provider) {
         return providerMappingChanged(provider, appliedConfig.provider_mappings, state.config.provider_mappings);
       });
@@ -3856,8 +3968,38 @@ select:hover{border-color:var(--border-hover)}
           "设置已写入 CPA，但管理凭据已失效，暂时无法确认插件是否已完成应用" :
           "设置已写入 CPA，但暂时无法确认插件是否已完成应用";
       }
+      if (persisted && error && error.runtimePending && nextConfig) {
+        var mappingChanged = state.providers.some(function (provider) {
+          return providerMappingChanged(provider, nextConfig.provider_mappings, state.config.provider_mappings);
+        });
+        if (mappingChanged) cancelQueryRequests();
+        var currentDraftTTL = state.draftTTL;
+        state.runtimeSyncPending = true;
+        state.config = normalizeConfig(nextConfig);
+        if (state.draftRevision === submittedRevision) {
+          state.draftMappings = Object.assign({}, state.config.provider_mappings);
+          state.draftTTL = String(state.config.cache_ttl_seconds);
+        } else {
+          state.draftMappings = rebaseDraftMappings(state.config.provider_mappings, submittedMappings, state.draftMappings);
+          state.draftTTL = String(currentDraftTTL) === String(ttl) ? String(state.config.cache_ttl_seconds) : String(currentDraftTTL);
+        }
+        refreshDirtyState();
+        if (mappingChanged) state.needsQuery = true;
+        if (state.view === "settings") renderSettings();
+        renderResults();
+        setText(byID("save-state"), state.dirty ? "已保存先前更改，插件配置同步中" : "已保存，插件配置同步中");
+        toast("设置已写入 CPA，插件正在自动恢复连接", false);
+        if (error.status === 401 || error.status === 403) {
+          state.credentials.managementKey = "";
+          showConnection("设置已保存，但管理密钥已失效，请重新输入以确认插件状态。");
+        } else {
+          scheduleConfigRecovery(error.message);
+        }
+        return true;
+      }
       setText(byID("save-state"), error && error.runtimePending ? "已写入，但尚未确认生效" : error && error.status === 409 ? "配置有冲突" : "保存失败");
       toast(error && error.message ? error.message : "保存设置失败", true);
+      if (retryingRuntimeConfig) scheduleConfigRecovery(error && error.message ? error.message : "插件配置仍在等待同步");
       return false;
     }).finally(function () {
       if (generation !== state.saveGeneration || loadGeneration !== state.loadGeneration) return;
@@ -3867,7 +4009,11 @@ select:hover{border-color:var(--border-hover)}
     });
   }
 
-  function loadData() {
+  function loadData(options) {
+    options = options || {};
+    var targetView = options.fromRecovery && state.view === "settings" ? "settings" : "overview";
+    cancelConfigRecovery(true);
+    state.runtimeSyncPending = false;
     cancelSaveRequests();
     cancelQueryRequests();
     if (state.loadController) state.loadController.abort();
@@ -3878,8 +4024,9 @@ select:hover{border-color:var(--border-hover)}
     var retainedResults = state.results.slice();
     var retainedProviders = displayProviders().map(snapshotDisplayProvider);
     var retainedAccounts = displayAccounts().map(snapshotDisplayAccount);
+    var recoverableLive = null;
     state.loadController = controller;
-    setView("overview");
+    setView(targetView);
     setDataReady(false);
     showApp(false);
     if (state.results.length) {
@@ -3943,7 +4090,8 @@ select:hover{border-color:var(--border-hover)}
         partialFailures:failedProviderSources.length,
         preview:loaded[0]
       };
-      if (!responses[7].error && configsEqual(responses[7].data, loadedConfig)) return live;
+      recoverableLive = live;
+      if (!responses[7].error && !runtimeConfigApplyError(responses[7].data) && configsEqual(responses[7].data, loadedConfig)) return live;
       setText(byID("query-meta"), state.results.length ? "上次结果 · 正在等待插件应用最新设置" : "正在等待插件应用最新设置");
       return waitForSynchronizedConfig(controller, credentials).then(function (synchronizedConfig) {
         live.config = synchronizedConfig;
@@ -3951,6 +4099,7 @@ select:hover{border-color:var(--border-hover)}
       });
     }).then(function (live) {
       if (!live || generation !== state.loadGeneration) return null;
+      state.runtimeSyncPending = false;
       state.providers = live.providers;
       state.config = live.config;
       state.globalProxyUrl = live.globalProxyUrl;
@@ -3998,11 +4147,30 @@ select:hover{border-color:var(--border-hover)}
       if (generation !== state.loadGeneration || error && error.cancelled) return;
       var authError = error && (error.status === 401 || error.status === 403);
       if (authError) state.credentials.managementKey = "";
-      if (!authError && state.results.length) {
-        showApp(false);
-        setDataReady(false);
-        setText(byID("query-meta"), error && error.proxyConfigUnavailable ? "正在显示上次结果 · 无法确认当前代理设置" : error && error.runtimePending ? "正在显示上次结果 · 最新设置尚未完成应用" : "正在显示上次结果 · 配置同步失败");
+      if (!authError && (state.results.length || recoverableLive)) {
+        if (recoverableLive) {
+          state.providers = recoverableLive.providers;
+          state.config = recoverableLive.config;
+          state.globalProxyUrl = recoverableLive.globalProxyUrl;
+          var fallbackProviders = retainedResults.length ? retainedProviders : recoverableLive.preview ? recoverableLive.preview.providers : retainedProviders;
+          var fallbackAccounts = retainedResults.length ? retainedAccounts : recoverableLive.preview ? recoverableLive.preview.accounts : retainedAccounts;
+          var failedPreview = previewForFailedProviderSources(fallbackProviders, fallbackAccounts, recoverableLive.failedProviderSources);
+          state.previewProviders = failedPreview.providers;
+          state.previewAccounts = failedPreview.accounts;
+        }
+        state.runtimeSyncPending = true;
+        state.draftMappings = Object.assign({}, state.config.provider_mappings);
+        state.draftTTL = String(state.config.cache_ttl_seconds);
+        state.draftRevision = 0;
+        refreshDirtyState();
+        setDataReady(true);
+        renderSettings();
+        updateSummary();
+        renderResults();
+        var recoveryMessage = error && error.proxyConfigUnavailable ? "正在显示上次结果 · 正在重新读取代理设置" : error && error.runtimePending ? "正在显示可用数据 · 插件正在自动恢复配置同步" : "正在显示可用数据 · 正在自动恢复配置同步";
+        showAppRecovering(recoveryMessage);
         toast(error && error.message ? error.message : "配置同步失败，已保留上次结果", true);
+        scheduleConfigRecovery(recoveryMessage);
         return;
       }
       showConnection(authError ? "管理密钥无效，请重新输入。" : (error && error.message ? error.message : "无法连接 CPA。"));
@@ -4022,6 +4190,10 @@ select:hover{border-color:var(--border-hover)}
     cancelQueryRequests();
     cancelSaveRequests();
     state.needsQuery = false;
+    if (state.credentials.apiBase && state.credentials.managementKey) {
+      loadData();
+      return;
+    }
     showConnection("");
   });
   byID("ttl-input").addEventListener("input", function () {

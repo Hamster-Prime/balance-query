@@ -135,6 +135,11 @@ type QuotaWindow struct {
 	// zero allowance and from a plan that does not include the resource.
 	Unknown bool   `json:"unknown,omitempty"`
 	Status  string `json:"status,omitempty"`
+	// Blocking marks a quota as a hard gate for sibling windows. When a
+	// blocking window is exhausted, capacity remaining in another window does
+	// not make the provider usable (for example Kimi's weekly and rolling
+	// limits must both have capacity).
+	Blocking bool `json:"blocking,omitempty"`
 	// ShowUsedWhenUnlimited asks the UI to keep a provider-reported usage
 	// counter visible even though the key itself has no enforced cap.
 	ShowUsedWhenUnlimited bool `json:"show_used_when_unlimited,omitempty"`

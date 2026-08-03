@@ -39,19 +39,28 @@ func TestParseKimiUsageTopLevelWindowsAndBooster(t *testing.T) {
 	if result.Error != "" {
 		t.Fatalf("parseKimiUsage() error = %q", result.Error)
 	}
-	if len(result.QuotaWindows) != 3 {
-		t.Fatalf("quota windows = %d, want 3: %#v", len(result.QuotaWindows), result.QuotaWindows)
+	if len(result.QuotaWindows) != 4 {
+		t.Fatalf("quota windows = %d, want 4: %#v", len(result.QuotaWindows), result.QuotaWindows)
 	}
 	if got := result.QuotaWindows[0]; got.Label != "每周配额" || got.RemainingPercent != 96 || got.UsedPercent != 4 || got.Unit != "" {
 		t.Fatalf("weekly window = %#v", got)
 	}
+	if !result.QuotaWindows[0].Blocking {
+		t.Fatalf("weekly Kimi quota must block sibling windows: %#v", result.QuotaWindows[0])
+	}
 	if got := result.QuotaWindows[1]; got.Label != "5 小时配额" || got.UsedPercent != 20 || got.RemainingPercent != 80 || got.Unit != "" {
 		t.Fatalf("short window = %#v", got)
+	}
+	if !result.QuotaWindows[1].Blocking {
+		t.Fatalf("rolling Kimi quota must block sibling windows: %#v", result.QuotaWindows[1])
 	}
 	if got := result.QuotaDisplay; got != "每周配额：剩余 96%" {
 		t.Fatalf("quota display = %q", got)
 	}
-	if got := result.QuotaWindows[2]; got.Label != "每月付费上限" || got.Total != 200 || got.Used != 50 {
+	if got := result.QuotaWindows[2]; got.Label != "加量包余额" || got.Total != 200 || got.Remaining != 100 || got.Status != "Extra Usage 开关未知" || got.Blocking {
+		t.Fatalf("booster balance window = %#v", got)
+	}
+	if got := result.QuotaWindows[3]; got.Label != "每月付费上限" || got.Total != 200 || got.Used != 50 || got.Blocking {
 		t.Fatalf("booster monthly window = %#v", got)
 	}
 	for _, window := range result.QuotaWindows {
@@ -61,6 +70,9 @@ func TestParseKimiUsageTopLevelWindowsAndBooster(t *testing.T) {
 	}
 	if got := result.Extra["加量包余额"]; got != "100.00 / 200.00 USD" {
 		t.Fatalf("booster balance = %q", got)
+	}
+	if got := result.Extra["加量包接续状态"]; got != "检测到可用余额；接口未返回 Extra Usage 开关状态" {
+		t.Fatalf("booster fallback state = %q", got)
 	}
 }
 
@@ -219,7 +231,7 @@ func TestKimiTotalQuotaCanBlockOtherwiseFullRollingWindow(t *testing.T) {
 	}
 	total := result.QuotaWindows[1]
 	rolling := result.QuotaWindows[2]
-	if total.Label != "会员总额度" || total.RemainingPercent != 0 || total.Status != "已用尽" {
+	if total.Label != "会员总额度" || total.RemainingPercent != 0 || total.Status != "已用尽" || !total.Blocking {
 		t.Fatalf("Kimi exhausted total quota = %#v", total)
 	}
 	if rolling.Label != "5 小时配额" || rolling.RemainingPercent != 100 {
@@ -262,6 +274,9 @@ func TestKimiBoosterUsesOfficialWholeCentRounding(t *testing.T) {
 	if got := result.Extra["加量包余额"]; got != "0.01 / 0.02 USD" {
 		t.Fatalf("rounded booster balance = %q", got)
 	}
+	if len(result.QuotaWindows) != 2 || result.QuotaWindows[0].Label != "加量包余额" || result.QuotaWindows[0].Remaining != 0.01 {
+		t.Fatalf("rounded booster windows = %#v", result.QuotaWindows)
+	}
 }
 
 func TestKimiMissingOrDisabledMonthlyChargeLimitIsUnlimited(t *testing.T) {
@@ -280,7 +295,7 @@ func TestKimiMissingOrDisabledMonthlyChargeLimitIsUnlimited(t *testing.T) {
 	} {
 		result := balance.Result{Extra: map[string]string{}}
 		parseKimiBoosterWallet(&result, wallet)
-		if len(result.QuotaWindows) != 1 || !result.QuotaWindows[0].Unlimited || !result.QuotaWindows[0].ShowUsedWhenUnlimited || result.QuotaWindows[0].Unknown || result.Extra["每月付费上限"] != "不限量" {
+		if len(result.QuotaWindows) != 2 || result.QuotaWindows[0].Label != "加量包余额" || !result.QuotaWindows[1].Unlimited || !result.QuotaWindows[1].ShowUsedWhenUnlimited || result.QuotaWindows[1].Unknown || result.Extra["每月付费上限"] != "不限量" {
 			t.Fatalf("uncapped monthly charge window = %#v, extra = %#v", result.QuotaWindows, result.Extra)
 		}
 	}
@@ -294,12 +309,43 @@ func TestKimiZeroMonthlyChargeLimitIsUnlimited(t *testing.T) {
 		"monthlyChargeLimit":        map[string]any{"currency": "USD", "priceInCents": float64(0)},
 		"monthlyUsed":               map[string]any{"currency": "USD", "priceInCents": float64(125)},
 	})
-	if len(result.QuotaWindows) != 1 {
+	if len(result.QuotaWindows) != 2 {
 		t.Fatalf("zero-limit monthly window = %#v", result.QuotaWindows)
 	}
-	window := result.QuotaWindows[0]
+	window := result.QuotaWindows[1]
 	if !window.Unlimited || !window.ShowUsedWhenUnlimited || window.Used != 1.25 || window.Unknown {
 		t.Fatalf("zero-limit monthly window = %#v", window)
+	}
+}
+
+func TestKimiBoosterBalanceShowsWhenMonthlyCapIsExhausted(t *testing.T) {
+	result := balance.Result{Extra: map[string]string{}}
+	parseKimiBoosterWallet(&result, map[string]any{
+		"balance":                   map[string]any{"type": "BOOSTER", "amount": float64(20_000_000_000), "amountLeft": float64(10_000_000_000)},
+		"monthlyChargeLimitEnabled": true,
+		"monthlyChargeLimit":        map[string]any{"currency": "USD", "priceInCents": float64(20_000)},
+		"monthlyUsed":               map[string]any{"currency": "USD", "priceInCents": float64(20_000)},
+	})
+	if len(result.QuotaWindows) != 2 {
+		t.Fatalf("capped booster windows = %#v", result.QuotaWindows)
+	}
+	balanceWindow := result.QuotaWindows[0]
+	if balanceWindow.Label != "加量包余额" || balanceWindow.Remaining != 100 || balanceWindow.Status != "月消费上限已用尽" || result.Extra["加量包接续状态"] != "月消费上限已用尽" {
+		t.Fatalf("capped booster balance = %#v, extra = %#v", balanceWindow, result.Extra)
+	}
+}
+
+func TestKimiMissingBoosterAmountLeftUsesOfficialZeroDefault(t *testing.T) {
+	result := balance.Result{Extra: map[string]string{}}
+	parseKimiBoosterWallet(&result, map[string]any{
+		"balance": map[string]any{"type": "BOOSTER", "amount": float64(20_000_000_000)},
+	})
+	if len(result.QuotaWindows) != 2 {
+		t.Fatalf("booster windows without amountLeft = %#v", result.QuotaWindows)
+	}
+	window := result.QuotaWindows[0]
+	if window.Label != "加量包余额" || window.Remaining != 0 || window.Status != "余额已用尽" {
+		t.Fatalf("missing amountLeft must match Kimi's official zero default: %#v", window)
 	}
 }
 
