@@ -15,6 +15,7 @@ func TestRenderDashboardUsesAIProviderManagementAPIs(t *testing.T) {
 		`/codex-api-key`,
 		`/gemini-api-key`,
 		`/plugins/balance-query/config`,
+		`/balance-query/config-apply`,
 		`/proxy-url`,
 		`/balance-query/query`,
 		`api-key-entries`,
@@ -523,16 +524,25 @@ func TestRenderDashboardSettingsUseCategoryTabsAndMobileCards(t *testing.T) {
 	}
 }
 
-func TestRenderDashboardWaitsForRuntimeConfigAndPreservesInFlightDrafts(t *testing.T) {
+func TestRenderDashboardDirectlyAppliesRuntimeConfigAndPreservesInFlightDrafts(t *testing.T) {
 	page := string(RenderDashboard(300))
 	for _, want := range []string{
-		`var RUNTIME_CONFIG_PATH = "/balance-query/config-state";`,
-		`function waitForRuntimeConfig(expected, controller, credentials, changes)`,
+		`var RUNTIME_CONFIG_APPLY_PATH = "/balance-query/config-apply";`,
+		`function applyRuntimeConfig(config, controller, credentials)`,
+		`method: "POST"`,
+		`body: JSON.stringify(normalizeConfig(config))`,
 		`function withConfigSaveLock(credentials, controller, callback)`,
+		`var lockName = "balance-query-config::v2::"`,
+		`ifAvailable:true`,
 		`return withConfigSaveLock(credentials, controller, function (assertOwnership)`,
-		`if (configMatchesChanges(current, expected, changes) && configsEqual(current, persisted))`,
+		`var CONFIG_SAVE_STEP_TIMEOUT = 4000;`,
+		`var CONFIG_APPLY_TIMEOUT = 3000;`,
+		`var CONFIG_SAVE_TOTAL_TIMEOUT = 10000;`,
+		`var leaseMilliseconds = 12000;`,
 		`assertOwnership();`,
-		`setText(byID("save-state"), "已写入，正在等待插件生效")`,
+		`setText(byID("save-state"), "已写入，正在应用")`,
+		`return applyAndReconcileRuntimeConfig(nextConfig, controller, credentials, assertOwnership);`,
+		`state.runtimeApplyFailed = true;`,
 		`var submittedRevision = state.draftRevision;`,
 		`if (state.draftRevision === submittedRevision)`,
 		`rebaseDraftMappings(state.config.provider_mappings`,
@@ -541,6 +551,15 @@ func TestRenderDashboardWaitsForRuntimeConfigAndPreservesInFlightDrafts(t *testi
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("dashboard is missing verified-save marker %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		`function waitForRuntimeConfig(`,
+		`function waitForSynchronizedConfig(`,
+		`插件配置同步中`,
+	} {
+		if strings.Contains(page, unwanted) {
+			t.Fatalf("dashboard still contains obsolete runtime polling marker %q", unwanted)
 		}
 	}
 }

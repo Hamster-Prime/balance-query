@@ -737,14 +737,17 @@ select:hover{border-color:var(--border-hover)}
   "use strict";
   var PROVIDER_DEFINITIONS = __PROVIDER_DEFINITIONS__;
   var INITIAL_TTL = __TTL_SECONDS__;
+  var DEFAULT_TTL_SECONDS = 300;
   var MANAGEMENT_PREFIX = "/v0/management";
-  var RUNTIME_CONFIG_PATH = "/balance-query/config-state";
+  var RUNTIME_CONFIG_APPLY_PATH = "/balance-query/config-apply";
   var AUTH_STORAGE_KEY = "cli-proxy-auth";
   var ENC_PREFIX = "enc::v1::";
   var SECRET_SALT = "cli-proxy-api-webui::secure-storage";
   var REQUEST_TIMEOUT = 30000;
   var CONFIG_REQUEST_TIMEOUT = 10000;
-  var CONFIG_STATE_WAIT_TIMEOUT = 15000;
+  var CONFIG_SAVE_STEP_TIMEOUT = 4000;
+  var CONFIG_APPLY_TIMEOUT = 3000;
+  var CONFIG_SAVE_TOTAL_TIMEOUT = 10000;
   var QUERY_BATCH_SIZE = 128;
   var QUERY_BATCH_MAX_BYTES = 900 * 1024;
   var PROVIDER_CONFIG_SOURCES = ["openai-compatibility", "claude-api-key", "xai-api-key", "codex-api-key", "gemini-api-key"];
@@ -776,10 +779,7 @@ select:hover{border-color:var(--border-hover)}
     loadController: null,
     queryController: null,
     saveController: null,
-    configRecoveryTimer: null,
-    configRecoveryController: null,
-    configRecoveryAttempt: 0,
-    runtimeSyncPending: false,
+    runtimeApplyFailed: false,
     activeOverviewCategory: "",
     activeSettingsCategory: "",
     expandedProviders: Object.create(null)
@@ -1329,28 +1329,6 @@ select:hover{border-color:var(--border-hover)}
     });
   }
 
-  function abortableDelay(milliseconds, signal) {
-    return new Promise(function (resolve, reject) {
-      if (signal && signal.aborted) {
-        var alreadyCancelled = new Error("请求已取消");
-        alreadyCancelled.cancelled = true;
-        reject(alreadyCancelled);
-        return;
-      }
-      var timer = window.setTimeout(finish, milliseconds);
-      function cleanup() { if (signal) signal.removeEventListener("abort", cancel); }
-      function finish() { cleanup(); resolve(); }
-      function cancel() {
-        window.clearTimeout(timer);
-        cleanup();
-        var cancelled = new Error("请求已取消");
-        cancelled.cancelled = true;
-        reject(cancelled);
-      }
-      if (signal) signal.addEventListener("abort", cancel, { once:true });
-    });
-  }
-
   function configsEqual(left, right) {
     var normalizedLeft = normalizeConfig(left);
     var normalizedRight = normalizeConfig(right);
@@ -1365,78 +1343,20 @@ select:hover{border-color:var(--border-hover)}
       stableMappings(runtimeMappings(normalizedLeft.provider_mappings)) === stableMappings(runtimeMappings(normalizedRight.provider_mappings));
   }
 
-  function runtimeConfigApplyError(raw) {
-    return String(raw && raw.config_apply_error || "").trim();
+  function exactConfigsEqual(left, right) {
+    var normalizedLeft = normalizeConfig(left);
+    var normalizedRight = normalizeConfig(right);
+    return normalizedLeft.cache_ttl_seconds === normalizedRight.cache_ttl_seconds &&
+      stableMappings(normalizedLeft.provider_mappings) === stableMappings(normalizedRight.provider_mappings);
   }
 
-  function runtimePendingError(message) {
-    var pending = new Error(message || "设置已写入 CPA，但未能确认插件已完成应用，请稍后重试");
-    pending.runtimePending = true;
-    return pending;
-  }
-
-  function waitForRuntimeConfig(expected, controller, credentials, changes) {
-    var startedAt = Date.now();
-    var attempt = 0;
-    function check() {
-      var remaining = CONFIG_STATE_WAIT_TIMEOUT - (Date.now() - startedAt);
-      if (remaining <= 0) return Promise.reject(runtimePendingError());
-      var requestTimeout = Math.max(1, Math.min(CONFIG_REQUEST_TIMEOUT, remaining));
-      var requests = [apiFetch(RUNTIME_CONFIG_PATH, { signal:controller.signal }, requestTimeout, credentials)];
-      if (changes) requests.push(apiFetch("/plugins/balance-query/config", { signal:controller.signal }, requestTimeout, credentials));
-      return Promise.all(requests).then(function (responses) {
-        var current = responses[0];
-        var applyError = runtimeConfigApplyError(current);
-        if (applyError) throw runtimePendingError(applyError);
-        if (!changes) {
-          if (configsEqual(current, expected)) return normalizeConfig(expected);
-        } else {
-          var persisted = normalizeConfig(responses[1]);
-          if (!configMatchesChanges(persisted, expected, changes)) throw settingsConflict("设置已被其他页面再次修改，请重新载入后再保存");
-          if (configMatchesChanges(current, expected, changes) && configsEqual(current, persisted)) return persisted;
-        }
-        if (Date.now() - startedAt >= CONFIG_STATE_WAIT_TIMEOUT) throw runtimePendingError();
-        var delay = Math.min(500, 75 * Math.pow(2, Math.min(attempt, 3)));
-        attempt += 1;
-        return abortableDelay(delay, controller.signal).then(check);
-      }).catch(function (error) {
-        if (error && (error.cancelled || error.runtimePending || error.status === 401 || error.status === 403 || error.status === 409)) throw error;
-        if (Date.now() - startedAt >= CONFIG_STATE_WAIT_TIMEOUT) throw runtimePendingError();
-        var delay = Math.min(500, 75 * Math.pow(2, Math.min(attempt, 3)));
-        attempt += 1;
-        return abortableDelay(delay, controller.signal).then(check);
-      });
-    }
-    return check();
-  }
-
-  function waitForSynchronizedConfig(controller, credentials) {
-    var startedAt = Date.now();
-    var attempt = 0;
-    function check() {
-      var remaining = CONFIG_STATE_WAIT_TIMEOUT - (Date.now() - startedAt);
-      if (remaining <= 0) return Promise.reject(runtimePendingError("CPA 中的最新设置尚未完成应用，请稍后刷新"));
-      var requestTimeout = Math.max(1, Math.min(CONFIG_REQUEST_TIMEOUT, remaining));
-      return Promise.all([
-        apiFetch("/plugins/balance-query/config", { signal:controller.signal }, requestTimeout, credentials),
-        apiFetch(RUNTIME_CONFIG_PATH, { signal:controller.signal }, requestTimeout, credentials)
-      ]).then(function (responses) {
-        var applyError = runtimeConfigApplyError(responses[1]);
-        if (applyError) throw runtimePendingError(applyError);
-        if (configsEqual(responses[0], responses[1])) return normalizeConfig(responses[0]);
-        if (Date.now() - startedAt >= CONFIG_STATE_WAIT_TIMEOUT) throw runtimePendingError("CPA 中的最新设置尚未完成应用，请稍后刷新");
-        var delay = Math.min(500, 75 * Math.pow(2, Math.min(attempt, 3)));
-        attempt += 1;
-        return abortableDelay(delay, controller.signal).then(check);
-      }).catch(function (error) {
-        if (error && (error.cancelled || error.runtimePending || error.status === 401 || error.status === 403)) throw error;
-        if (Date.now() - startedAt >= CONFIG_STATE_WAIT_TIMEOUT) throw runtimePendingError("CPA 中的最新设置尚未完成应用，请稍后刷新");
-        var delay = Math.min(500, 75 * Math.pow(2, Math.min(attempt, 3)));
-        attempt += 1;
-        return abortableDelay(delay, controller.signal).then(check);
-      });
-    }
-    return check();
+  function applyRuntimeConfig(config, controller, credentials) {
+    return apiFetch(RUNTIME_CONFIG_APPLY_PATH, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(normalizeConfig(config))
+    }, CONFIG_APPLY_TIMEOUT, credentials).then(normalizeConfig);
   }
 
   function tolerantConfigFetch(path, controller, credentials) {
@@ -1662,7 +1582,7 @@ select:hover{border-color:var(--border-hover)}
   function normalizeConfig(raw) {
     var mappings = raw && raw.provider_mappings && typeof raw.provider_mappings === "object" ? raw.provider_mappings : {};
     var ttl = Number(raw && raw.cache_ttl_seconds);
-    if (!Number.isInteger(ttl)) ttl = INITIAL_TTL;
+    if (!Number.isInteger(ttl)) ttl = DEFAULT_TTL_SECONDS;
     else if (ttl !== 0 && ttl < 10) ttl = 10;
     else if (ttl > 86400) ttl = 86400;
     return { cache_ttl_seconds: ttl, provider_mappings: Object.assign({}, mappings) };
@@ -1675,8 +1595,8 @@ select:hover{border-color:var(--border-hover)}
 
   function refreshDirtyState() {
     state.dirty = String(state.draftTTL) !== String(state.config.cache_ttl_seconds) || stableMappings(state.draftMappings) !== stableMappings(state.config.provider_mappings);
-    setText(byID("save-state"), state.dirty ? "有未保存的更改" : state.runtimeSyncPending ? "插件配置同步中，可重新保存重试" : "");
-    byID("save-button").disabled = !state.dataReady || state.saving || (!state.dirty && !state.runtimeSyncPending);
+    setText(byID("save-state"), state.dirty ? "有未保存的更改" : state.runtimeApplyFailed ? "设置已保存，运行配置未应用，可重试" : "");
+    byID("save-button").disabled = !state.dataReady || state.saving || (!state.dirty && !state.runtimeApplyFailed);
     window.removeEventListener("beforeunload", guardUnsavedChanges);
     if (state.dirty) window.addEventListener("beforeunload", guardUnsavedChanges);
     return state.dirty;
@@ -1697,7 +1617,6 @@ select:hover{border-color:var(--border-hover)}
     state.snapshotGeneration += 1;
     if (state.loadController) state.loadController.abort();
     state.loadController = null;
-    cancelConfigRecovery(true);
   }
 
   function cancelQueryRequests() {
@@ -1717,60 +1636,8 @@ select:hover{border-color:var(--border-hover)}
     setText(byID("save-state"), "");
   }
 
-  function cancelConfigRecovery(resetAttempt) {
-    if (state.configRecoveryTimer != null) window.clearTimeout(state.configRecoveryTimer);
-    state.configRecoveryTimer = null;
-    if (state.configRecoveryController) state.configRecoveryController.abort();
-    state.configRecoveryController = null;
-    if (resetAttempt) state.configRecoveryAttempt = 0;
-  }
-
-  function scheduleConfigRecovery(message) {
-    state.runtimeSyncPending = true;
-    showAppRecovering(message);
-    if (state.configRecoveryTimer != null || state.configRecoveryController) return;
-    var credentials = Object.assign({}, state.credentials);
-    var generation = state.loadGeneration;
-    var delays = [1000, 2000, 5000, 10000, 30000];
-    var delay = delays[Math.min(state.configRecoveryAttempt, delays.length - 1)];
-    state.configRecoveryAttempt += 1;
-    state.configRecoveryTimer = window.setTimeout(function () {
-      state.configRecoveryTimer = null;
-      if (generation !== state.loadGeneration || credentials.apiBase !== state.credentials.apiBase || credentials.managementKey !== state.credentials.managementKey) return;
-      if (state.saving || state.querying) {
-        scheduleConfigRecovery(message);
-        return;
-      }
-      var controller = new AbortController();
-      state.configRecoveryController = controller;
-      waitForSynchronizedConfig(controller, credentials).then(function () {
-        if (controller.signal.aborted || generation !== state.loadGeneration) return false;
-        state.configRecoveryController = null;
-        state.configRecoveryAttempt = 0;
-        state.runtimeSyncPending = false;
-        toast("插件配置已自动恢复同步", false);
-        if (state.dirty) {
-          showApp(true);
-          setDataReady(true);
-          renderSettings();
-          refreshDirtyState();
-          return true;
-        }
-        return loadData({ fromRecovery:true });
-      }).catch(function (error) {
-        if (controller.signal.aborted || generation !== state.loadGeneration || error && error.cancelled) return false;
-        state.configRecoveryController = null;
-        scheduleConfigRecovery(error && error.message ? error.message : message);
-        return false;
-      }).finally(function () {
-        if (state.configRecoveryController === controller) state.configRecoveryController = null;
-      });
-    }, delay);
-  }
-
   function showConnection(message) {
-    cancelConfigRecovery(true);
-    state.runtimeSyncPending = false;
+    state.runtimeApplyFailed = false;
     byID("app").hidden = true;
     byID("connection-view").hidden = false;
     var defaultBase = state.credentials.apiBase || normalizeApiBase(window.location.origin);
@@ -1787,24 +1654,17 @@ select:hover{border-color:var(--border-hover)}
     setText(byID("connection-state"), connected ? "已连接 CPA" : "正在连接 CPA");
   }
 
-  function showAppRecovering(message) {
-    showApp(true);
-    byID("connection-dot").classList.add("pending");
-    setText(byID("connection-state"), "已连接 CPA · 插件配置同步中");
-    if (message) setText(byID("query-meta"), message);
-  }
-
   function setDataReady(ready) {
     state.dataReady = Boolean(ready);
     byID("tab-settings").disabled = !state.dataReady;
-    byID("refresh-button").disabled = !state.dataReady || state.runtimeSyncPending || state.querying;
-    byID("save-button").disabled = !state.dataReady || state.saving || (!state.dirty && !state.runtimeSyncPending);
+    byID("refresh-button").disabled = !state.dataReady || state.querying;
+    byID("save-button").disabled = !state.dataReady || state.saving || (!state.dirty && !state.runtimeApplyFailed);
     byID("ttl-input").disabled = !state.dataReady;
   }
 
   function setButtonBusy(button, busy, label) {
     if (!button) return;
-    button.disabled = Boolean(busy || (state.runtimeSyncPending && button.id === "refresh-button") || (!state.dataReady && (button.id === "refresh-button" || button.id === "save-button")) || (button.id === "save-button" && !state.dirty && !state.runtimeSyncPending));
+    button.disabled = Boolean(busy || (!state.dataReady && (button.id === "refresh-button" || button.id === "save-button")) || (button.id === "save-button" && !state.dirty && !state.runtimeApplyFailed));
     var labelNode = button.querySelector(".btn-label") || button.querySelector("span");
     if (labelNode && label) labelNode.textContent = label;
     var oldSpinner = button.querySelector(".spinner");
@@ -3672,13 +3532,12 @@ select:hover{border-color:var(--border-hover)}
   function withLocalConfigSaveLock(lockName, controller, callback) {
     var storage = sameOriginLocalStorage();
     if (!storage) return Promise.reject(configSaveLockError("无法取得跨页面保存锁，本次设置未写入；请允许站点存储后重试", false));
-    var prefix = "balance-query-save-lock::" + tinyHash(lockName) + "::";
+    var prefix = "balance-query-save-lock::v2::" + tinyHash(lockName) + "::";
     var owner = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
     var ownKey = prefix + owner;
-    // The lock spans config GET, PATCH, and runtime confirmation. Keep the
-    // lease longer than their combined bounded duration so background timer
-    // throttling cannot normally expire an active save between heartbeats.
-    var leaseMilliseconds = CONFIG_REQUEST_TIMEOUT + REQUEST_TIMEOUT + CONFIG_STATE_WAIT_TIMEOUT + 30000;
+    // The lock only spans the bounded read/merge/write/direct-apply transaction.
+    // The versioned namespace also makes stale leases from older releases inert.
+    var leaseMilliseconds = 12000;
     var ticket = 0;
     var heartbeat = null;
     var ownershipLost = false;
@@ -3759,10 +3618,10 @@ select:hover{border-color:var(--border-hover)}
           if (candidate.choosing) return true;
           return Number(candidate.ticket) < ticket || (Number(candidate.ticket) === ticket && String(candidate.owner) < owner);
         });
-        if (blocked) return abortableDelay(80, controller.signal).then(acquire).catch(function (error) {
+        if (blocked) {
           cleanup();
-          throw error;
-        });
+          return Promise.reject(configSaveLockError("另一个页面正在保存设置，请稍后重试", false));
+        }
         heartbeat = window.setInterval(function () {
           try {
             if (!refreshOwnership()) ownershipLost = true;
@@ -3789,10 +3648,16 @@ select:hover{border-color:var(--border-hover)}
   }
 
   function withConfigSaveLock(credentials, controller, callback) {
-    var lockName = "balance-query-config::" + String(credentials && credentials.apiBase || "");
+    var lockName = "balance-query-config::v2::" + String(credentials && credentials.apiBase || "");
     try {
       if (typeof navigator !== "undefined" && navigator.locks && typeof navigator.locks.request === "function") {
-        return navigator.locks.request(lockName, { mode:"exclusive", signal:controller.signal }, function () {
+        if (controller.signal.aborted) {
+          var cancelled = new Error("请求已取消");
+          cancelled.cancelled = true;
+          return Promise.reject(cancelled);
+        }
+        return navigator.locks.request(lockName, { mode:"exclusive", ifAvailable:true, signal:controller.signal }, function (lock) {
+          if (!lock) throw configSaveLockError("另一个页面正在保存设置，请稍后重试", false);
           return callback(function () {});
         });
       }
@@ -3838,6 +3703,23 @@ select:hover{border-color:var(--border-hover)}
     return conflict;
   }
 
+  function applyAndReconcileRuntimeConfig(expected, controller, credentials, assertOwnership) {
+    return applyRuntimeConfig(expected, controller, credentials).then(function (appliedConfig) {
+      assertOwnership();
+      return apiFetch("/plugins/balance-query/config", { signal:controller.signal }, CONFIG_SAVE_STEP_TIMEOUT, credentials).then(function (latestRaw) {
+        var latest = normalizeConfig(latestRaw);
+        if (exactConfigsEqual(latest, expected)) return appliedConfig;
+        assertOwnership();
+        return applyRuntimeConfig(latest, controller, credentials).then(function () {
+          throw settingsConflict("保存期间设置又被其他客户端修改，已应用最新配置；请重新载入后确认");
+        }).catch(function (error) {
+          if (error && (error.cancelled || error.timedOut || error.status === 401 || error.status === 403 || error.status === 409)) throw error;
+          throw settingsConflict("保存期间设置又被其他客户端修改；请重新载入后确认最新配置");
+        });
+      });
+    });
+  }
+
   function mergeSubmittedConfig(latestConfig, baselineConfig, submittedMappings, submittedTTL) {
     var nextMappings = Object.assign({}, latestConfig.provider_mappings);
     state.providers.forEach(function (provider) {
@@ -3876,10 +3758,8 @@ select:hover{border-color:var(--border-hover)}
 
   function saveSettings() {
     if (state.saving) return Promise.resolve(false);
-    var retryingRuntimeConfig = state.runtimeSyncPending;
     var ttl = validateTTL();
     if (ttl == null) { toast("缓存时长应为 0，或 10 至 86400 之间的整数", true); byID("ttl-input").focus(); return Promise.resolve(false); }
-    if (retryingRuntimeConfig) cancelConfigRecovery(false);
     var baselineConfig = normalizeConfig(state.config);
     var submittedMappings = Object.assign({}, state.draftMappings);
     var submittedRevision = state.draftRevision;
@@ -3888,6 +3768,11 @@ select:hover{border-color:var(--border-hover)}
     var loadGeneration = state.loadGeneration;
     var generation = ++state.saveGeneration;
     var controller = new AbortController();
+    var saveTimedOut = false;
+    var saveTimer = window.setTimeout(function () {
+      saveTimedOut = true;
+      controller.abort();
+    }, CONFIG_SAVE_TOTAL_TIMEOUT);
     var nextConfig = null;
     var persisted = false;
     state.saveController = controller;
@@ -3896,34 +3781,37 @@ select:hover{border-color:var(--border-hover)}
     setText(byID("save-state"), "正在保存");
     return withConfigSaveLock(credentials, controller, function (assertOwnership) {
       if (generation !== state.saveGeneration || loadGeneration !== state.loadGeneration) return null;
-      return apiFetch("/plugins/balance-query/config", { signal:controller.signal }, CONFIG_REQUEST_TIMEOUT, credentials).then(function (latestRaw) {
+      return apiFetch("/plugins/balance-query/config", { signal:controller.signal }, CONFIG_SAVE_STEP_TIMEOUT, credentials).then(function (latestRaw) {
         if (generation !== state.saveGeneration || loadGeneration !== state.loadGeneration) return null;
         nextConfig = mergeSubmittedConfig(normalizeConfig(latestRaw), baselineConfig, submittedMappings, ttl);
         var patchConfig = {};
         if (changes.ttlChanged) patchConfig.cache_ttl_seconds = nextConfig.cache_ttl_seconds;
         if (changes.providers.length) patchConfig.provider_mappings = nextConfig.provider_mappings;
-        if (retryingRuntimeConfig) {
-          patchConfig.cache_ttl_seconds = nextConfig.cache_ttl_seconds;
-          patchConfig.provider_mappings = nextConfig.provider_mappings;
-        }
         assertOwnership();
         return apiFetch("/plugins/balance-query/config", {
           method: "PATCH",
           signal: controller.signal,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(patchConfig)
-        }, REQUEST_TIMEOUT, credentials);
+        }, CONFIG_SAVE_STEP_TIMEOUT, credentials);
       }).then(function (response) {
         if (response == null || generation !== state.saveGeneration || loadGeneration !== state.loadGeneration) return null;
         persisted = true;
-        setText(byID("save-state"), "已写入，正在等待插件生效");
-        return waitForRuntimeConfig(nextConfig, controller, credentials, changes);
+        setText(byID("save-state"), "已写入，正在应用");
+        assertOwnership();
+        return apiFetch("/plugins/balance-query/config", { signal:controller.signal }, CONFIG_SAVE_STEP_TIMEOUT, credentials);
+      }).then(function (confirmedRaw) {
+        if (confirmedRaw == null || generation !== state.saveGeneration || loadGeneration !== state.loadGeneration) return null;
+        var confirmed = normalizeConfig(confirmedRaw);
+        if (!configMatchesChanges(confirmed, nextConfig, changes)) throw settingsConflict("设置已被其他页面再次修改，请重新载入后再保存");
+        nextConfig = confirmed;
+        assertOwnership();
+        return applyAndReconcileRuntimeConfig(nextConfig, controller, credentials, assertOwnership);
       });
     }).then(function (appliedConfig) {
       if (!appliedConfig) return false;
       if (generation !== state.saveGeneration || loadGeneration !== state.loadGeneration || credentials.apiBase !== state.credentials.apiBase || credentials.managementKey !== state.credentials.managementKey) return false;
-      cancelConfigRecovery(true);
-      state.runtimeSyncPending = false;
+      state.runtimeApplyFailed = false;
       showApp(true);
       setDataReady(true);
       var mappingChanged = state.providers.some(function (provider) {
@@ -3961,20 +3849,23 @@ select:hover{border-color:var(--border-hover)}
       window.setTimeout(function () { if (!state.dirty) setText(byID("save-state"), ""); }, 2000);
       return true;
     }).catch(function (error) {
-      if (generation !== state.saveGeneration || loadGeneration !== state.loadGeneration || error && error.cancelled) return false;
-      if (persisted && error && !error.runtimePending && error.status !== 409) {
-        error.runtimePending = true;
-        error.message = error.status === 401 || error.status === 403 ?
-          "设置已写入 CPA，但管理凭据已失效，暂时无法确认插件是否已完成应用" :
-          "设置已写入 CPA，但暂时无法确认插件是否已完成应用";
+      if (generation !== state.saveGeneration || loadGeneration !== state.loadGeneration) return false;
+      if (error && error.cancelled && !saveTimedOut) return false;
+      if (saveTimedOut) {
+        error = new Error(persisted ? "设置已写入，但即时应用超时；可再次保存重试" : "保存设置超时，请检查 CPA 状态后重试");
+        error.timedOut = true;
       }
-      if (persisted && error && error.runtimePending && nextConfig) {
+      if (error && error.configSaveLock) {
+        error.status = 409;
+        if (persisted) error.message = "设置已写入，但跨页面保存锁已失效；请重新载入确认最新设置";
+      }
+      if (persisted && error && error.status !== 409 && nextConfig) {
         var mappingChanged = state.providers.some(function (provider) {
           return providerMappingChanged(provider, nextConfig.provider_mappings, state.config.provider_mappings);
         });
         if (mappingChanged) cancelQueryRequests();
         var currentDraftTTL = state.draftTTL;
-        state.runtimeSyncPending = true;
+        state.runtimeApplyFailed = true;
         state.config = normalizeConfig(nextConfig);
         if (state.draftRevision === submittedRevision) {
           state.draftMappings = Object.assign({}, state.config.provider_mappings);
@@ -3984,24 +3875,29 @@ select:hover{border-color:var(--border-hover)}
           state.draftTTL = String(currentDraftTTL) === String(ttl) ? String(state.config.cache_ttl_seconds) : String(currentDraftTTL);
         }
         refreshDirtyState();
-        if (mappingChanged) state.needsQuery = true;
+        if (mappingChanged) {
+          clearResultSnapshot();
+          state.results = [];
+          state.needsQuery = true;
+        }
         if (state.view === "settings") renderSettings();
         renderResults();
-        setText(byID("save-state"), state.dirty ? "已保存先前更改，插件配置同步中" : "已保存，插件配置同步中");
-        toast("设置已写入 CPA，插件正在自动恢复连接", false);
+        showApp(true);
+        setDataReady(true);
+        setText(byID("save-state"), state.dirty ? "已保存先前更改，运行配置未应用" : "已保存，运行配置未应用，可重试");
         if (error.status === 401 || error.status === 403) {
           state.credentials.managementKey = "";
-          showConnection("设置已保存，但管理密钥已失效，请重新输入以确认插件状态。");
+          showConnection("设置已保存，但管理密钥已失效，请重新输入后重试应用。");
         } else {
-          scheduleConfigRecovery(error.message);
+          toast("设置已保存，但插件运行配置未能立即应用；可再次保存重试", true);
         }
         return true;
       }
-      setText(byID("save-state"), error && error.runtimePending ? "已写入，但尚未确认生效" : error && error.status === 409 ? "配置有冲突" : "保存失败");
+      setText(byID("save-state"), error && error.status === 409 ? "配置有冲突" : "保存失败");
       toast(error && error.message ? error.message : "保存设置失败", true);
-      if (retryingRuntimeConfig) scheduleConfigRecovery(error && error.message ? error.message : "插件配置仍在等待同步");
       return false;
     }).finally(function () {
+      window.clearTimeout(saveTimer);
       if (generation !== state.saveGeneration || loadGeneration !== state.loadGeneration) return;
       state.saving = false;
       state.saveController = null;
@@ -4009,11 +3905,9 @@ select:hover{border-color:var(--border-hover)}
     });
   }
 
-  function loadData(options) {
-    options = options || {};
-    var targetView = options.fromRecovery && state.view === "settings" ? "settings" : "overview";
-    cancelConfigRecovery(true);
-    state.runtimeSyncPending = false;
+  function loadData() {
+    var targetView = state.view === "settings" ? "settings" : "overview";
+    state.runtimeApplyFailed = false;
     cancelSaveRequests();
     cancelQueryRequests();
     if (state.loadController) state.loadController.abort();
@@ -4060,8 +3954,7 @@ select:hover{border-color:var(--border-hover)}
       }).catch(function (error) {
         error.proxyConfigUnavailable = true;
         throw error;
-      }),
-      tolerantConfigFetch(RUNTIME_CONFIG_PATH, controller, credentials)
+      })
     ]).then(function (responses) {
       return { responses:responses, error:null };
     }).catch(function (error) {
@@ -4091,15 +3984,17 @@ select:hover{border-color:var(--border-hover)}
         preview:loaded[0]
       };
       recoverableLive = live;
-      if (!responses[7].error && !runtimeConfigApplyError(responses[7].data) && configsEqual(responses[7].data, loadedConfig)) return live;
-      setText(byID("query-meta"), state.results.length ? "上次结果 · 正在等待插件应用最新设置" : "正在等待插件应用最新设置");
-      return waitForSynchronizedConfig(controller, credentials).then(function (synchronizedConfig) {
-        live.config = synchronizedConfig;
+      return applyRuntimeConfig(loadedConfig, controller, credentials).then(function (appliedConfig) {
+        live.config = appliedConfig;
+        return live;
+      }).catch(function (error) {
+        if (error && (error.cancelled || error.status === 401 || error.status === 403)) throw error;
+        live.runtimeApplyError = error;
         return live;
       });
     }).then(function (live) {
       if (!live || generation !== state.loadGeneration) return null;
-      state.runtimeSyncPending = false;
+      state.runtimeApplyFailed = Boolean(live.runtimeApplyError);
       state.providers = live.providers;
       state.config = live.config;
       state.globalProxyUrl = live.globalProxyUrl;
@@ -4123,6 +4018,7 @@ select:hover{border-color:var(--border-hover)}
       return readResultSnapshot(accounts, state.config.cache_ttl_seconds, credentials).then(function (snapshot) {
         if (generation !== state.loadGeneration) return;
         showApp(true);
+        if (live.runtimeApplyError) toast("设置已读取，但插件运行配置暂时无法应用；可在设置页重新保存", true);
         if (snapshot) {
           state.results = appendUnavailablePreviewResults(snapshot.results, fallbackResults, accounts, state.previewAccounts);
           renderResults();
@@ -4158,7 +4054,7 @@ select:hover{border-color:var(--border-hover)}
           state.previewProviders = failedPreview.providers;
           state.previewAccounts = failedPreview.accounts;
         }
-        state.runtimeSyncPending = true;
+        state.runtimeApplyFailed = false;
         state.draftMappings = Object.assign({}, state.config.provider_mappings);
         state.draftTTL = String(state.config.cache_ttl_seconds);
         state.draftRevision = 0;
@@ -4167,10 +4063,9 @@ select:hover{border-color:var(--border-hover)}
         renderSettings();
         updateSummary();
         renderResults();
-        var recoveryMessage = error && error.proxyConfigUnavailable ? "正在显示上次结果 · 正在重新读取代理设置" : error && error.runtimePending ? "正在显示可用数据 · 插件正在自动恢复配置同步" : "正在显示可用数据 · 正在自动恢复配置同步";
-        showAppRecovering(recoveryMessage);
-        toast(error && error.message ? error.message : "配置同步失败，已保留上次结果", true);
-        scheduleConfigRecovery(recoveryMessage);
+        showApp(true);
+        setText(byID("query-meta"), error && error.proxyConfigUnavailable ? "正在显示上次结果 · 代理设置读取失败" : "正在显示可用数据 · 部分配置读取失败");
+        toast(error && error.message ? error.message : "部分配置读取失败，已保留上次结果", true);
         return;
       }
       showConnection(authError ? "管理密钥无效，请重新输入。" : (error && error.message ? error.message : "无法连接 CPA。"));

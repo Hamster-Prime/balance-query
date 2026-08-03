@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -109,14 +110,10 @@ func TestMalformedReconfigureKeepsRegistrationAndLastValidRuntimeState(t *testin
 	stateMu.RLock()
 	previousApplyError := runtimeConfigApplyError
 	stateMu.RUnlock()
-	runtimeConfigMu.Lock()
-	previousPendingConfig := append([]byte(nil), pendingRuntimeConfig...)
-	runtimeConfigMu.Unlock()
 	t.Cleanup(func() {
 		runtimeConfigMu.Lock()
 		defer runtimeConfigMu.Unlock()
 		resultCache.Reset(time.Duration(previousState.CacheTTLSeconds) * time.Second)
-		pendingRuntimeConfig = previousPendingConfig
 		stateMu.Lock()
 		state = previousState
 		runtimeConfigApplyError = previousApplyError
@@ -165,45 +162,86 @@ func TestMalformedReconfigureKeepsRegistrationAndLastValidRuntimeState(t *testin
 	}
 }
 
-func TestConfigStateRetriesPendingRuntimeConfig(t *testing.T) {
+func TestConfigStateDoesNotRetryFailedLifecycleConfig(t *testing.T) {
 	previousState := snapshotState()
 	stateMu.RLock()
 	previousApplyError := runtimeConfigApplyError
 	stateMu.RUnlock()
-	runtimeConfigMu.Lock()
-	previousPendingConfig := append([]byte(nil), pendingRuntimeConfig...)
-	runtimeConfigMu.Unlock()
 	t.Cleanup(func() {
 		runtimeConfigMu.Lock()
 		defer runtimeConfigMu.Unlock()
 		resultCache.Reset(time.Duration(previousState.CacheTTLSeconds) * time.Second)
-		pendingRuntimeConfig = previousPendingConfig
 		stateMu.Lock()
 		state = previousState
 		runtimeConfigApplyError = previousApplyError
 		stateMu.Unlock()
 	})
 
-	raw, err := json.Marshal(lifecycleRequest{ConfigYAML: []byte("cache_ttl_seconds: 750\nprovider_mappings:\n  provider-one: kimi_code\n")})
+	stateMu.Lock()
+	state = balance.PluginConfig{
+		CacheTTLSeconds:  750,
+		ProviderMappings: map[string]balance.ProviderType{"provider-one": balance.ProviderKimiCode},
+	}
+	runtimeConfigApplyError = ""
+	stateMu.Unlock()
+
+	raw, err := json.Marshal(lifecycleRequest{ConfigYAML: []byte("cache_ttl_seconds: [not-an-integer]\n")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtimeConfigMu.Lock()
-	pendingRuntimeConfig = append([]byte(nil), raw...)
-	stateMu.Lock()
-	runtimeConfigApplyError = "上一次应用失败"
-	stateMu.Unlock()
-	runtimeConfigMu.Unlock()
-
-	got := currentConfigState()
-	if got.CacheTTLSeconds != 750 || got.ProviderMappings["provider-one"] != balance.ProviderKimiCode || got.ApplyError != "" {
-		t.Fatalf("config-state did not retry the pending valid config: %#v", got)
+	if _, err := handleMethod("plugin.reconfigure", raw); err != nil {
+		t.Fatalf("malformed plugin.reconfigure returned an ABI error: %v", err)
 	}
+
+	request, err := json.Marshal(managementRequest{Method: http.MethodGet, Path: configStatePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type configStateResult struct {
+		raw []byte
+		err error
+	}
+	result := make(chan configStateResult, 1)
+
+	// A config-state read is a snapshot, not another lifecycle application.
+	// Holding this mutex catches the old behavior where every GET retried a
+	// failed reconfigure and could leave the dashboard waiting indefinitely.
 	runtimeConfigMu.Lock()
-	pending := len(pendingRuntimeConfig)
-	runtimeConfigMu.Unlock()
-	if pending != 0 {
-		t.Fatalf("pending runtime config was not cleared after recovery: %d bytes", pending)
+	go func() {
+		response, requestErr := handleManagementRequest(request)
+		result <- configStateResult{raw: response, err: requestErr}
+	}()
+	var responseResult configStateResult
+	select {
+	case responseResult = <-result:
+		runtimeConfigMu.Unlock()
+	case <-time.After(time.Second):
+		runtimeConfigMu.Unlock()
+		t.Fatal("config-state GET waited for a lifecycle retry")
+	}
+	if responseResult.err != nil {
+		t.Fatalf("handleManagementRequest() error = %v", responseResult.err)
+	}
+	var response managementResponse
+	decodeOKEnvelope(t, responseResult.raw, &response)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", response.StatusCode, response.Body)
+	}
+	var got runtimeConfigState
+	if err := json.Unmarshal(response.Body, &got); err != nil {
+		t.Fatalf("decode config state: %v", err)
+	}
+	if got.CacheTTLSeconds != 750 || got.ProviderMappings["provider-one"] != balance.ProviderKimiCode {
+		t.Fatalf("failed lifecycle config changed the last valid runtime state: %#v", got)
+	}
+	if strings.TrimSpace(got.ApplyError) == "" {
+		t.Fatal("config-state did not retain the lifecycle failure warning")
+	}
+	stateMu.RLock()
+	retainedError := runtimeConfigApplyError
+	stateMu.RUnlock()
+	if retainedError != got.ApplyError {
+		t.Fatalf("config-state GET changed the lifecycle failure: got %q, state %q", got.ApplyError, retainedError)
 	}
 }
 
@@ -305,14 +343,17 @@ func TestManagementRegisterSeparatesAuthenticatedQueryAndResource(t *testing.T) 
 	var registration managementRegistration
 	decodeOKEnvelope(t, raw, &registration)
 
-	if len(registration.Routes) != 2 {
-		t.Fatalf("management routes = %d, want 2: %#v", len(registration.Routes), registration.Routes)
+	if len(registration.Routes) != 3 {
+		t.Fatalf("management routes = %d, want 3: %#v", len(registration.Routes), registration.Routes)
 	}
 	if route := registration.Routes[0]; route.Method != http.MethodPost || route.Path != queryPath {
 		t.Fatalf("management route = %#v, want POST %s", route, queryPath)
 	}
 	if route := registration.Routes[1]; route.Method != http.MethodGet || route.Path != configStatePath {
 		t.Fatalf("management route = %#v, want GET %s", route, configStatePath)
+	}
+	if route := registration.Routes[2]; route.Method != http.MethodPost || route.Path != configApplyPath {
+		t.Fatalf("management route = %#v, want POST %s", route, configApplyPath)
 	}
 	if len(registration.Resources) != 1 {
 		t.Fatalf("resource routes = %d, want 1: %#v", len(registration.Resources), registration.Resources)
@@ -325,8 +366,8 @@ func TestManagementRegisterSeparatesAuthenticatedQueryAndResource(t *testing.T) 
 	// without management authentication. Keep the secret-bearing query endpoint out
 	// of Resources and the navigable dashboard out of authenticated API routes.
 	for _, resource := range registration.Resources {
-		if resource.Path == queryPath || resource.Path == configStatePath {
-			t.Fatalf("secret-bearing query path %q was exposed as an unauthenticated resource", queryPath)
+		if resource.Path == queryPath || resource.Path == configStatePath || resource.Path == configApplyPath {
+			t.Fatalf("authenticated management path %q was exposed as an unauthenticated resource", resource.Path)
 		}
 	}
 	for _, route := range registration.Routes {
@@ -389,6 +430,160 @@ func TestRuntimeConfigStateRouteReturnsDeepCopy(t *testing.T) {
 	decodeOKEnvelope(t, rawResponse, &response)
 	if response.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("POST status = %d, want 405", response.StatusCode)
+	}
+}
+
+func TestRuntimeConfigApplyRouteAtomicallyPublishesNormalizedConfig(t *testing.T) {
+	previousState := snapshotState()
+	stateMu.RLock()
+	previousApplyError := runtimeConfigApplyError
+	stateMu.RUnlock()
+	t.Cleanup(func() {
+		runtimeConfigMu.Lock()
+		defer runtimeConfigMu.Unlock()
+		resultCache.Reset(time.Duration(previousState.CacheTTLSeconds) * time.Second)
+		stateMu.Lock()
+		state = previousState
+		runtimeConfigApplyError = previousApplyError
+		stateMu.Unlock()
+	})
+
+	resultCache.Reset(600 * time.Second)
+	resultCache.Set("stale-direct-apply", balance.Result{Provider: "旧缓存"})
+	stateMu.Lock()
+	state = balance.PluginConfig{
+		CacheTTLSeconds:  600,
+		ProviderMappings: map[string]balance.ProviderType{"old-provider": balance.ProviderDeepSeek},
+	}
+	runtimeConfigApplyError = "旧的生命周期错误"
+	stateMu.Unlock()
+
+	body, err := json.Marshal(map[string]any{
+		"cache_ttl_seconds": 3,
+		"provider_mappings": map[string]balance.ProviderType{
+			"provider-one": balance.ProviderKimiCode,
+			"provider-two": balance.ProviderNewAPI,
+			"invalid":      "made_up",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawRequest, err := json.Marshal(managementRequest{
+		Method: http.MethodPost,
+		Path:   configApplyPath,
+		Body:   body,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawResponse, err := handleManagementRequest(rawRequest)
+	if err != nil {
+		t.Fatalf("handleManagementRequest() error = %v", err)
+	}
+	var response managementResponse
+	decodeOKEnvelope(t, rawResponse, &response)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", response.StatusCode, response.Body)
+	}
+	var applied runtimeConfigState
+	if err := json.Unmarshal(response.Body, &applied); err != nil {
+		t.Fatalf("decode applied config: %v", err)
+	}
+	want := balance.PluginConfig{
+		CacheTTLSeconds: 10,
+		ProviderMappings: map[string]balance.ProviderType{
+			"provider-one": balance.ProviderKimiCode,
+			"provider-two": balance.ProviderNewAPI,
+		},
+	}
+	if !reflect.DeepEqual(applied.PluginConfig, want) || applied.ApplyError != "" {
+		t.Fatalf("applied response = %#v, want %#v without an error", applied, want)
+	}
+	current := currentConfigState()
+	if !reflect.DeepEqual(current.PluginConfig, want) || current.ApplyError != "" {
+		t.Fatalf("runtime config = %#v, want %#v without an error", current, want)
+	}
+	if _, exists := resultCache.Get("stale-direct-apply"); exists {
+		t.Fatal("direct config apply changed TTL without clearing stale cache")
+	}
+}
+
+func TestRuntimeConfigApplyRejectsIncompleteOrMalformedBodyWithoutChangingState(t *testing.T) {
+	previousState := snapshotState()
+	stateMu.RLock()
+	previousApplyError := runtimeConfigApplyError
+	stateMu.RUnlock()
+	t.Cleanup(func() {
+		runtimeConfigMu.Lock()
+		defer runtimeConfigMu.Unlock()
+		resultCache.Reset(time.Duration(previousState.CacheTTLSeconds) * time.Second)
+		stateMu.Lock()
+		state = previousState
+		runtimeConfigApplyError = previousApplyError
+		stateMu.Unlock()
+	})
+
+	tests := []struct {
+		name string
+		body []byte
+	}{
+		{name: "malformed json", body: []byte("{")},
+		{name: "missing cache ttl", body: []byte(`{"provider_mappings":{}}`)},
+		{name: "missing provider mappings", body: []byte(`{"cache_ttl_seconds":600}`)},
+		{name: "null provider mappings", body: []byte(`{"cache_ttl_seconds":600,"provider_mappings":null}`)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			baseline := balance.PluginConfig{
+				CacheTTLSeconds:  900,
+				ProviderMappings: map[string]balance.ProviderType{"provider-one": balance.ProviderDeepSeek},
+			}
+			resultCache.Reset(900 * time.Second)
+			resultCache.Set("keep-on-invalid-apply", balance.Result{Provider: "保留缓存"})
+			stateMu.Lock()
+			state = baseline
+			runtimeConfigApplyError = "保留原错误"
+			stateMu.Unlock()
+
+			rawRequest, err := json.Marshal(managementRequest{
+				Method: http.MethodPost,
+				Path:   configApplyPath,
+				Body:   test.body,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rawResponse, err := handleManagementRequest(rawRequest)
+			if err != nil {
+				t.Fatalf("handleManagementRequest() error = %v", err)
+			}
+			var response managementResponse
+			decodeOKEnvelope(t, rawResponse, &response)
+			if response.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", response.StatusCode, response.Body)
+			}
+			var errorBody map[string]string
+			if err := json.Unmarshal(response.Body, &errorBody); err != nil {
+				t.Fatalf("decode error response: %v; body=%s", err, response.Body)
+			}
+			if strings.TrimSpace(errorBody["error"]) == "" {
+				t.Fatalf("empty validation error: %s", response.Body)
+			}
+			if got := snapshotState(); !reflect.DeepEqual(got, baseline) {
+				t.Fatalf("invalid direct apply changed runtime state: got %#v, want %#v", got, baseline)
+			}
+			stateMu.RLock()
+			gotApplyError := runtimeConfigApplyError
+			stateMu.RUnlock()
+			if gotApplyError != "保留原错误" {
+				t.Fatalf("invalid direct apply changed lifecycle error to %q", gotApplyError)
+			}
+			if _, exists := resultCache.Get("keep-on-invalid-apply"); !exists {
+				t.Fatal("invalid direct apply cleared the existing cache")
+			}
+		})
 	}
 }
 

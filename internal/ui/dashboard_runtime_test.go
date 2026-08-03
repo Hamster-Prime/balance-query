@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"math"
+	"net/http"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -1015,13 +1016,15 @@ func TestDashboardSaveIgnoresResponseAfterReconnectWithSameCredentials(t *testin
 	cancelStart := strings.Index(page, "  function cancelLoadRequests()")
 	cancelEnd := strings.Index(page, "  function showConnection(message)")
 	saveStart := strings.Index(page, "  function validateTTL()")
-	saveEnd := strings.Index(page, "  function loadData(options)")
+	saveEnd := strings.Index(page, "  function loadData()")
 	if cancelStart < 0 || cancelEnd <= cancelStart || saveStart < 0 || saveEnd <= saveStart {
 		t.Fatal("cannot locate dashboard save request helpers")
 	}
 	script := `
 var REQUEST_TIMEOUT = 30000;
 var CONFIG_REQUEST_TIMEOUT = 10000;
+var CONFIG_SAVE_STEP_TIMEOUT = 4000;
+var CONFIG_SAVE_TOTAL_TIMEOUT = 10000;
 var providerLabels = Object.create(null);
 var state = {
   credentials:{apiBase:"https://cpa.example",managementKey:"same-secret"},
@@ -1048,7 +1051,6 @@ function normalizeConfig(value) { return {cache_ttl_seconds:Number(value.cache_t
 function resolvedProviderMapping() { return {key:"",type:""}; }
 function mappedQueryType() { return ""; }
 function refreshDirtyState() { return state.dirty; }
-function waitForRuntimeConfig() { return Promise.resolve(state.config); }
 function withConfigSaveLock(_credentials, _controller, callback) { return callback(function () {}); }
 function apiFetch(_path, options) {
   requestSignal = options.signal;
@@ -1061,7 +1063,7 @@ function resultsMatchAccounts() { return false; }
 function renderSettings() { renderCount += 1; }
 function renderResults() { renderCount += 1; }
 function queryBalances() { renderCount += 1; return Promise.resolve(); }
-var window = {setTimeout:function () {}};
+var window = {setTimeout:function () {},clearTimeout:function () {}};
 ` + page[cancelStart:cancelEnd] + page[saveStart:saveEnd] + `
 (async function () {
   var saving = saveSettings();
@@ -1120,348 +1122,323 @@ var window = {setTimeout:function () {}};
 	}
 }
 
-func TestDashboardWaitsForRuntimeConfigToMatch(t *testing.T) {
+func TestDashboardSaveDirectlyAppliesRuntimeConfigWithoutPolling(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is not installed")
 	}
 	page := string(RenderDashboard(300))
-	start := strings.Index(page, "  function abortableDelay(milliseconds, signal)")
-	end := strings.Index(page, "  function legacyNormalizeBaseForKey(value)")
-	if start < 0 || end <= start {
-		t.Fatal("cannot locate runtime-config wait helpers")
+	applyStart := strings.Index(page, "  function applyRuntimeConfig(config, controller, credentials)")
+	applyEnd := strings.Index(page, "  function tolerantConfigFetch(path, controller, credentials)")
+	saveStart := strings.Index(page, "  function validateTTL()")
+	saveEnd := strings.Index(page, "  function loadData()")
+	if applyStart < 0 || applyEnd <= applyStart || saveStart < 0 || saveEnd <= saveStart {
+		t.Fatal("cannot locate direct runtime apply/save helpers")
 	}
 	script := `
 var CONFIG_REQUEST_TIMEOUT = 10000;
-var CONFIG_STATE_WAIT_TIMEOUT = 15000;
-var RUNTIME_CONFIG_PATH = "/balance-query/config-state";
+var CONFIG_SAVE_STEP_TIMEOUT = 4000;
+var CONFIG_APPLY_TIMEOUT = 3000;
+var CONFIG_SAVE_TOTAL_TIMEOUT = 10000;
+var RUNTIME_CONFIG_APPLY_PATH = "/balance-query/config-apply";
 var providerLabels = {newapi:"New API",deepseek:"DeepSeek"};
-var calls = 0;
-var replies = [
-  {cache_ttl_seconds:300,provider_mappings:{one:"newapi"}},
-  {cache_ttl_seconds:600,provider_mappings:{one:"newapi"}},
-  {cache_ttl_seconds:600,provider_mappings:{two:"deepseek",one:"newapi"}}
-];
-var window = {setTimeout:function (fn) { return setTimeout(fn, 0); },clearTimeout:clearTimeout};
+var state = {
+  credentials:{apiBase:"https://cpa.example",managementKey:"secret"},
+  providers:[{name:"服务 A",mappingKey:"a",legacyMappingKey:"legacy-a"}],
+  config:{cache_ttl_seconds:300,provider_mappings:{a:"newapi"}},
+	  draftMappings:{a:"newapi"},draftTTL:"600",draftRevision:1,
+  results:[],view:"settings",dirty:true,needsQuery:false,dataReady:true,
+  saving:false,saveGeneration:0,saveController:null,loadGeneration:4,
+  querying:false,queryGeneration:0,queryController:null,runtimeApplyFailed:false
+};
+var persistedConfig = normalizeConfig(state.config);
+var calls = [];
+function byID() { return {}; }
+function setButtonBusy() {}
+function setText() {}
+function toast() {}
+function owns(value, key) { return Object.prototype.hasOwnProperty.call(value || {}, key); }
 function normalizeConfig(raw) { return {cache_ttl_seconds:Number(raw.cache_ttl_seconds),provider_mappings:Object.assign({},raw.provider_mappings || {})}; }
 function stableMappings(value) { return JSON.stringify(Object.keys(value || {}).sort().map(function (key) { return [key,value[key]]; })); }
-function apiFetch() { var reply = replies[Math.min(calls, replies.length - 1)]; calls += 1; return Promise.resolve(reply); }
-function optionalApiFetch() { return Promise.resolve({}); }
-` + page[start:end] + `
-(async function () {
-  var expected = {cache_ttl_seconds:600,provider_mappings:{one:"newapi",two:"deepseek"}};
-  var resolved = await waitForRuntimeConfig(expected, new AbortController(), {});
-  process.stdout.write(JSON.stringify({calls:calls,resolved:resolved,equal:configsEqual(resolved, expected)}));
-})().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
-`
-	output, err := exec.Command(node, "-e", script).CombinedOutput()
-	if err != nil {
-		t.Fatalf("execute runtime-config wait helpers: %v\n%s", err, output)
-	}
-	var got struct {
-		Calls    int  `json:"calls"`
-		Equal    bool `json:"equal"`
-		Resolved struct {
-			TTL int `json:"cache_ttl_seconds"`
-		} `json:"resolved"`
-	}
-	if err := json.Unmarshal(output, &got); err != nil {
-		t.Fatalf("decode runtime-config wait result: %v\n%s", err, output)
-	}
-	if got.Calls != 3 || !got.Equal || got.Resolved.TTL != 600 {
-		t.Fatalf("runtime config was accepted before both fields matched: %#v", got)
-	}
+function configsEqual(left, right) { return normalizeConfig(left).cache_ttl_seconds === normalizeConfig(right).cache_ttl_seconds && stableMappings(normalizeConfig(left).provider_mappings) === stableMappings(normalizeConfig(right).provider_mappings); }
+function exactConfigsEqual(left, right) { return configsEqual(left, right); }
+function mappedQueryType(provider, mappings) { return mappings[provider.mappingKey] || mappings[provider.legacyMappingKey] || ""; }
+function resolvedProviderMapping(provider, mappings) {
+  if (mappings[provider.mappingKey]) return {key:provider.mappingKey,type:mappings[provider.mappingKey]};
+  if (mappings[provider.legacyMappingKey]) return {key:provider.legacyMappingKey,type:mappings[provider.legacyMappingKey]};
+  return {key:provider.mappingKey,type:""};
 }
-
-func TestDashboardLoadReconcilesMovingPersistedAndRuntimeConfig(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node is not installed")
-	}
-	page := string(RenderDashboard(300))
-	start := strings.Index(page, "  function abortableDelay(milliseconds, signal)")
-	end := strings.Index(page, "  function legacyNormalizeBaseForKey(value)")
-	if start < 0 || end <= start {
-		t.Fatal("cannot locate synchronized config helpers")
-	}
-	script := `
-var CONFIG_REQUEST_TIMEOUT = 10000;
-var CONFIG_STATE_WAIT_TIMEOUT = 15000;
-var RUNTIME_CONFIG_PATH = "/balance-query/config-state";
-var providerLabels = {newapi:"New API",deepseek:"DeepSeek"};
-var hostCalls = 0;
-var runtimeCalls = 0;
-var configA = {cache_ttl_seconds:300,provider_mappings:{one:"newapi"}};
-var configB = {cache_ttl_seconds:600,provider_mappings:{one:"deepseek"}};
-var window = {setTimeout:function (fn) { return setTimeout(fn, 0); },clearTimeout:clearTimeout};
-function normalizeConfig(raw) { return {cache_ttl_seconds:Number(raw.cache_ttl_seconds),provider_mappings:Object.assign({},raw.provider_mappings || {})}; }
-function stableMappings(value) { return JSON.stringify(Object.keys(value || {}).sort().map(function (key) { return [key,value[key]]; })); }
-function apiFetch(path) {
-  if (path === "/plugins/balance-query/config") {
-    hostCalls += 1;
-    return Promise.resolve(hostCalls === 1 ? configA : configB);
+function refreshDirtyState() {
+  state.dirty = String(state.draftTTL) !== String(state.config.cache_ttl_seconds) || stableMappings(state.draftMappings) !== stableMappings(state.config.provider_mappings);
+  return state.dirty;
+}
+function apiFetch(path, options, timeout) {
+  options = options || {};
+  var body = options.body ? JSON.parse(options.body) : null;
+	  calls.push({path:path,method:options.method || "GET",body:body,timeout:timeout});
+	  if (path === "/plugins/balance-query/config" && options.method === "PATCH") {
+	    persistedConfig = normalizeConfig(Object.assign({}, persistedConfig, body));
+    return Promise.resolve({});
   }
-  runtimeCalls += 1;
-  return Promise.resolve(configB);
+  if (path === "/plugins/balance-query/config") return Promise.resolve(normalizeConfig(persistedConfig));
+  if (path === RUNTIME_CONFIG_APPLY_PATH && options.method === "POST") return Promise.resolve(normalizeConfig(body));
+  throw new Error("unexpected request " + (options.method || "GET") + " " + path);
 }
-function optionalApiFetch() { return Promise.resolve({}); }
-` + page[start:end] + `
+function withConfigSaveLock(_credentials, _controller, callback) { return callback(function () {}); }
+function showApp() {}
+function setDataReady(value) { state.dataReady = Boolean(value); }
+function cancelQueryRequests() { state.querying = false; state.queryGeneration += 1; }
+function clearResultSnapshot() {}
+function persistResultSnapshot() { return Promise.resolve(true); }
+function buildAccounts() { return []; }
+function resultsMatchAccounts() { return false; }
+function renderSettings() {}
+function renderResults() {}
+function queryBalances() { throw new Error("settings save must not start a balance query"); }
+var window = {setTimeout:function () {},clearTimeout:function () {}};
+` + page[applyStart:applyEnd] + page[saveStart:saveEnd] + `
 (async function () {
-  var resolved = await waitForSynchronizedConfig(new AbortController(), {});
-  process.stdout.write(JSON.stringify({host_calls:hostCalls,runtime_calls:runtimeCalls,resolved:resolved}));
+  var saved = await saveSettings();
+  process.stdout.write(JSON.stringify({saved:saved,calls:calls,config:state.config,runtime_apply_failed:state.runtimeApplyFailed}));
 })().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
 `
 	output, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
-		t.Fatalf("execute synchronized config helpers: %v\n%s", err, output)
+		t.Fatalf("execute direct runtime config save: %v\n%s", err, output)
 	}
 	var got struct {
-		HostCalls    int `json:"host_calls"`
-		RuntimeCalls int `json:"runtime_calls"`
-		Resolved     struct {
+		Saved bool `json:"saved"`
+		Calls []struct {
+			Path    string         `json:"path"`
+			Method  string         `json:"method"`
+			Body    map[string]any `json:"body"`
+			Timeout int            `json:"timeout"`
+		} `json:"calls"`
+		Config struct {
 			TTL      int               `json:"cache_ttl_seconds"`
 			Mappings map[string]string `json:"provider_mappings"`
-		} `json:"resolved"`
+		} `json:"config"`
+		RuntimeApplyFailed bool `json:"runtime_apply_failed"`
 	}
 	if err := json.Unmarshal(output, &got); err != nil {
-		t.Fatalf("decode synchronized config result: %v\n%s", err, output)
+		t.Fatalf("decode direct runtime config save: %v\n%s", err, output)
 	}
-	if got.HostCalls != 2 || got.RuntimeCalls != 2 || got.Resolved.TTL != 600 || got.Resolved.Mappings["one"] != "deepseek" {
-		t.Fatalf("moving host/runtime target did not converge: %#v", got)
+	wantPaths := []string{"/plugins/balance-query/config", "/plugins/balance-query/config", "/plugins/balance-query/config", "/balance-query/config-apply", "/plugins/balance-query/config"}
+	wantMethods := []string{"GET", "PATCH", "GET", "POST", "GET"}
+	if !got.Saved || got.RuntimeApplyFailed || got.Config.TTL != 600 || got.Config.Mappings["a"] != "newapi" || len(got.Calls) != len(wantPaths) {
+		t.Fatalf("direct runtime config save result = %#v", got)
+	}
+	for index := range wantPaths {
+		if got.Calls[index].Path != wantPaths[index] || got.Calls[index].Method != wantMethods[index] {
+			t.Fatalf("request %d = %#v, want %s %s", index, got.Calls[index], wantMethods[index], wantPaths[index])
+		}
+	}
+	if got.Calls[3].Timeout != 3000 || got.Calls[3].Body["cache_ttl_seconds"] != float64(600) {
+		t.Fatalf("direct apply request = %#v, want normalized config with bounded apply timeout", got.Calls[3])
+	}
+	if _, rewroteMappings := got.Calls[1].Body["provider_mappings"]; rewroteMappings || got.Calls[1].Body["cache_ttl_seconds"] != float64(600) {
+		t.Fatalf("delta patch = %#v, want only the user-edited TTL field", got.Calls[1])
 	}
 }
 
-func TestDashboardSaveWaitsForUnrelatedRuntimeChanges(t *testing.T) {
+func TestDashboardRuntimeApplyReconcilesExternalConfigChange(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is not installed")
 	}
 	page := string(RenderDashboard(300))
-	start := strings.Index(page, "  function abortableDelay(milliseconds, signal)")
-	end := strings.Index(page, "  function legacyNormalizeBaseForKey(value)")
+	start := strings.Index(page, "  function settingsConflict(message)")
+	end := strings.Index(page, "  function mergeSubmittedConfig(")
 	if start < 0 || end <= start {
-		t.Fatal("cannot locate runtime config confirmation helpers")
+		t.Fatal("cannot locate runtime apply reconciliation helper")
 	}
 	script := `
-var CONFIG_REQUEST_TIMEOUT = 10000;
-var CONFIG_STATE_WAIT_TIMEOUT = 15000;
-var RUNTIME_CONFIG_PATH = "/balance-query/config-state";
-var providerLabels = {newapi:"New API",deepseek:"DeepSeek"};
-var runtimeCalls = 0;
-var persisted = {cache_ttl_seconds:300,provider_mappings:{a:"newapi",b:"deepseek"}};
-var runtimeReplies = [
-  {cache_ttl_seconds:300,provider_mappings:{a:"newapi"}},
-  {cache_ttl_seconds:300,provider_mappings:{a:"newapi",b:"deepseek"}}
-];
-var window = {setTimeout:function (fn) { return setTimeout(fn, 0); },clearTimeout:clearTimeout};
+var CONFIG_SAVE_STEP_TIMEOUT = 4000;
+var providerLabels = {newapi:"New API"};
+var expected = {cache_ttl_seconds:600,provider_mappings:{a:"minimax_api"}};
+var latest = {cache_ttl_seconds:600,provider_mappings:{a:"xiaomi_api"}};
+var applied = [];
+var ownershipChecks = 0;
 function normalizeConfig(raw) { return {cache_ttl_seconds:Number(raw.cache_ttl_seconds),provider_mappings:Object.assign({},raw.provider_mappings || {})}; }
 function stableMappings(value) { return JSON.stringify(Object.keys(value || {}).sort().map(function (key) { return [key,value[key]]; })); }
-function configMatchesChanges(current, expected) { return current.provider_mappings.a === expected.provider_mappings.a; }
-function settingsConflict(message) { var error = new Error(message); error.status = 409; return error; }
-function apiFetch(path) {
-  if (path === RUNTIME_CONFIG_PATH) {
-    var reply = runtimeReplies[Math.min(runtimeCalls, runtimeReplies.length - 1)];
-    runtimeCalls += 1;
-    return Promise.resolve(reply);
+function configsEqual(left, right) {
+  function visible(raw) {
+    var result = {};
+    Object.keys(normalizeConfig(raw).provider_mappings).forEach(function (key) {
+      var value = normalizeConfig(raw).provider_mappings[key];
+      if (providerLabels[value]) result[key] = value;
+    });
+    return result;
   }
-  return Promise.resolve(persisted);
+  return normalizeConfig(left).cache_ttl_seconds === normalizeConfig(right).cache_ttl_seconds && stableMappings(visible(left)) === stableMappings(visible(right));
 }
-function optionalApiFetch() { return Promise.resolve({}); }
+function exactConfigsEqual(left, right) { return normalizeConfig(left).cache_ttl_seconds === normalizeConfig(right).cache_ttl_seconds && stableMappings(normalizeConfig(left).provider_mappings) === stableMappings(normalizeConfig(right).provider_mappings); }
+function applyRuntimeConfig(config) { applied.push(normalizeConfig(config)); return Promise.resolve(normalizeConfig(config)); }
+function apiFetch(path, options, timeout) {
+  if (path !== "/plugins/balance-query/config" || options.method) throw new Error("unexpected reconciliation request");
+  if (timeout !== CONFIG_SAVE_STEP_TIMEOUT) throw new Error("unbounded reconciliation request");
+  return Promise.resolve(normalizeConfig(latest));
+}
 ` + page[start:end] + `
 (async function () {
-  var expected = {cache_ttl_seconds:300,provider_mappings:{a:"newapi"}};
-  var resolved = await waitForRuntimeConfig(expected, new AbortController(), {}, {ttlChanged:false,providers:[{mappingKey:"a",legacyMappingKey:"a"}]});
-  process.stdout.write(JSON.stringify({runtime_calls:runtimeCalls,resolved:resolved}));
+  var conflict = null;
+  try {
+    await applyAndReconcileRuntimeConfig(expected, new AbortController(), {}, function () { ownershipChecks += 1; });
+  } catch (error) {
+    conflict = {status:error.status,message:String(error.message || "")};
+  }
+  process.stdout.write(JSON.stringify({applied:applied,ownership_checks:ownershipChecks,conflict:conflict,filtered_equal:configsEqual(expected, latest)}));
 })().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
 `
 	output, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
-		t.Fatalf("execute runtime config delta confirmation: %v\n%s", err, output)
+		t.Fatalf("execute runtime apply reconciliation: %v\n%s", err, output)
 	}
 	var got struct {
-		RuntimeCalls int `json:"runtime_calls"`
-		Resolved     struct {
+		Applied []struct {
+			TTL      int               `json:"cache_ttl_seconds"`
 			Mappings map[string]string `json:"provider_mappings"`
-		} `json:"resolved"`
+		} `json:"applied"`
+		OwnershipChecks int  `json:"ownership_checks"`
+		FilteredEqual   bool `json:"filtered_equal"`
+		Conflict        struct {
+			Status  int    `json:"status"`
+			Message string `json:"message"`
+		} `json:"conflict"`
 	}
 	if err := json.Unmarshal(output, &got); err != nil {
-		t.Fatalf("decode runtime config delta confirmation: %v\n%s", err, output)
+		t.Fatalf("decode runtime reconciliation result: %v\n%s", err, output)
 	}
-	if got.RuntimeCalls != 2 || got.Resolved.Mappings["b"] != "deepseek" {
-		t.Fatalf("save was confirmed before unrelated runtime config converged: %#v", got)
+	if len(got.Applied) != 2 || got.Applied[0].Mappings["a"] != "minimax_api" || got.Applied[1].Mappings["a"] != "xiaomi_api" || got.OwnershipChecks != 2 || got.Conflict.Status != http.StatusConflict || !got.FilteredEqual {
+		t.Fatalf("external config change was not reconciled before reporting a conflict: %#v", got)
 	}
 }
 
-func TestDashboardProxyConfigFailureKeepsPreviewUsableAndSchedulesRecovery(t *testing.T) {
+func TestDashboardLoadAppliesPersistedConfigOnceAndFailureStaysUsable(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is not installed")
 	}
 	page := string(RenderDashboard(300))
-	start := strings.Index(page, "  function loadData(options)")
-	end := strings.Index(page, `  document.querySelectorAll(".segment")`)
-	if start < 0 || end <= start {
-		t.Fatal("cannot locate dashboard load helper")
+	applyStart := strings.Index(page, "  function applyRuntimeConfig(config, controller, credentials)")
+	applyEnd := strings.Index(page, "  function tolerantConfigFetch(path, controller, credentials)")
+	loadStart := strings.Index(page, "  function loadData()")
+	loadEnd := strings.Index(page, `  document.querySelectorAll(".segment")`)
+	if applyStart < 0 || applyEnd <= applyStart || loadStart < 0 || loadEnd <= loadStart {
+		t.Fatal("cannot locate dashboard direct runtime apply/load helpers")
 	}
 	script := `
 var CONFIG_REQUEST_TIMEOUT = 10000;
-var RUNTIME_CONFIG_PATH = "/balance-query/config-state";
+var CONFIG_APPLY_TIMEOUT = 3000;
+var RUNTIME_CONFIG_APPLY_PATH = "/balance-query/config-apply";
+var PROVIDER_CONFIG_SOURCES = ["openai-compatibility","claude-api-key","xai-api-key","codex-api-key","gemini-api-key"];
 var state = {
   credentials:{apiBase:"https://cpa.example",managementKey:"secret"},
   providers:[],previewProviders:[],previewAccounts:[],
-  config:{cache_ttl_seconds:300,provider_mappings:{old:"newapi"}},
+  config:{cache_ttl_seconds:300,provider_mappings:{}},globalProxyUrl:"",
   draftMappings:{},draftTTL:"300",draftRevision:0,results:[],
-  loadController:null,loadGeneration:0,snapshotGeneration:0,dataReady:true,
-  runtimeSyncPending:false,configRecoveryTimer:null,configRecoveryController:null,configRecoveryAttempt:0
+  view:"overview",loadController:null,loadGeneration:0,snapshotGeneration:0,dataReady:true,
+  saveController:null,saveGeneration:0,saving:false,queryController:null,queryGeneration:0,querying:false,
+  runtimeApplyFailed:false,dirty:false,needsQuery:false
 };
+var persistedConfig = {cache_ttl_seconds:600,provider_mappings:{service:"deepseek"}};
+var applyCalls = [];
 var queryCalls = 0;
 var connectionCalls = 0;
-var recoveryCalls = 0;
-var messages = [];
-function cancelConfigRecovery() {}
-function scheduleConfigRecovery(message) { recoveryCalls += 1; state.runtimeSyncPending = true; messages.push(String(message || "")); }
+var appStates = [];
+var toasts = [];
 function cancelSaveRequests() {}
 function cancelQueryRequests() {}
 function displayProviders() { return state.providers.slice(); }
 function displayAccounts() { return state.previewAccounts.slice(); }
 function snapshotDisplayAccount(account) { return Object.assign({}, account); }
 function snapshotDisplayProvider(provider) { return Object.assign({}, provider, {keys:[]}); }
-function setView() {}
+function setView(value) { state.view = value; }
 function setDataReady(value) { state.dataReady = Boolean(value); }
-function showApp() {}
-function showAppRecovering(message) { messages.push("已连接 CPA · 插件配置同步中"); messages.push(String(message || "")); }
+function showApp(connected) { appStates.push(Boolean(connected)); }
 function renderResults() {}
 function renderSettings() {}
 function updateSummary() {}
-function refreshDirtyState() { state.dirty = false; }
+function refreshDirtyState() { state.dirty = false; return false; }
 function previewForFailedProviderSources() { return {providers:[],accounts:[]}; }
-function setText(_node, value) { messages.push(String(value || "")); }
+function setText() {}
 function byID() { return {}; }
 function showSkeletons() {}
-function readResultSnapshotPreview() {
-  return new Promise(function (resolve) {
-    setTimeout(function () { resolve({
-      providers:[{name:"上次的服务",mappingKey:"old",legacyMappingKey:"old",disabled:false}],
-      accounts:[{id:"account",provider_key:"old"}],
-      config:{cache_ttl_seconds:300,provider_mappings:{old:"newapi"}},
-      results:[{auth_id:"account",provider_key:"old",quota_display:"上次成功"}]
-    }); }, 5);
-  });
-}
-
+function readResultSnapshotPreview() { return Promise.resolve(null); }
+function readResultSnapshot() { return Promise.resolve(null); }
 function tolerantConfigFetch() { return Promise.resolve({data:{},error:null}); }
-function optionalApiFetch(path) {
-  if (path === "/proxy-url") {
-    var error = new Error("代理配置接口暂时不可用");
+function optionalApiFetch() { return Promise.resolve({}); }
+function normalizeConfig(raw) { return {cache_ttl_seconds:Number(raw.cache_ttl_seconds),provider_mappings:Object.assign({},raw.provider_mappings || {})}; }
+function normalizeNativeProviders() { return []; }
+function normalizeProvider(value) { return value; }
+function apiFetch(path, options, timeout) {
+  options = options || {};
+  if (path === "/plugins/balance-query/config") return Promise.resolve(normalizeConfig(persistedConfig));
+  if (path === RUNTIME_CONFIG_APPLY_PATH && options.method === "POST") {
+    applyCalls.push({body:JSON.parse(options.body),timeout:timeout});
+    var error = new Error("runtime apply unavailable");
     error.status = 503;
     return Promise.reject(error);
   }
-  return Promise.resolve({});
+  throw new Error("unexpected request " + (options.method || "GET") + " " + path);
 }
-function apiFetch() { return Promise.resolve({cache_ttl_seconds:300,provider_mappings:{old:"newapi"}}); }
+function buildAccounts() { return []; }
+function resultsForAccounts() { return []; }
+function appendUnavailablePreviewResults(results) { return results; }
+function clearResultSnapshot() {}
 function queryBalances() { queryCalls += 1; return Promise.resolve(); }
 function showConnection() { connectionCalls += 1; }
-function toast(message) { messages.push(String(message || "")); }
-` + page[start:end] + `
+function toast(message) { toasts.push(String(message || "")); }
+var window = {setTimeout:function () {},clearTimeout:function () {}};
+` + page[applyStart:applyEnd] + page[loadStart:loadEnd] + `
 (async function () {
   await loadData();
   process.stdout.write(JSON.stringify({
-    query_calls:queryCalls,connection_calls:connectionCalls,result_count:state.results.length,
-    data_ready:state.dataReady,recovery_calls:recoveryCalls,messages:messages
+    apply_calls:applyCalls,query_calls:queryCalls,connection_calls:connectionCalls,
+    app_states:appStates,toasts:toasts,data_ready:state.dataReady,
+    runtime_apply_failed:state.runtimeApplyFailed,config:state.config,load_controller_cleared:state.loadController === null
   }));
 })().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
 `
 	output, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
-		t.Fatalf("execute proxy failure load helper: %v\n%s", err, output)
+		t.Fatalf("execute runtime apply failure load helper: %v\n%s", err, output)
 	}
 	var got struct {
-		QueryCalls      int      `json:"query_calls"`
-		ConnectionCalls int      `json:"connection_calls"`
-		ResultCount     int      `json:"result_count"`
-		DataReady       bool     `json:"data_ready"`
-		RecoveryCalls   int      `json:"recovery_calls"`
-		Messages        []string `json:"messages"`
+		ApplyCalls []struct {
+			Body struct {
+				TTL      int               `json:"cache_ttl_seconds"`
+				Mappings map[string]string `json:"provider_mappings"`
+			} `json:"body"`
+			Timeout int `json:"timeout"`
+		} `json:"apply_calls"`
+		QueryCalls            int      `json:"query_calls"`
+		ConnectionCalls       int      `json:"connection_calls"`
+		AppStates             []bool   `json:"app_states"`
+		Toasts                []string `json:"toasts"`
+		DataReady             bool     `json:"data_ready"`
+		RuntimeApplyFailed    bool     `json:"runtime_apply_failed"`
+		LoadControllerCleared bool     `json:"load_controller_cleared"`
+		Config                struct {
+			TTL      int               `json:"cache_ttl_seconds"`
+			Mappings map[string]string `json:"provider_mappings"`
+		} `json:"config"`
 	}
 	if err := json.Unmarshal(output, &got); err != nil {
-		t.Fatalf("decode proxy failure result: %v\n%s", err, output)
+		t.Fatalf("decode runtime apply failure load result: %v\n%s", err, output)
 	}
-	joined := strings.Join(got.Messages, " ")
-	if got.QueryCalls != 0 || got.ConnectionCalls != 0 || got.ResultCount != 1 || !got.DataReady || got.RecoveryCalls != 1 || !strings.Contains(joined, "已连接 CPA · 插件配置同步中") {
-		t.Fatalf("proxy failure did not preserve a usable preview and schedule recovery: %#v", got)
+	if len(got.ApplyCalls) != 1 || got.ApplyCalls[0].Timeout != 3000 || got.ApplyCalls[0].Body.TTL != 600 || got.ApplyCalls[0].Body.Mappings["service"] != "deepseek" {
+		t.Fatalf("persisted config was not directly applied exactly once: %#v", got)
+	}
+	if !got.DataReady || !got.RuntimeApplyFailed || got.ConnectionCalls != 0 || got.QueryCalls != 0 || !got.LoadControllerCleared || got.Config.TTL != 600 || got.Config.Mappings["service"] != "deepseek" {
+		t.Fatalf("runtime apply failure made the loaded page unusable: %#v", got)
+	}
+	if len(got.AppStates) == 0 || !got.AppStates[len(got.AppStates)-1] || !strings.Contains(strings.Join(got.Toasts, " "), "运行配置暂时无法应用") {
+		t.Fatalf("runtime apply failure was not presented as a non-blocking warning: %#v", got)
 	}
 }
 
-func TestDashboardConfigRecoveryRetriesAndReloadsAutomatically(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node is not installed")
-	}
-	page := string(RenderDashboard(300))
-	start := strings.Index(page, "  function cancelConfigRecovery(resetAttempt)")
-	end := strings.Index(page, "  function showConnection(message)")
-	if start < 0 || end <= start {
-		t.Fatal("cannot locate dashboard config recovery helpers")
-	}
-	script := `
-var queued = [];
-var timerID = 0;
-var window = {
-  setTimeout:function (fn) { queued.push(fn); timerID += 1; return timerID; },
-  clearTimeout:function () {}
-};
-var state = {
-  credentials:{apiBase:"https://cpa.example",managementKey:"secret"},loadGeneration:3,
-  configRecoveryTimer:null,configRecoveryController:null,configRecoveryAttempt:0,
-  runtimeSyncPending:false,saving:false,dirty:false,querying:false,dataReady:true
-};
-var waitCalls = 0;
-var loadCalls = 0;
-var statuses = [];
-function showAppRecovering(message) { statuses.push(String(message || "")); }
-function showApp() {}
-function setDataReady() {}
-function renderSettings() {}
-function refreshDirtyState() {}
-function toast(message) { statuses.push(String(message || "")); }
-function loadData(options) { loadCalls += 1; return Promise.resolve(Boolean(options && options.fromRecovery)); }
-function waitForSynchronizedConfig() {
-  waitCalls += 1;
-  if (waitCalls === 1) { var error = new Error("尚未同步"); error.runtimePending = true; return Promise.reject(error); }
-  return Promise.resolve({cache_ttl_seconds:300,provider_mappings:{}});
-}
-` + page[start:end] + `
-(async function () {
-  scheduleConfigRecovery("正在恢复");
-  for (var step = 0; step < 6 && !loadCalls; step++) {
-    var fn = queued.shift();
-    if (fn) fn();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-  }
-  process.stdout.write(JSON.stringify({wait_calls:waitCalls,load_calls:loadCalls,pending:state.runtimeSyncPending,statuses:statuses}));
-})().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
-`
-	output, err := exec.Command(node, "-e", script).CombinedOutput()
-	if err != nil {
-		t.Fatalf("execute dashboard config recovery: %v\n%s", err, output)
-	}
-	var got struct {
-		WaitCalls int      `json:"wait_calls"`
-		LoadCalls int      `json:"load_calls"`
-		Pending   bool     `json:"pending"`
-		Statuses  []string `json:"statuses"`
-	}
-	if err := json.Unmarshal(output, &got); err != nil {
-		t.Fatalf("decode dashboard config recovery: %v\n%s", err, output)
-	}
-	if got.WaitCalls != 2 || got.LoadCalls != 1 || got.Pending || !strings.Contains(strings.Join(got.Statuses, " "), "自动恢复同步") {
-		t.Fatalf("config recovery did not retry and reload automatically: %#v", got)
-	}
-}
-
-func TestDashboardKeepsSettingsEditableWhileRuntimeSynchronizes(t *testing.T) {
+func TestDashboardRuntimeApplyFailureKeepsControlsUsable(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is not installed")
@@ -1474,7 +1451,7 @@ func TestDashboardKeepsSettingsEditableWhileRuntimeSynchronizes(t *testing.T) {
 	}
 	script := `
 var nodes = {"tab-settings":{},"refresh-button":{},"save-button":{},"ttl-input":{}};
-var state = {dataReady:false,runtimeSyncPending:true,querying:false,saving:false,dirty:true};
+var state = {dataReady:false,runtimeApplyFailed:true,querying:false,saving:false,dirty:false};
 function byID(id) { return nodes[id]; }
 ` + page[start:end] + `
 setDataReady(true);
@@ -1482,7 +1459,7 @@ process.stdout.write(JSON.stringify({tab:nodes["tab-settings"].disabled,refresh:
 `
 	output, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
-		t.Fatalf("execute dashboard pending controls: %v\n%s", err, output)
+		t.Fatalf("execute dashboard runtime-apply failure controls: %v\n%s", err, output)
 	}
 	var got struct {
 		Tab     bool `json:"tab"`
@@ -1491,27 +1468,29 @@ process.stdout.write(JSON.stringify({tab:nodes["tab-settings"].disabled,refresh:
 		TTL     bool `json:"ttl"`
 	}
 	if err := json.Unmarshal(output, &got); err != nil {
-		t.Fatalf("decode dashboard pending controls: %v\n%s", err, output)
+		t.Fatalf("decode dashboard runtime-apply failure controls: %v\n%s", err, output)
 	}
-	if got.Tab || !got.Refresh || got.Save || got.TTL {
-		t.Fatalf("runtime synchronization controls = %#v, want settings and retry-save usable while balance refresh stays disabled", got)
+	if got.Tab || got.Refresh || got.Save || got.TTL {
+		t.Fatalf("runtime apply failure controls = %#v, want the loaded page and retry-save to remain usable", got)
 	}
 }
 
-func TestDashboardRuntimePendingCanResubmitUnchangedSettings(t *testing.T) {
+func TestDashboardRuntimeApplyFailureCanResubmitUnchangedSettings(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is not installed")
 	}
 	page := string(RenderDashboard(300))
 	start := strings.Index(page, "  function validateTTL()")
-	end := strings.Index(page, "  function loadData(options)")
+	end := strings.Index(page, "  function loadData()")
 	if start < 0 || end <= start {
 		t.Fatal("cannot locate dashboard save helpers")
 	}
 	script := `
 var REQUEST_TIMEOUT = 30000;
 var CONFIG_REQUEST_TIMEOUT = 10000;
+var CONFIG_SAVE_STEP_TIMEOUT = 4000;
+var CONFIG_SAVE_TOTAL_TIMEOUT = 10000;
 var providerLabels = {newapi:"New API"};
 var state = {
   credentials:{apiBase:"https://cpa.example",managementKey:"secret"},
@@ -1519,11 +1498,11 @@ var state = {
   config:{cache_ttl_seconds:300,provider_mappings:{a:"newapi"}},
   draftMappings:{a:"newapi"},draftTTL:"300",draftRevision:0,
   results:[],view:"settings",dirty:false,needsQuery:false,dataReady:true,
-  runtimeSyncPending:true,saving:false,saveGeneration:0,saveController:null,loadGeneration:2,
+  runtimeApplyFailed:true,saving:false,saveGeneration:0,saveController:null,loadGeneration:2,
   querying:false,queryGeneration:0,queryController:null
 };
 var patched = null;
-var recoveryCancels = 0;
+var applyCalls = 0;
 function byID() { return {}; }
 function setButtonBusy() {}
 function setText() {}
@@ -1538,13 +1517,13 @@ function resolvedProviderMapping(provider, mappings) {
   return {key:provider.mappingKey,type:""};
 }
 function refreshDirtyState() { state.dirty = false; return false; }
-function cancelConfigRecovery() { recoveryCancels += 1; }
-function scheduleConfigRecovery() {}
 function apiFetch(_path, options) {
   if (options && options.method === "PATCH") { patched = JSON.parse(options.body); return Promise.resolve({}); }
   return Promise.resolve({cache_ttl_seconds:300,provider_mappings:{a:"newapi"}});
 }
-function waitForRuntimeConfig(expected) { return Promise.resolve(normalizeConfig(expected)); }
+function configsEqual(left, right) { return stableMappings(normalizeConfig(left).provider_mappings) === stableMappings(normalizeConfig(right).provider_mappings) && normalizeConfig(left).cache_ttl_seconds === normalizeConfig(right).cache_ttl_seconds; }
+function exactConfigsEqual(left, right) { return configsEqual(left, right); }
+function applyRuntimeConfig(expected) { applyCalls += 1; return Promise.resolve(normalizeConfig(expected)); }
 function withConfigSaveLock(_credentials, _controller, callback) { return callback(function () {}); }
 function showApp() {}
 function setDataReady(value) { state.dataReady = Boolean(value); }
@@ -1556,11 +1535,11 @@ function resultsMatchAccounts() { return false; }
 function renderSettings() {}
 function renderResults() {}
 function queryBalances() { return Promise.resolve(); }
-var window = {setTimeout:function () {}};
+var window = {setTimeout:function () {},clearTimeout:function () {}};
 ` + page[start:end] + `
 (async function () {
   var saved = await saveSettings();
-  process.stdout.write(JSON.stringify({saved:saved,patched:patched,recovery_cancels:recoveryCancels,pending:state.runtimeSyncPending}));
+  process.stdout.write(JSON.stringify({saved:saved,patched:patched,apply_calls:applyCalls,runtime_apply_failed:state.runtimeApplyFailed}));
 })().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
 `
 	output, err := exec.Command(node, "-e", script).CombinedOutput()
@@ -1568,10 +1547,10 @@ var window = {setTimeout:function () {}};
 		t.Fatalf("execute dashboard runtime retry save: %v\n%s", err, output)
 	}
 	var got struct {
-		Saved           bool `json:"saved"`
-		RecoveryCancels int  `json:"recovery_cancels"`
-		Pending         bool `json:"pending"`
-		Patched         struct {
+		Saved              bool `json:"saved"`
+		ApplyCalls         int  `json:"apply_calls"`
+		RuntimeApplyFailed bool `json:"runtime_apply_failed"`
+		Patched            struct {
 			CacheTTLSeconds  int               `json:"cache_ttl_seconds"`
 			ProviderMappings map[string]string `json:"provider_mappings"`
 		} `json:"patched"`
@@ -1579,12 +1558,12 @@ var window = {setTimeout:function () {}};
 	if err := json.Unmarshal(output, &got); err != nil {
 		t.Fatalf("decode dashboard runtime retry save: %v\n%s", err, output)
 	}
-	if !got.Saved || got.RecoveryCancels != 2 || got.Pending || got.Patched.CacheTTLSeconds != 300 || got.Patched.ProviderMappings["a"] != "newapi" {
-		t.Fatalf("runtime retry save did not re-submit the complete config: %#v", got)
+	if !got.Saved || got.ApplyCalls != 1 || got.RuntimeApplyFailed || got.Patched.CacheTTLSeconds != 0 || len(got.Patched.ProviderMappings) != 0 {
+		t.Fatalf("runtime apply retry did not directly apply the persisted config without rewriting it: %#v", got)
 	}
 }
 
-func TestDashboardFallbackConfigSaveLockSerializesTabs(t *testing.T) {
+func TestDashboardFallbackConfigSaveLockRejectsConcurrentTabImmediately(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is not installed")
@@ -1592,18 +1571,13 @@ func TestDashboardFallbackConfigSaveLockSerializesTabs(t *testing.T) {
 	page := string(RenderDashboard(300))
 	storageStart := strings.Index(page, "  function sameOriginLocalStorage()")
 	storageEnd := strings.Index(page, "  function discardStoredResultSnapshot")
-	delayStart := strings.Index(page, "  function abortableDelay(milliseconds, signal)")
-	delayEnd := strings.Index(page, "  function configsEqual(left, right)")
 	lockStart := strings.Index(page, "  function configSaveLockError(message, lost)")
 	lockEnd := strings.Index(page, "  function validateTTL()")
-	if storageStart < 0 || storageEnd <= storageStart || delayStart < 0 || delayEnd <= delayStart || lockStart < 0 || lockEnd <= lockStart {
+	if storageStart < 0 || storageEnd <= storageStart || lockStart < 0 || lockEnd <= lockStart {
 		t.Fatal("cannot locate dashboard fallback lock helpers")
 	}
 	script := `
 var memory = Object.create(null);
-var REQUEST_TIMEOUT = 30000;
-var CONFIG_REQUEST_TIMEOUT = 10000;
-var CONFIG_STATE_WAIT_TIMEOUT = 15000;
 var storage = {
   get length() { return Object.keys(memory).length; },
   key:function (index) { return Object.keys(memory)[index] || null; },
@@ -1618,21 +1592,37 @@ var window = {
 window.parent = window;
 var navigator = {};
 function tinyHash(value) { return String(value).replace(/[^a-z0-9]/gi, ""); }
-` + page[storageStart:storageEnd] + page[delayStart:delayEnd] + page[lockStart:lockEnd] + `
+` + page[storageStart:storageEnd] + page[lockStart:lockEnd] + `
 (async function () {
   var order = [];
   var credentials = {apiBase:"https://cpa.example"};
+  var markStarted;
+  var releaseFirst;
+  var started = new Promise(function (resolve) { markStarted = resolve; });
   var first = withConfigSaveLock(credentials, new AbortController(), async function () {
     order.push("first-start");
-    await new Promise(function (resolve) { setTimeout(resolve, 25); });
+    markStarted();
+    await new Promise(function (resolve) { releaseFirst = resolve; });
     order.push("first-end");
   });
-  var second = withConfigSaveLock(credentials, new AbortController(), async function () {
-    order.push("second-start");
-    order.push("second-end");
-  });
-  await Promise.all([first, second]);
-  process.stdout.write(JSON.stringify({order:order,remaining:storage.length}));
+  await started;
+  var secondCallbackCalls = 0;
+  var secondError = null;
+  var startedAt = Date.now();
+  try {
+    await withConfigSaveLock(credentials, new AbortController(), function () {
+      secondCallbackCalls += 1;
+    });
+  } catch (error) {
+    secondError = error;
+  }
+  var elapsed = Date.now() - startedAt;
+  releaseFirst();
+  await first;
+  process.stdout.write(JSON.stringify({
+    order:order,remaining:storage.length,second_callback_calls:secondCallbackCalls,elapsed:elapsed,
+    rejected:Boolean(secondError),unavailable:Boolean(secondError && secondError.lockUnavailable),message:String(secondError && secondError.message || "")
+  }));
 })().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
 `
 	output, err := exec.Command(node, "-e", script).CombinedOutput()
@@ -1640,15 +1630,84 @@ function tinyHash(value) { return String(value).replace(/[^a-z0-9]/gi, ""); }
 		t.Fatalf("execute fallback config lock: %v\n%s", err, output)
 	}
 	var got struct {
-		Order     []string `json:"order"`
-		Remaining int      `json:"remaining"`
+		Order               []string `json:"order"`
+		Remaining           int      `json:"remaining"`
+		SecondCallbackCalls int      `json:"second_callback_calls"`
+		Elapsed             int      `json:"elapsed"`
+		Rejected            bool     `json:"rejected"`
+		Unavailable         bool     `json:"unavailable"`
+		Message             string   `json:"message"`
 	}
 	if err := json.Unmarshal(output, &got); err != nil {
 		t.Fatalf("decode fallback config lock result: %v\n%s", err, output)
 	}
-	want := []string{"first-start", "first-end", "second-start", "second-end"}
-	if !reflect.DeepEqual(got.Order, want) || got.Remaining != 0 {
-		t.Fatalf("fallback config lock = %#v, want order %#v and cleanup", got, want)
+	want := []string{"first-start", "first-end"}
+	if !reflect.DeepEqual(got.Order, want) || got.Remaining != 0 || got.SecondCallbackCalls != 0 || !got.Rejected || !got.Unavailable || got.Elapsed > 500 || !strings.Contains(got.Message, "另一个页面正在保存") {
+		t.Fatalf("fallback config lock did not reject concurrent save immediately: %#v", got)
+	}
+}
+
+func TestDashboardFallbackConfigSaveLockIgnoresLegacyLease(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	page := string(RenderDashboard(300))
+	storageStart := strings.Index(page, "  function sameOriginLocalStorage()")
+	storageEnd := strings.Index(page, "  function discardStoredResultSnapshot")
+	lockStart := strings.Index(page, "  function configSaveLockError(message, lost)")
+	lockEnd := strings.Index(page, "  function validateTTL()")
+	if storageStart < 0 || storageEnd <= storageStart || lockStart < 0 || lockEnd <= lockStart {
+		t.Fatal("cannot locate dashboard fallback lock helpers")
+	}
+	script := `
+var memory = Object.create(null);
+var storage = {
+  get length() { return Object.keys(memory).length; },
+  key:function (index) { return Object.keys(memory)[index] || null; },
+  getItem:function (key) { return Object.prototype.hasOwnProperty.call(memory, key) ? memory[key] : null; },
+  setItem:function (key, value) { memory[key] = String(value); },
+  removeItem:function (key) { delete memory[key]; }
+};
+var window = {
+  localStorage:storage,location:{origin:"https://cpa.example"},
+  setTimeout:setTimeout,clearTimeout:clearTimeout,setInterval:setInterval,clearInterval:clearInterval
+};
+window.parent = window;
+var navigator = {};
+function tinyHash(value) { return String(value).replace(/[^a-z0-9]/gi, ""); }
+` + page[storageStart:storageEnd] + page[lockStart:lockEnd] + `
+(async function () {
+  var legacyName = "balance-query-config::https://cpa.example";
+  var legacyKey = "balance-query-save-lock::" + tinyHash(legacyName) + "::legacy-owner";
+  storage.setItem(legacyKey, JSON.stringify({owner:"legacy-owner",choosing:false,ticket:1,expires_at:Date.now() + 60000}));
+  var callbackCalls = 0;
+  var startedAt = Date.now();
+  await withConfigSaveLock({apiBase:"https://cpa.example"}, new AbortController(), function () {
+    callbackCalls += 1;
+  });
+  var elapsed = Date.now() - startedAt;
+  var currentKeys = Object.keys(memory).filter(function (key) { return key.indexOf("balance-query-save-lock::v2::") === 0; });
+  process.stdout.write(JSON.stringify({
+    callback_calls:callbackCalls,elapsed:elapsed,legacy_remains:storage.getItem(legacyKey) != null,current_keys:currentKeys
+  }));
+})().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
+`
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute legacy fallback lock isolation: %v\n%s", err, output)
+	}
+	var got struct {
+		CallbackCalls int      `json:"callback_calls"`
+		Elapsed       int      `json:"elapsed"`
+		LegacyRemains bool     `json:"legacy_remains"`
+		CurrentKeys   []string `json:"current_keys"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode legacy fallback lock isolation: %v\n%s", err, output)
+	}
+	if got.CallbackCalls != 1 || got.Elapsed > 500 || !got.LegacyRemains || len(got.CurrentKeys) != 0 {
+		t.Fatalf("legacy fallback lease blocked or polluted the v2 lock: %#v", got)
 	}
 }
 
@@ -1660,17 +1719,12 @@ func TestDashboardFallbackConfigSaveLockFailsClosedWithoutStorage(t *testing.T) 
 	page := string(RenderDashboard(300))
 	storageStart := strings.Index(page, "  function sameOriginLocalStorage()")
 	storageEnd := strings.Index(page, "  function discardStoredResultSnapshot")
-	delayStart := strings.Index(page, "  function abortableDelay(milliseconds, signal)")
-	delayEnd := strings.Index(page, "  function configsEqual(left, right)")
 	lockStart := strings.Index(page, "  function configSaveLockError(message, lost)")
 	lockEnd := strings.Index(page, "  function validateTTL()")
-	if storageStart < 0 || storageEnd <= storageStart || delayStart < 0 || delayEnd <= delayStart || lockStart < 0 || lockEnd <= lockStart {
+	if storageStart < 0 || storageEnd <= storageStart || lockStart < 0 || lockEnd <= lockStart {
 		t.Fatal("cannot locate dashboard fallback lock helpers")
 	}
 	script := `
-var REQUEST_TIMEOUT = 30000;
-var CONFIG_REQUEST_TIMEOUT = 10000;
-var CONFIG_STATE_WAIT_TIMEOUT = 15000;
 var window = {
   localStorage:null,location:{origin:"https://cpa.example"},
   setTimeout:setTimeout,clearTimeout:clearTimeout,setInterval:setInterval,clearInterval:clearInterval
@@ -1678,7 +1732,7 @@ var window = {
 window.parent = window;
 var navigator = {};
 function tinyHash(value) { return String(value).replace(/[^a-z0-9]/gi, ""); }
-` + page[storageStart:storageEnd] + page[delayStart:delayEnd] + page[lockStart:lockEnd] + `
+` + page[storageStart:storageEnd] + page[lockStart:lockEnd] + `
 async function attempt(storage) {
   window.localStorage = storage;
   var callbackCalls = 0;
@@ -1744,17 +1798,12 @@ func TestDashboardFallbackConfigSaveLockGuardRejectsExpiredOwnership(t *testing.
 	page := string(RenderDashboard(300))
 	storageStart := strings.Index(page, "  function sameOriginLocalStorage()")
 	storageEnd := strings.Index(page, "  function discardStoredResultSnapshot")
-	delayStart := strings.Index(page, "  function abortableDelay(milliseconds, signal)")
-	delayEnd := strings.Index(page, "  function configsEqual(left, right)")
 	lockStart := strings.Index(page, "  function configSaveLockError(message, lost)")
 	lockEnd := strings.Index(page, "  function validateTTL()")
-	if storageStart < 0 || storageEnd <= storageStart || delayStart < 0 || delayEnd <= delayStart || lockStart < 0 || lockEnd <= lockStart {
+	if storageStart < 0 || storageEnd <= storageStart || lockStart < 0 || lockEnd <= lockStart {
 		t.Fatal("cannot locate dashboard fallback lock helpers")
 	}
 	script := `
-var REQUEST_TIMEOUT = 30000;
-var CONFIG_REQUEST_TIMEOUT = 10000;
-var CONFIG_STATE_WAIT_TIMEOUT = 15000;
 var now = 1000;
 Date.now = function () { return now; };
 var memory = Object.create(null);
@@ -1772,7 +1821,7 @@ var window = {
 window.parent = window;
 var navigator = {};
 function tinyHash(value) { return String(value).replace(/[^a-z0-9]/gi, ""); }
-` + page[storageStart:storageEnd] + page[delayStart:delayEnd] + page[lockStart:lockEnd] + `
+` + page[storageStart:storageEnd] + page[lockStart:lockEnd] + `
 (async function () {
   var patchCalls = 0;
   var leaseDuration = 0;
@@ -1810,8 +1859,7 @@ function tinyHash(value) { return String(value).replace(/[^a-z0-9]/gi, ""); }
 	if err := json.Unmarshal(output, &got); err != nil {
 		t.Fatalf("decode fallback lock ownership result: %v\n%s", err, output)
 	}
-	boundedSaveDuration := 30000 + 10000 + 15000
-	if got.PatchCalls != 0 || got.LeaseDuration <= boundedSaveDuration || got.Remaining != 0 || !got.Rejected || !got.Lost || !strings.Contains(got.Message, "未写入") {
+	if got.PatchCalls != 0 || got.LeaseDuration != 12000 || got.Remaining != 0 || !got.Rejected || !got.Lost || !strings.Contains(got.Message, "未写入") {
 		t.Fatalf("expired fallback ownership was not rejected before write: %#v", got)
 	}
 }
@@ -1823,13 +1871,15 @@ func TestDashboardSavePreservesEditsMadeWhileRequestIsInFlight(t *testing.T) {
 	}
 	page := string(RenderDashboard(300))
 	start := strings.Index(page, "  function validateTTL()")
-	end := strings.Index(page, "  function loadData(options)")
+	end := strings.Index(page, "  function loadData()")
 	if start < 0 || end <= start {
 		t.Fatal("cannot locate dashboard save helpers")
 	}
 	script := `
 var REQUEST_TIMEOUT = 30000;
 var CONFIG_REQUEST_TIMEOUT = 10000;
+var CONFIG_SAVE_STEP_TIMEOUT = 4000;
+var CONFIG_SAVE_TOTAL_TIMEOUT = 10000;
 var providerLabels = {newapi:"New API",deepseek:"DeepSeek"};
 var state = {
   credentials:{apiBase:"https://cpa.example",managementKey:"secret"},
@@ -1841,10 +1891,11 @@ var state = {
   draftMappings:{a:"deepseek"},draftTTL:"600",draftRevision:1,
   results:[],view:"settings",dirty:true,needsQuery:false,dataReady:true,
   saving:false,saveGeneration:0,saveController:null,loadGeneration:4,
-  querying:false,queryGeneration:0,queryController:null
+  querying:false,queryGeneration:0,queryController:null,runtimeApplyFailed:false
 };
 var patchResolve;
 var patched = null;
+var persistedConfig = {cache_ttl_seconds:300,provider_mappings:{a:"newapi",external:"claude"}};
 var saveStates = [];
 var toasts = [];
 function byID() { return {}; }
@@ -1865,13 +1916,15 @@ function refreshDirtyState() {
   return state.dirty;
 }
 function apiFetch(_path, options) {
-  if (!options.method) return Promise.resolve({cache_ttl_seconds:300,provider_mappings:{a:"newapi",external:"claude"}});
+  if (!options.method) return Promise.resolve(normalizeConfig(persistedConfig));
   patched = JSON.parse(options.body);
+  persistedConfig = normalizeConfig(patched);
   return new Promise(function (resolve) { patchResolve = resolve; });
 }
-function waitForRuntimeConfig(expected) { return Promise.resolve(normalizeConfig(expected)); }
+function configsEqual(left, right) { return normalizeConfig(left).cache_ttl_seconds === normalizeConfig(right).cache_ttl_seconds && stableMappings(normalizeConfig(left).provider_mappings) === stableMappings(normalizeConfig(right).provider_mappings); }
+function exactConfigsEqual(left, right) { return configsEqual(left, right); }
+function applyRuntimeConfig(expected) { return Promise.resolve(normalizeConfig(expected)); }
 function withConfigSaveLock(_credentials, _controller, callback) { return callback(function () {}); }
-function cancelConfigRecovery() {}
 function showApp() {}
 function setDataReady(value) { state.dataReady = Boolean(value); }
 function cancelQueryRequests() { state.querying = false; state.queryGeneration += 1; }
@@ -1882,7 +1935,7 @@ function resultsMatchAccounts() { return false; }
 function renderSettings() {}
 function renderResults() {}
 function queryBalances() { throw new Error("query must not start while settings view is active"); }
-var window = {setTimeout:function () {}};
+var window = {setTimeout:function () {},clearTimeout:function () {}};
 ` + page[start:end] + `
 (async function () {
   var saving = saveSettings();
@@ -1931,24 +1984,27 @@ var window = {setTimeout:function () {}};
 	}
 }
 
-func TestDashboardSaveReportsPersistedWhenRuntimeAuthCheckFails(t *testing.T) {
+func TestDashboardSaveReportsPersistedWhenRuntimeApplyAuthFails(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is not installed")
 	}
 	page := string(RenderDashboard(300))
 	start := strings.Index(page, "  function validateTTL()")
-	end := strings.Index(page, "  function loadData(options)")
+	end := strings.Index(page, "  function loadData()")
 	if start < 0 || end <= start {
 		t.Fatal("cannot locate dashboard save helpers")
 	}
 	script := `
 var REQUEST_TIMEOUT = 30000;
 var CONFIG_REQUEST_TIMEOUT = 10000;
+var CONFIG_SAVE_STEP_TIMEOUT = 4000;
+var CONFIG_SAVE_TOTAL_TIMEOUT = 10000;
 var providerLabels = Object.create(null);
 var state = null;
 var currentStatus = 0;
 var patchCalls = 0;
+var persistedConfig = null;
 var saveStates = [];
 var toasts = [];
 var connectionMessages = [];
@@ -1958,8 +2014,9 @@ function resetState() {
     config:{cache_ttl_seconds:300,provider_mappings:{}},draftMappings:{},draftTTL:"600",draftRevision:1,
     results:[],view:"settings",dirty:true,needsQuery:false,dataReady:true,
     saving:false,saveGeneration:0,saveController:null,loadGeneration:4,
-    querying:false,queryGeneration:0,queryController:null
+    querying:false,queryGeneration:0,queryController:null,runtimeApplyFailed:false
   };
+  persistedConfig = normalizeConfig(state.config);
   patchCalls = 0;
   saveStates = [];
   toasts = [];
@@ -1979,16 +2036,20 @@ function refreshDirtyState() {
   return state.dirty;
 }
 function apiFetch(_path, options) {
-  if (options && options.method === "PATCH") { patchCalls += 1; return Promise.resolve({}); }
-  return Promise.resolve({cache_ttl_seconds:300,provider_mappings:{}});
+  if (options && options.method === "PATCH") { patchCalls += 1; persistedConfig = normalizeConfig(JSON.parse(options.body)); return Promise.resolve({}); }
+  return Promise.resolve(normalizeConfig(persistedConfig));
 }
-function waitForRuntimeConfig() {
+function configsEqual(left, right) { return stableMappings(normalizeConfig(left).provider_mappings) === stableMappings(normalizeConfig(right).provider_mappings) && normalizeConfig(left).cache_ttl_seconds === normalizeConfig(right).cache_ttl_seconds; }
+function exactConfigsEqual(left, right) { return configsEqual(left, right); }
+function applyRuntimeConfig() {
   var error = new Error("管理密钥无效或权限不足");
   error.status = currentStatus;
   return Promise.reject(error);
 }
 function withConfigSaveLock(_credentials, _controller, callback) { return callback(function () {}); }
+function showApp() {}
 function showConnection(message) { connectionMessages.push(String(message || "")); }
+function setDataReady(value) { state.dataReady = Boolean(value); }
 function cancelQueryRequests() {}
 function clearResultSnapshot() {}
 function persistResultSnapshot() { return Promise.resolve(true); }
@@ -1997,13 +2058,17 @@ function resultsMatchAccounts() { return false; }
 function renderSettings() {}
 function renderResults() {}
 function queryBalances() { return Promise.resolve(); }
-var window = {setTimeout:function () {}};
+var window = {setTimeout:function () {},clearTimeout:function () {}};
 ` + page[start:end] + `
 async function run(status) {
   resetState();
   currentStatus = status;
   var saved = await saveSettings();
-  return {status:status,saved:saved,patch_calls:patchCalls,saving:state.saving,save_states:saveStates,toasts:toasts,connections:connectionMessages};
+  return {
+    status:status,saved:saved,patch_calls:patchCalls,saving:state.saving,save_states:saveStates,toasts:toasts,
+    runtime_apply_failed:state.runtimeApplyFailed,data_ready:state.dataReady,management_key:state.credentials.managementKey,
+    connections:connectionMessages
+  };
 }
 (async function () {
   process.stdout.write(JSON.stringify([await run(401),await run(403)]));
@@ -2014,13 +2079,16 @@ async function run(status) {
 		t.Fatalf("execute persisted auth-check save helper: %v\n%s", err, output)
 	}
 	var got []struct {
-		Status      int      `json:"status"`
-		Saved       bool     `json:"saved"`
-		PatchCalls  int      `json:"patch_calls"`
-		Saving      bool     `json:"saving"`
-		SaveStates  []string `json:"save_states"`
-		Toasts      []string `json:"toasts"`
-		Connections []string `json:"connections"`
+		Status             int      `json:"status"`
+		Saved              bool     `json:"saved"`
+		PatchCalls         int      `json:"patch_calls"`
+		Saving             bool     `json:"saving"`
+		SaveStates         []string `json:"save_states"`
+		Toasts             []string `json:"toasts"`
+		RuntimeApplyFailed bool     `json:"runtime_apply_failed"`
+		DataReady          bool     `json:"data_ready"`
+		ManagementKey      string   `json:"management_key"`
+		Connections        []string `json:"connections"`
 	}
 	if err := json.Unmarshal(output, &got); err != nil {
 		t.Fatalf("decode persisted auth-check save result: %v\n%s", err, output)
@@ -2030,9 +2098,8 @@ async function run(status) {
 	}
 	for _, result := range got {
 		states := strings.Join(result.SaveStates, " ")
-		messages := strings.Join(result.Toasts, " ")
 		connections := strings.Join(result.Connections, " ")
-		if !result.Saved || result.PatchCalls != 1 || result.Saving || !strings.Contains(states, "已保存") || !strings.Contains(messages, "设置已写入 CPA") || !strings.Contains(connections, "管理密钥已失效") {
+		if !result.Saved || result.PatchCalls != 1 || result.Saving || !result.RuntimeApplyFailed || !result.DataReady || result.ManagementKey != "" || !strings.Contains(states, "已保存") || len(result.Toasts) != 0 || !strings.Contains(connections, "设置已保存") || !strings.Contains(connections, "管理密钥已失效") {
 			t.Fatalf("post-PATCH %d was reported as an ordinary save failure: %#v", result.Status, result)
 		}
 	}

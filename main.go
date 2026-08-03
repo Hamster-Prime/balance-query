@@ -58,17 +58,19 @@ import (
 
 const (
 	pluginID      = "balance-query"
-	pluginVersion = "0.8.6"
+	pluginVersion = "0.8.7"
 	abiVersion    = 1
 	schemaVersion = 1
 
 	resourcePath    = "/dashboard"
 	queryPath       = "/" + pluginID + "/query"
 	configStatePath = "/" + pluginID + "/config-state"
+	configApplyPath = "/" + pluginID + "/config-apply"
 
 	defaultTTLSeconds     = 300
 	maxQueryAccounts      = 128
 	maxQueryBodyBytes     = 1 << 20
+	maxConfigApplyBytes   = 1 << 20
 	maxPluginRequestBytes = 8 << 20
 )
 
@@ -86,7 +88,6 @@ var (
 		ProviderMappings: map[string]balance.ProviderType{},
 	}
 	runtimeConfigApplyError string
-	pendingRuntimeConfig    []byte
 )
 
 type accountFetchCall struct {
@@ -182,7 +183,6 @@ func cliproxyPluginShutdown() {
 		ProviderMappings: map[string]balance.ProviderType{},
 	}
 	runtimeConfigApplyError = ""
-	pendingRuntimeConfig = nil
 	stateMu.Unlock()
 }
 
@@ -232,9 +232,8 @@ type registrationCapabilities struct {
 
 func handleRegister(raw []byte) ([]byte, error) {
 	// CPA removes a plugin's capabilities and management routes when
-	// plugin.reconfigure fails. Preserve the last valid runtime state, remember
-	// an unapplied request for config-state polling to retry, and still return
-	// registration metadata so the dashboard remains reachable.
+	// plugin.reconfigure fails. Preserve the last valid runtime state and still
+	// return registration metadata so the dashboard remains reachable.
 	_ = applyRuntimeConfigSafely(raw)
 	return okEnvelope(registration{
 		SchemaVersion: schemaVersion,
@@ -277,13 +276,11 @@ func applyRuntimeConfigLocked(raw []byte) (err error) {
 			err = fmt.Errorf("应用插件配置时发生内部错误")
 		}
 		if err != nil {
-			pendingRuntimeConfig = append(pendingRuntimeConfig[:0], raw...)
 			stateMu.Lock()
 			runtimeConfigApplyError = "CPA 中的最新设置暂时无法应用；插件正在保留上一次有效配置"
 			stateMu.Unlock()
 			return
 		}
-		pendingRuntimeConfig = nil
 		stateMu.Lock()
 		runtimeConfigApplyError = ""
 		stateMu.Unlock()
@@ -296,16 +293,10 @@ func applyRuntimeConfigLocked(raw []byte) (err error) {
 		return fmt.Errorf("解析插件配置请求失败：%w", err)
 	}
 	if len(request.ConfigYAML) == 0 || strings.TrimSpace(string(request.ConfigYAML)) == "" {
-		// Clear cached results before publishing the reset configuration. Once the
-		// runtime state endpoint exposes the new TTL, callers must not be able to
-		// observe entries created under the previous cache policy.
-		resultCache.Reset(defaultTTLSeconds * time.Second)
-		stateMu.Lock()
-		state = balance.PluginConfig{
+		publishRuntimeConfigLocked(balance.PluginConfig{
 			CacheTTLSeconds:  defaultTTLSeconds,
 			ProviderMappings: map[string]balance.ProviderType{},
-		}
-		stateMu.Unlock()
+		})
 		return nil
 	}
 
@@ -321,16 +312,21 @@ func applyRuntimeConfigLocked(raw []byte) (err error) {
 		ProviderMappings: decoded.ProviderMappings,
 	}
 	if decoded.CacheTTLSeconds != nil {
-		next.CacheTTLSeconds = normalizeTTL(*decoded.CacheTTLSeconds)
+		next.CacheTTLSeconds = *decoded.CacheTTLSeconds
 	}
-	if next.ProviderMappings == nil {
-		next.ProviderMappings = map[string]balance.ProviderType{}
-	}
+	publishRuntimeConfigLocked(next)
+	return nil
+}
+
+func publishRuntimeConfigLocked(next balance.PluginConfig) {
+	next.CacheTTLSeconds = normalizeTTL(next.CacheTTLSeconds)
+	mappings := make(map[string]balance.ProviderType, len(next.ProviderMappings))
 	for key, providerType := range next.ProviderMappings {
-		if !balance.IsKnownProvider(providerType) {
-			delete(next.ProviderMappings, key)
+		if balance.IsKnownProvider(providerType) {
+			mappings[key] = providerType
 		}
 	}
+	next.ProviderMappings = mappings
 
 	// Serialize cache-policy changes and runtime-state publication without
 	// nesting the state and cache mutexes. A cleanup failure therefore cannot
@@ -342,22 +338,10 @@ func applyRuntimeConfigLocked(raw []byte) (err error) {
 		resultCache.Reset(time.Duration(next.CacheTTLSeconds) * time.Second)
 	}
 	// Publish the new runtime state only after a TTL change has atomically
-	// cleared the old cache. The dashboard uses this state as its confirmation
-	// barrier before issuing queries under the new settings.
+	// cleared the old cache.
 	stateMu.Lock()
 	state = next
 	stateMu.Unlock()
-	return nil
-}
-
-func retryPendingRuntimeConfig() {
-	runtimeConfigMu.Lock()
-	defer runtimeConfigMu.Unlock()
-	if len(pendingRuntimeConfig) == 0 {
-		return
-	}
-	raw := append([]byte(nil), pendingRuntimeConfig...)
-	_ = applyRuntimeConfigLocked(raw)
 }
 
 func normalizeTTL(value int) int {
@@ -385,7 +369,6 @@ type runtimeConfigState struct {
 }
 
 func currentConfigState() runtimeConfigState {
-	retryPendingRuntimeConfig()
 	stateMu.RLock()
 	defer stateMu.RUnlock()
 	mappings := make(map[string]balance.ProviderType, len(state.ProviderMappings))
@@ -436,6 +419,7 @@ func handleManagementRegister() ([]byte, error) {
 		Routes: []managementRoute{
 			{Method: http.MethodPost, Path: queryPath},
 			{Method: http.MethodGet, Path: configStatePath},
+			{Method: http.MethodPost, Path: configApplyPath},
 		},
 		Resources: []managementResource{{
 			Path:        resourcePath,
@@ -469,9 +453,71 @@ func handleManagementRequest(raw []byte) ([]byte, error) {
 		}
 		return okEnvelope(jsonResponse(http.StatusOK, currentConfigState()))
 	}
+	if strings.HasSuffix(request.Path, configApplyPath) {
+		if !strings.EqualFold(request.Method, http.MethodPost) {
+			return okEnvelope(jsonResponse(http.StatusMethodNotAllowed, map[string]string{
+				"error": "仅支持 POST 请求",
+			}))
+		}
+		return handleRuntimeConfigApply(request)
+	}
 
 	page := ui.RenderDashboard(currentTTL())
 	return okEnvelope(htmlResponse(http.StatusOK, page))
+}
+
+type runtimeConfigApplyRequest struct {
+	CacheTTLSeconds  *int                             `json:"cache_ttl_seconds"`
+	ProviderMappings *map[string]balance.ProviderType `json:"provider_mappings"`
+}
+
+func handleRuntimeConfigApply(request managementRequest) ([]byte, error) {
+	if len(request.Body) > maxConfigApplyBytes {
+		return okEnvelope(jsonResponse(http.StatusRequestEntityTooLarge, map[string]string{
+			"error": "插件配置请求过大",
+		}))
+	}
+	var input runtimeConfigApplyRequest
+	if err := json.Unmarshal(request.Body, &input); err != nil {
+		return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{
+			"error": "插件配置格式不正确",
+		}))
+	}
+	if input.CacheTTLSeconds == nil || input.ProviderMappings == nil {
+		return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{
+			"error": "插件配置必须同时包含缓存时长与供应商映射",
+		}))
+	}
+
+	next := balance.PluginConfig{
+		CacheTTLSeconds:  *input.CacheTTLSeconds,
+		ProviderMappings: *input.ProviderMappings,
+	}
+	applied, err := applyRuntimeConfigDirect(next)
+	if err != nil {
+		return okEnvelope(jsonResponse(http.StatusInternalServerError, map[string]string{
+			"error": err.Error(),
+		}))
+	}
+	return okEnvelope(jsonResponse(http.StatusOK, applied))
+}
+
+func applyRuntimeConfigDirect(next balance.PluginConfig) (applied runtimeConfigState, err error) {
+	runtimeConfigMu.Lock()
+	defer runtimeConfigMu.Unlock()
+	defer func() {
+		if recover() != nil {
+			err = fmt.Errorf("应用插件配置时发生内部错误")
+			stateMu.Lock()
+			runtimeConfigApplyError = "插件运行配置暂时无法应用；插件正在保留上一次有效配置"
+			stateMu.Unlock()
+		}
+	}()
+	publishRuntimeConfigLocked(next)
+	stateMu.Lock()
+	runtimeConfigApplyError = ""
+	stateMu.Unlock()
+	return currentConfigState(), nil
 }
 
 type accountQuery struct {
