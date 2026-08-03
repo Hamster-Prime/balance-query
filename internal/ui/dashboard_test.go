@@ -68,6 +68,42 @@ func TestRenderDashboardIncludesChineseThemeAwareUI(t *testing.T) {
 	}
 }
 
+func TestRenderDashboardIncludesManualKeyQueryAboveOverview(t *testing.T) {
+	page := string(RenderDashboard(300))
+	manualQuery := strings.Index(page, `id="manual-query-form"`)
+	summary := strings.Index(page, `class="summary"`)
+	if manualQuery < 0 || summary < 0 || manualQuery > summary {
+		t.Fatalf("manual query form should appear above the overview summary (manual=%d summary=%d)", manualQuery, summary)
+	}
+	for _, want := range []string{
+		`自主查询`,
+		`id="manual-query-type"`,
+		`id="manual-api-key" type="password"`,
+		`id="manual-base-url-field"`,
+		`id="manual-query-result"`,
+		`var MANUAL_QUERY_PATH = "/balance-query/manual-query";`,
+		`requires_base_url`,
+		`function queryManualBalance(event)`,
+		`sanitizeSnapshotValue(data, [apiKey])`,
+		`target.appendChild(resultCard(result, 0, "manual-account-details"))`,
+		`body:JSON.stringify(payload)`,
+		`resetManualQuery(true)`,
+		`.manual-query-form{display:flex`,
+		`.manual-query-fields{min-width:0;display:grid`,
+		`.manual-query-submit{width:100%}`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard is missing manual query marker %q", want)
+		}
+	}
+	for _, queryType := range []string{`"value":"sub2api"`, `"value":"newapi"`} {
+		definition := regexp.MustCompile(regexp.QuoteMeta(queryType) + `[^}]*"requires_base_url":true`)
+		if !definition.MatchString(page) {
+			t.Fatalf("manual query definition %q should require a service URL", queryType)
+		}
+	}
+}
+
 func TestRenderDashboardShowsAllStructuredQuotaWindows(t *testing.T) {
 	page := string(RenderDashboard(300))
 	for _, want := range []string{

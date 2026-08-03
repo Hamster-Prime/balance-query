@@ -783,6 +783,257 @@ process.stdout.write(JSON.stringify({clean:clean,denied:denied,accepted:accepted
 	}
 }
 
+func TestDashboardManualQueryUsesDedicatedEndpointWithoutChangingOverviewResults(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	page := string(RenderDashboard(300))
+	sanitizeStart := strings.Index(page, "  function replaceSecrets(value, secrets)")
+	sanitizeEnd := strings.Index(page, "  function snapshotSecrets(accounts, credentials)")
+	manualStart := strings.Index(page, "  function manualQueryDefinition(value)")
+	manualEnd := strings.Index(page, "  function initializeManualQuery()")
+	if sanitizeStart < 0 || sanitizeEnd <= sanitizeStart || manualStart < 0 || manualEnd <= manualStart {
+		t.Fatal("cannot locate dashboard manual query helpers")
+	}
+	script := `
+var MANUAL_QUERY_PATH = "/balance-query/manual-query";
+var PROVIDER_DEFINITIONS = [
+  {value:"deepseek",label:"DeepSeek"},
+  {value:"newapi",label:"New API",requires_base_url:true}
+];
+var providerLabels = {deepseek:"DeepSeek",newapi:"New API"};
+var overviewResults = [{id:"overview-existing"}];
+var state = {
+  credentials:{apiBase:"https://cpa.example",managementKey:"management-secret"},
+  globalProxyUrl:"http://proxy.example:8080",
+  manualQuerying:false,manualQueryGeneration:0,manualQueryController:null,
+  results:overviewResults
+};
+function makeNode(id) {
+  var text = "";
+  return {
+    id:id,value:"",hidden:false,disabled:false,required:false,type:"",focused:false,
+    children:[],attributes:{},
+    appendChild:function (child) { this.children.push(child); return child; },
+    focus:function () { this.focused = true; },
+    setAttribute:function (name, value) { this.attributes[name] = String(value); },
+    querySelector:function () { return null; },
+    get textContent() { return text; },
+    set textContent(value) {
+      text = value == null ? "" : String(value);
+      if (!text) this.children = [];
+    }
+  };
+}
+var nodes = Object.create(null);
+[
+  "manual-query-message","manual-query-type","manual-api-key","manual-key-toggle",
+  "manual-base-url-field","manual-base-url","manual-query-button",
+  "manual-query-result","manual-query-announcement"
+].forEach(function (id) { nodes[id] = makeNode(id); });
+function byID(id) { return nodes[id]; }
+function setText(node, value) { if (node) node.textContent = value == null ? "" : String(value); }
+function element(tag, className, text) {
+  var node = makeNode(tag);
+  node.className = String(className || "");
+  if (text != null) node.textContent = text;
+  return node;
+}
+var buttonStates = [];
+function setButtonBusy(button, busy, label) {
+  button.disabled = Boolean(busy);
+  buttonStates.push({busy:Boolean(busy),label:String(label || "")});
+}
+var timeoutCounts = [];
+function queryTimeoutForBatch(count) { timeoutCounts.push(count); return 120000; }
+var calls = [];
+var response = null;
+var rejectedMessage = "";
+function apiFetch(path, options, timeout, credentials) {
+  calls.push({
+    path:path,method:options.method,headers:options.headers,payload:JSON.parse(options.body),
+    timeout:timeout,credentials:credentials,
+    busy:state.manualQuerying,type_disabled:nodes["manual-query-type"].disabled,
+    key_disabled:nodes["manual-api-key"].disabled,button_disabled:nodes["manual-query-button"].disabled
+  });
+  if (rejectedMessage) return Promise.reject(new Error(rejectedMessage));
+  return Promise.resolve(response);
+}
+var cards = [];
+function resultCard(result, index, detailsPrefix) {
+  cards.push({result:result,index:index,details_prefix:detailsPrefix});
+  return {kind:"result-card",result:result};
+}
+var countdownRefreshes = 0;
+function refreshCountdowns() { countdownRefreshes += 1; }
+` + page[sanitizeStart:sanitizeEnd] + page[manualStart:manualEnd] + `
+(async function () {
+  var prevented = 0;
+  nodes["manual-query-type"].value = "deepseek";
+  nodes["manual-api-key"].value = "sk-deepseek-secret";
+  nodes["manual-base-url"].value = "file:///ignored-for-this-query-type";
+  response = {provider:"Upstream",quota_display:"可用 80 CNY",extra:{debug:"sk-deepseek-secret"}};
+  var deepseekResult = await queryManualBalance({preventDefault:function () { prevented += 1; }});
+
+  nodes["manual-query-type"].value = "newapi";
+  nodes["manual-api-key"].value = "sk-newapi-secret";
+  nodes["manual-base-url"].value = "  https://relay.example.com/v1///  ";
+  updateManualQueryBaseURL();
+  var newAPIBaseState = {hidden:nodes["manual-base-url-field"].hidden,required:nodes["manual-base-url"].required,disabled:nodes["manual-base-url"].disabled};
+  response = {provider:"Relay",quota_display:"可用 20 USD"};
+  var newAPIResult = await queryManualBalance({preventDefault:function () { prevented += 1; }});
+
+  nodes["manual-query-type"].value = "deepseek";
+  nodes["manual-api-key"].value = "sk-error-secret";
+  nodes["manual-base-url"].value = "";
+  updateManualQueryBaseURL();
+  var fixedEndpointBaseState = {hidden:nodes["manual-base-url-field"].hidden,required:nodes["manual-base-url"].required,disabled:nodes["manual-base-url"].disabled};
+  rejectedMessage = "上游拒绝 sk-error-secret，请检查 Key";
+  var errorResult = await queryManualBalance({preventDefault:function () { prevented += 1; }});
+
+  process.stdout.write(JSON.stringify({
+    deepseek_result:deepseekResult,newapi_result:newAPIResult,error_result:errorResult,
+    newapi_base_state:newAPIBaseState,fixed_endpoint_base_state:fixedEndpointBaseState,
+    prevented:prevented,calls:calls,button_states:buttonStates,timeout_counts:timeoutCounts,
+    cards:cards,countdown_refreshes:countdownRefreshes,
+    overview_same_reference:state.results === overviewResults,
+    overview_ids:state.results.map(function (item) { return item.id; }),
+    manual_querying:state.manualQuerying,controller_cleared:state.manualQueryController === null,
+    type_disabled:nodes["manual-query-type"].disabled,
+    key_disabled:nodes["manual-api-key"].disabled,
+    toggle_disabled:nodes["manual-key-toggle"].disabled,
+    button_disabled:nodes["manual-query-button"].disabled,
+    result_hidden:nodes["manual-query-result"].hidden,
+    result_children:nodes["manual-query-result"].children.length,
+    message_hidden:nodes["manual-query-message"].hidden,
+    message:nodes["manual-query-message"].textContent,
+    announcement:nodes["manual-query-announcement"].textContent
+  }));
+})().catch(function (error) { process.stderr.write(String(error && error.stack || error)); process.exit(1); });
+`
+	output, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute dashboard manual query helpers: %v\n%s", err, output)
+	}
+	var got struct {
+		DeepSeekResult  bool `json:"deepseek_result"`
+		NewAPIResult    bool `json:"newapi_result"`
+		ErrorResult     bool `json:"error_result"`
+		Prevented       int  `json:"prevented"`
+		NewAPIBaseState struct {
+			Hidden   bool `json:"hidden"`
+			Required bool `json:"required"`
+			Disabled bool `json:"disabled"`
+		} `json:"newapi_base_state"`
+		FixedEndpointBaseState struct {
+			Hidden   bool `json:"hidden"`
+			Required bool `json:"required"`
+			Disabled bool `json:"disabled"`
+		} `json:"fixed_endpoint_base_state"`
+		Calls []struct {
+			Path           string            `json:"path"`
+			Method         string            `json:"method"`
+			Headers        map[string]string `json:"headers"`
+			Payload        map[string]string `json:"payload"`
+			Timeout        int               `json:"timeout"`
+			Credentials    map[string]string `json:"credentials"`
+			Busy           bool              `json:"busy"`
+			TypeDisabled   bool              `json:"type_disabled"`
+			KeyDisabled    bool              `json:"key_disabled"`
+			ButtonDisabled bool              `json:"button_disabled"`
+		} `json:"calls"`
+		ButtonStates []struct {
+			Busy  bool   `json:"busy"`
+			Label string `json:"label"`
+		} `json:"button_states"`
+		TimeoutCounts []int `json:"timeout_counts"`
+		Cards         []struct {
+			Result        map[string]any `json:"result"`
+			Index         int            `json:"index"`
+			DetailsPrefix string         `json:"details_prefix"`
+		} `json:"cards"`
+		CountdownRefreshes    int      `json:"countdown_refreshes"`
+		OverviewSameReference bool     `json:"overview_same_reference"`
+		OverviewIDs           []string `json:"overview_ids"`
+		ManualQuerying        bool     `json:"manual_querying"`
+		ControllerCleared     bool     `json:"controller_cleared"`
+		TypeDisabled          bool     `json:"type_disabled"`
+		KeyDisabled           bool     `json:"key_disabled"`
+		ToggleDisabled        bool     `json:"toggle_disabled"`
+		ButtonDisabled        bool     `json:"button_disabled"`
+		ResultHidden          bool     `json:"result_hidden"`
+		ResultChildren        int      `json:"result_children"`
+		MessageHidden         bool     `json:"message_hidden"`
+		Message               string   `json:"message"`
+		Announcement          string   `json:"announcement"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode dashboard manual query result: %v\n%s", err, output)
+	}
+	if !got.DeepSeekResult || !got.NewAPIResult || got.ErrorResult || got.Prevented != 3 {
+		t.Fatalf("manual query completion result = %#v", got)
+	}
+	if got.NewAPIBaseState.Hidden || !got.NewAPIBaseState.Required || got.NewAPIBaseState.Disabled ||
+		!got.FixedEndpointBaseState.Hidden || got.FixedEndpointBaseState.Required || !got.FixedEndpointBaseState.Disabled {
+		t.Fatalf("manual query conditional base URL state = new API %#v, fixed endpoint %#v", got.NewAPIBaseState, got.FixedEndpointBaseState)
+	}
+	if len(got.Calls) != 3 || len(got.TimeoutCounts) != 3 {
+		t.Fatalf("manual query requests = %#v", got.Calls)
+	}
+	for index, call := range got.Calls {
+		if call.Path != "/balance-query/manual-query" || call.Method != http.MethodPost || call.Headers["Content-Type"] != "application/json" || call.Timeout != 120000 ||
+			call.Credentials["apiBase"] != "https://cpa.example" || call.Credentials["managementKey"] != "management-secret" ||
+			!call.Busy || !call.TypeDisabled || !call.KeyDisabled || !call.ButtonDisabled || got.TimeoutCounts[index] != 1 {
+			t.Fatalf("manual query request %d = %#v", index, call)
+		}
+		if call.Payload["proxy_url"] != "http://proxy.example:8080" {
+			t.Fatalf("manual query %d did not inherit the global proxy: %#v", index, call.Payload)
+		}
+	}
+	if got.Calls[0].Payload["api_key"] != "sk-deepseek-secret" || got.Calls[0].Payload["query_type"] != "deepseek" {
+		t.Fatalf("DeepSeek manual query payload = %#v", got.Calls[0].Payload)
+	}
+	if _, exists := got.Calls[0].Payload["base_url"]; exists {
+		t.Fatalf("non-base-URL manual query unexpectedly sent base_url: %#v", got.Calls[0].Payload)
+	}
+	if got.Calls[1].Payload["api_key"] != "sk-newapi-secret" || got.Calls[1].Payload["query_type"] != "newapi" || got.Calls[1].Payload["base_url"] != "https://relay.example.com/v1" {
+		t.Fatalf("New API manual query payload = %#v", got.Calls[1].Payload)
+	}
+	if _, exists := got.Calls[2].Payload["base_url"]; exists {
+		t.Fatalf("failed non-base-URL manual query unexpectedly sent base_url: %#v", got.Calls[2].Payload)
+	}
+	if len(got.Cards) != 2 || got.Cards[0].Index != 0 || got.Cards[1].Index != 0 ||
+		got.Cards[0].DetailsPrefix != "manual-account-details" || got.Cards[1].DetailsPrefix != "manual-account-details" ||
+		got.Cards[0].Result["account_name"] != "DeepSeek" || got.Cards[1].Result["account_name"] != "New API" {
+		t.Fatalf("manual query result cards = %#v", got.Cards)
+	}
+	firstExtra, ok := got.Cards[0].Result["extra"].(map[string]any)
+	if !ok || firstExtra["debug"] != "[已隐藏]" {
+		t.Fatalf("manual query result was not sanitized before rendering: %#v", got.Cards[0].Result)
+	}
+	if !got.OverviewSameReference || !reflect.DeepEqual(got.OverviewIDs, []string{"overview-existing"}) {
+		t.Fatalf("manual query changed overview results: %#v", got)
+	}
+	if len(got.ButtonStates) != 6 {
+		t.Fatalf("manual query busy transitions = %#v", got.ButtonStates)
+	}
+	for index, transition := range got.ButtonStates {
+		if transition.Busy != (index%2 == 0) {
+			t.Fatalf("manual query busy transition %d = %#v", index, transition)
+		}
+	}
+	if got.ManualQuerying || !got.ControllerCleared || got.TypeDisabled || got.KeyDisabled || got.ToggleDisabled || got.ButtonDisabled {
+		t.Fatalf("manual query did not restore controls after failure: %#v", got)
+	}
+	if !got.ResultHidden || got.ResultChildren != 0 || got.MessageHidden || strings.Contains(got.Message, "sk-error-secret") || !strings.Contains(got.Message, "[已隐藏]") || strings.Contains(got.Announcement, "sk-error-secret") {
+		t.Fatalf("manual query error was not safely presented: %#v", got)
+	}
+	if got.CountdownRefreshes != 2 {
+		t.Fatalf("manual query result countdown refreshes = %d, want 2", got.CountdownRefreshes)
+	}
+}
+
 func TestDashboardQueryBatchesPreserveOrderAndIgnoreSupersededResults(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -1349,6 +1600,7 @@ var appStates = [];
 var toasts = [];
 function cancelSaveRequests() {}
 function cancelQueryRequests() {}
+function resetManualQuery() {}
 function displayProviders() { return state.providers.slice(); }
 function displayAccounts() { return state.previewAccounts.slice(); }
 function snapshotDisplayAccount(account) { return Object.assign({}, account); }

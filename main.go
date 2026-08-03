@@ -58,12 +58,13 @@ import (
 
 const (
 	pluginID      = "balance-query"
-	pluginVersion = "0.8.7"
+	pluginVersion = "0.9.0"
 	abiVersion    = 1
 	schemaVersion = 1
 
 	resourcePath    = "/dashboard"
 	queryPath       = "/" + pluginID + "/query"
+	manualQueryPath = "/" + pluginID + "/manual-query"
 	configStatePath = "/" + pluginID + "/config-state"
 	configApplyPath = "/" + pluginID + "/config-apply"
 
@@ -418,6 +419,7 @@ func handleManagementRegister() ([]byte, error) {
 	return okEnvelope(managementRegistration{
 		Routes: []managementRoute{
 			{Method: http.MethodPost, Path: queryPath},
+			{Method: http.MethodPost, Path: manualQueryPath},
 			{Method: http.MethodGet, Path: configStatePath},
 			{Method: http.MethodPost, Path: configApplyPath},
 		},
@@ -444,6 +446,14 @@ func handleManagementRequest(raw []byte) ([]byte, error) {
 			}))
 		}
 		return handleBalanceQuery(request)
+	}
+	if strings.HasSuffix(request.Path, manualQueryPath) {
+		if !strings.EqualFold(request.Method, http.MethodPost) {
+			return okEnvelope(jsonResponse(http.StatusMethodNotAllowed, map[string]string{
+				"error": "仅支持 POST 请求",
+			}))
+		}
+		return handleManualBalanceQuery(request)
 	}
 	if strings.HasSuffix(request.Path, configStatePath) {
 		if !strings.EqualFold(request.Method, http.MethodGet) {
@@ -542,6 +552,13 @@ type balanceQueryResponse struct {
 	TTLSeconds int              `json:"ttl_seconds"`
 }
 
+type manualBalanceQueryRequest struct {
+	APIKey    string               `json:"api_key"`
+	QueryType balance.ProviderType `json:"query_type"`
+	BaseURL   string               `json:"base_url,omitempty"`
+	ProxyURL  string               `json:"proxy_url,omitempty"`
+}
+
 func handleBalanceQuery(request managementRequest) ([]byte, error) {
 	if len(request.Body) > maxQueryBodyBytes {
 		return okEnvelope(jsonResponse(http.StatusRequestEntityTooLarge, map[string]string{
@@ -585,6 +602,46 @@ func handleBalanceQuery(request managementRequest) ([]byte, error) {
 		FetchedAt:  time.Now(),
 		TTLSeconds: currentTTL(),
 	}))
+}
+
+func handleManualBalanceQuery(request managementRequest) ([]byte, error) {
+	if len(request.Body) > maxQueryBodyBytes {
+		return okEnvelope(jsonResponse(http.StatusRequestEntityTooLarge, map[string]string{
+			"error": "查询请求过大",
+		}))
+	}
+
+	var input manualBalanceQueryRequest
+	if err := json.Unmarshal(request.Body, &input); err != nil {
+		return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{
+			"error": "查询参数格式不正确",
+		}))
+	}
+	account := accountQuery{
+		ID:          "manual-query",
+		ProviderKey: "manual-query",
+		AccountName: "自主查询",
+		BaseURL:     input.BaseURL,
+		APIKey:      input.APIKey,
+		ProxyURL:    input.ProxyURL,
+		QueryType:   input.QueryType,
+	}
+	normalizeAccountQuery(&account)
+	if err := validateAccountQuery(account); err != nil {
+		return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{
+			"error": "查询参数无效：" + err.Error(),
+		}))
+	}
+	if !manualQueryProviderAllowed(account.QueryType) {
+		return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{
+			"error": "该余额查询类型不支持自主查询",
+		}))
+	}
+
+	// A manually supplied key is intentionally queried directly: it must not
+	// depend on configured mappings or create/read a persistent cache entry.
+	result := performAccountFetch(account)
+	return okEnvelope(jsonResponse(http.StatusOK, result))
 }
 
 func normalizeAccountQuery(account *accountQuery) {
@@ -651,6 +708,24 @@ func validateResolvedAccountQuery(account accountQuery) error {
 
 func providerRequiresBaseURL(providerType balance.ProviderType) bool {
 	return providerType == balance.ProviderSub2API || providerType == balance.ProviderNewAPI
+}
+
+func manualQueryProviderAllowed(providerType balance.ProviderType) bool {
+	switch providerType {
+	case balance.ProviderSub2API,
+		balance.ProviderClaudeAdmin,
+		balance.ProviderDeepSeek,
+		balance.ProviderGLMZAI,
+		balance.ProviderGLMZhipu,
+		balance.ProviderNewAPI,
+		balance.ProviderKimiAPI,
+		balance.ProviderKimiCode,
+		balance.ProviderMiniMaxCodingCN,
+		balance.ProviderMiniMaxCodingGlobal:
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveConfiguredQueryType(account *accountQuery) error {

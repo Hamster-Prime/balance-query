@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Hamster-Prime/balance-query/internal/balance"
+	"github.com/Hamster-Prime/balance-query/internal/ui"
 )
 
 func TestApplyRuntimeConfigParsesYAMLAndNormalizesValues(t *testing.T) {
@@ -343,16 +344,19 @@ func TestManagementRegisterSeparatesAuthenticatedQueryAndResource(t *testing.T) 
 	var registration managementRegistration
 	decodeOKEnvelope(t, raw, &registration)
 
-	if len(registration.Routes) != 3 {
-		t.Fatalf("management routes = %d, want 3: %#v", len(registration.Routes), registration.Routes)
+	if len(registration.Routes) != 4 {
+		t.Fatalf("management routes = %d, want 4: %#v", len(registration.Routes), registration.Routes)
 	}
 	if route := registration.Routes[0]; route.Method != http.MethodPost || route.Path != queryPath {
 		t.Fatalf("management route = %#v, want POST %s", route, queryPath)
 	}
-	if route := registration.Routes[1]; route.Method != http.MethodGet || route.Path != configStatePath {
+	if route := registration.Routes[1]; route.Method != http.MethodPost || route.Path != manualQueryPath {
+		t.Fatalf("management route = %#v, want POST %s", route, manualQueryPath)
+	}
+	if route := registration.Routes[2]; route.Method != http.MethodGet || route.Path != configStatePath {
 		t.Fatalf("management route = %#v, want GET %s", route, configStatePath)
 	}
-	if route := registration.Routes[2]; route.Method != http.MethodPost || route.Path != configApplyPath {
+	if route := registration.Routes[3]; route.Method != http.MethodPost || route.Path != configApplyPath {
 		t.Fatalf("management route = %#v, want POST %s", route, configApplyPath)
 	}
 	if len(registration.Resources) != 1 {
@@ -366,13 +370,229 @@ func TestManagementRegisterSeparatesAuthenticatedQueryAndResource(t *testing.T) 
 	// without management authentication. Keep the secret-bearing query endpoint out
 	// of Resources and the navigable dashboard out of authenticated API routes.
 	for _, resource := range registration.Resources {
-		if resource.Path == queryPath || resource.Path == configStatePath || resource.Path == configApplyPath {
+		if resource.Path == queryPath || resource.Path == manualQueryPath || resource.Path == configStatePath || resource.Path == configApplyPath {
 			t.Fatalf("authenticated management path %q was exposed as an unauthenticated resource", resource.Path)
 		}
 	}
 	for _, route := range registration.Routes {
 		if route.Path == resourcePath {
 			t.Fatalf("dashboard path %q was incorrectly registered as a management API route", resourcePath)
+		}
+	}
+}
+
+func TestManualBalanceQueryBypassesMappingsAndCacheAndRedactsSecret(t *testing.T) {
+	cleanupCacheForTest(t, time.Hour)
+	const secret = "sk-manual-super-secret"
+	const baseURL = "https://relay.example.com/v1"
+	const proxyURL = "socks5://127.0.0.1:1080"
+
+	stateMu.Lock()
+	state.ProviderMappings = map[string]balance.ProviderType{
+		"manual-query": balance.ProviderDeepSeek,
+	}
+	stateMu.Unlock()
+
+	account := accountQuery{
+		ID:          "manual-query",
+		ProviderKey: "manual-query",
+		AccountName: "自主查询",
+		BaseURL:     baseURL,
+		APIKey:      secret,
+		ProxyURL:    proxyURL,
+		QueryType:   balance.ProviderNewAPI,
+	}
+	cached := balance.Result{Provider: "旧缓存", QuotaDisplay: "不应返回", FetchedAt: time.Now()}
+	resultCache.Set(accountCacheKey(account), cached)
+
+	previousBuilder := buildFetcher
+	var gotProvider balance.ProviderType
+	var gotBaseURL string
+	var gotAuthID string
+	var gotToken string
+	var gotProxyURL string
+	buildFetcher = func(providerType balance.ProviderType, baseURL string) balance.Fetcher {
+		gotProvider = providerType
+		gotBaseURL = baseURL
+		return fetcherFunc(func(authID, token, proxyURL string) balance.Result {
+			gotAuthID = authID
+			gotToken = token
+			gotProxyURL = proxyURL
+			return balance.Result{
+				Provider:     "自主查询 " + secret,
+				QuotaDisplay: "可用 80 USD",
+				Extra:        map[string]string{"上游响应": "账户 " + secret},
+				FetchedAt:    time.Now(),
+			}
+		})
+	}
+	t.Cleanup(func() { buildFetcher = previousBuilder })
+
+	body, err := json.Marshal(manualBalanceQueryRequest{
+		APIKey:    secret,
+		QueryType: balance.ProviderNewAPI,
+		BaseURL:   "  " + baseURL + "  ",
+		ProxyURL:  "  " + proxyURL + "  ",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawRequest, err := json.Marshal(managementRequest{
+		Method: http.MethodPost,
+		Path:   manualQueryPath,
+		Body:   body,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawResponse, err := handleManagementRequest(rawRequest)
+	if err != nil {
+		t.Fatalf("handleManagementRequest() error = %v", err)
+	}
+
+	var response managementResponse
+	decodeOKEnvelope(t, rawResponse, &response)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", response.StatusCode, response.Body)
+	}
+	if strings.Contains(string(response.Body), secret) {
+		t.Fatalf("manual query response leaked API key: %s", response.Body)
+	}
+	var result balance.Result
+	if err := json.Unmarshal(response.Body, &result); err != nil {
+		t.Fatalf("decode manual query result: %v; body=%s", err, response.Body)
+	}
+	if result.QuotaDisplay != "可用 80 USD" {
+		t.Fatalf("manual result = %#v, want fresh upstream result", result)
+	}
+	if result.AuthID != "manual-query" || result.ProviderKey != "manual-query" || result.AccountName != "自主查询" {
+		t.Fatalf("manual result metadata = %#v", result)
+	}
+	if result.KeyPreview != maskAPIKey(secret) {
+		t.Fatalf("KeyPreview = %q, want %q", result.KeyPreview, maskAPIKey(secret))
+	}
+	if gotProvider != balance.ProviderNewAPI || gotBaseURL != baseURL || gotAuthID != "manual-query" || gotToken != secret || gotProxyURL != proxyURL {
+		t.Fatalf("upstream arguments = provider %q, base URL %q, auth ID %q, token %q, proxy %q", gotProvider, gotBaseURL, gotAuthID, gotToken, gotProxyURL)
+	}
+	stillCached, ok := resultCache.Get(accountCacheKey(account))
+	if !ok || stillCached.Provider != cached.Provider || stillCached.QuotaDisplay != cached.QuotaDisplay {
+		t.Fatalf("manual query read or replaced the configured-account cache: %#v, ok=%t", stillCached, ok)
+	}
+}
+
+func TestManualBalanceQueryValidatesRequestAndMethod(t *testing.T) {
+	const secret = "sk-manual-validation-secret"
+	previousBuilder := buildFetcher
+	buildFetcher = func(balance.ProviderType, string) balance.Fetcher {
+		t.Fatal("invalid manual query reached the provider fetcher")
+		return nil
+	}
+	t.Cleanup(func() { buildFetcher = previousBuilder })
+
+	tests := []struct {
+		name       string
+		method     string
+		body       string
+		wantStatus int
+		wantError  string
+	}{
+		{
+			name:       "only post is allowed",
+			method:     http.MethodGet,
+			body:       `{"api_key":"` + secret + `","query_type":"deepseek"}`,
+			wantStatus: http.StatusMethodNotAllowed,
+			wantError:  "仅支持 POST",
+		},
+		{
+			name:       "malformed body",
+			method:     http.MethodPost,
+			body:       `{`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "格式不正确",
+		},
+		{
+			name:       "missing api key",
+			method:     http.MethodPost,
+			body:       `{"query_type":"deepseek"}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "接口密钥",
+		},
+		{
+			name:       "unknown query type",
+			method:     http.MethodPost,
+			body:       `{"api_key":"` + secret + `","query_type":"unknown"}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "未知的余额查询类型",
+		},
+		{
+			name:       "console-only query type",
+			method:     http.MethodPost,
+			body:       `{"api_key":"` + secret + `","query_type":"minimax_api"}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "不支持自主查询",
+		},
+		{
+			name:       "required base URL",
+			method:     http.MethodPost,
+			body:       `{"api_key":"` + secret + `","query_type":"newapi"}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "需要有效的 HTTP(S) URL",
+		},
+		{
+			name:       "invalid base URL",
+			method:     http.MethodPost,
+			body:       `{"api_key":"` + secret + `","query_type":"deepseek","base_url":"file:///tmp/api"}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "接口地址必须是有效的 HTTP(S) URL",
+		},
+		{
+			name:       "invalid proxy URL",
+			method:     http.MethodPost,
+			body:       `{"api_key":"` + secret + `","query_type":"deepseek","proxy_url":"file:///tmp/proxy"}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "代理地址",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rawRequest, err := json.Marshal(managementRequest{
+				Method: test.method,
+				Path:   manualQueryPath,
+				Body:   []byte(test.body),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rawResponse, err := handleManagementRequest(rawRequest)
+			if err != nil {
+				t.Fatalf("handleManagementRequest() error = %v", err)
+			}
+			var response managementResponse
+			decodeOKEnvelope(t, rawResponse, &response)
+			if response.StatusCode != test.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", response.StatusCode, test.wantStatus, response.Body)
+			}
+			if strings.Contains(string(response.Body), secret) {
+				t.Fatalf("validation response leaked API key: %s", response.Body)
+			}
+			var errorBody map[string]string
+			if err := json.Unmarshal(response.Body, &errorBody); err != nil {
+				t.Fatalf("decode error response: %v; body=%s", err, response.Body)
+			}
+			if !strings.Contains(errorBody["error"], test.wantError) {
+				t.Fatalf("error = %q, want containing %q", errorBody["error"], test.wantError)
+			}
+		})
+	}
+}
+
+func TestManualQueryProviderAllowedMatchesDashboardDefinitions(t *testing.T) {
+	page := string(ui.RenderDashboard(300))
+	for _, providerType := range balance.AllProviders() {
+		listed := strings.Contains(page, `"value":"`+string(providerType)+`"`)
+		if allowed := manualQueryProviderAllowed(providerType); allowed != listed {
+			t.Errorf("manualQueryProviderAllowed(%q) = %t, dashboard listed = %t", providerType, allowed, listed)
 		}
 	}
 }

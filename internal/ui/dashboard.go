@@ -10,10 +10,11 @@ import (
 )
 
 type providerDefinition struct {
-	Value       string `json:"value"`
-	Label       string `json:"label"`
-	Status      string `json:"status,omitempty"`
-	Description string `json:"description,omitempty"`
+	Value           string `json:"value"`
+	Label           string `json:"label"`
+	Status          string `json:"status,omitempty"`
+	Description     string `json:"description,omitempty"`
+	RequiresBaseURL bool   `json:"requires_base_url,omitempty"`
 }
 
 // RenderDashboard renders a self-contained page for CPA AI provider
@@ -30,9 +31,10 @@ func RenderDashboard(ttlSeconds int) []byte {
 			continue
 		}
 		definition := providerDefinition{
-			Value:  string(providerType),
-			Label:  balance.ProviderLabel[providerType],
-			Status: "available",
+			Value:           string(providerType),
+			Label:           balance.ProviderLabel[providerType],
+			Status:          "available",
+			RequiresBaseURL: providerType == balance.ProviderSub2API || providerType == balance.ProviderNewAPI,
 		}
 		definitions = append(definitions, definition)
 	}
@@ -428,6 +430,30 @@ h1{font-size:22px;line-height:1.25;font-weight:650;margin:0;color:var(--text-pri
 .btn:disabled{opacity:.55;cursor:not-allowed}
 .spinner{width:15px;height:15px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .9s linear infinite}
 .btn.is-refreshing .refresh-icon{animation:spin .9s linear infinite}
+.manual-query{margin:0 0 20px;padding:2px 0 20px;border-bottom:1px solid var(--border-color)}
+.manual-query-head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:12px}
+.manual-query-title{display:flex;align-items:center;gap:8px;margin:0;color:var(--text-primary);font-size:15px;font-weight:680}
+.manual-query-title .icon{width:16px;height:16px;color:var(--text-secondary)}
+.manual-query-meta{color:var(--text-tertiary);font-size:11px;white-space:nowrap}
+.manual-query-form{display:flex;align-items:flex-end;gap:10px}
+.manual-query-fields{min-width:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;flex:1}
+.manual-query-field{min-width:0;display:flex;flex-direction:column;gap:6px}
+.manual-query-label{color:var(--text-secondary);font-size:11px;font-weight:650}
+.manual-query-field input,.manual-query-field select{width:100%;height:40px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-primary);color:var(--text-primary);padding:0 11px;transition:border-color var(--motion-fast),box-shadow var(--motion-fast),background-color var(--motion-normal)}
+.manual-query-field input::placeholder{color:var(--text-tertiary)}
+.manual-query-field input:hover,.manual-query-field select:hover{border-color:var(--border-hover)}
+.manual-query-field input:focus,.manual-query-field select:focus{border-color:var(--primary-color);box-shadow:0 0 0 3px var(--primary-10);outline:0}
+.manual-key-wrap{display:grid;grid-template-columns:minmax(0,1fr) 40px}
+.manual-key-wrap input{border-radius:8px 0 0 8px}
+.manual-key-toggle{display:grid;place-items:center;border:1px solid var(--border-color);border-left:0;border-radius:0 8px 8px 0;background:var(--bg-primary);color:var(--text-secondary);cursor:pointer;transition:background var(--motion-fast),border-color var(--motion-fast),color var(--motion-fast)}
+.manual-key-toggle:hover{background:var(--bg-hover);color:var(--text-primary);border-color:var(--border-hover)}
+.manual-key-toggle:disabled{opacity:.55;cursor:not-allowed}
+.manual-key-toggle:focus-visible{position:relative;outline:2px solid var(--primary-color);outline-offset:2px}
+.manual-key-toggle .icon{width:16px;height:16px}
+.manual-query-submit{height:40px;min-width:108px;flex:0 0 auto}
+.manual-query-message{margin:9px 0 0;color:var(--warning-text);font-size:12px;line-height:1.45}
+.manual-query-result{margin-top:14px}
+.manual-query-result .result-card{animation-delay:0ms!important}
 .summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:20px}
 .summary-item{padding:15px 17px;min-width:0;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);box-shadow:var(--shadow);transition:border-color var(--motion-fast),transform var(--motion-fast),box-shadow var(--motion-fast)}
 .summary-item:hover{border-color:var(--border-hover);transform:translateY(-1px);box-shadow:var(--shadow-lg)}
@@ -623,6 +649,7 @@ select:hover{border-color:var(--border-hover)}
 @media (max-width:760px){
   .app{padding:16px 14px 28px}.masthead{align-items:center}.subtitle{max-width:230px}.head-state{display:none}
   .workspace-nav{align-items:stretch;flex-direction:column}.segments{width:100%}.toolbar{justify-content:stretch}.toolbar .btn{flex:1;min-width:0}
+  .manual-query{padding-top:0}.manual-query-head{align-items:flex-start}.manual-query-form{align-items:stretch;flex-direction:column}.manual-query-fields{grid-template-columns:minmax(0,1fr)}.manual-query-submit{width:100%}
   .summary{grid-template-columns:repeat(2,minmax(0,1fr))}
   #provider-jump-nav{margin-left:-2px;margin-right:-2px;flex-wrap:wrap;overflow:visible;scroll-snap-type:none}#provider-jump-nav .provider-jump-link{flex:1 1 calc(33.333% - 6px);min-width:100px}.settings-provider-nav{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--border-hover) transparent;scroll-snap-type:x mandatory}.settings-provider-nav::-webkit-scrollbar{display:block;height:3px}.settings-provider-nav::-webkit-scrollbar-thumb{border-radius:9999px;background:var(--border-hover)}.settings-provider-nav .provider-jump-link{flex:0 0 auto;min-width:112px}.provider-bundle-head{align-items:stretch;flex-direction:column}.bundle-actions{justify-content:space-between}.bundle-actions .badge:first-child{margin-right:auto}.bundle-url{white-space:normal;overflow-wrap:anywhere}.bundle-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
   .result-grid,.skeleton-grid{grid-template-columns:1fr}
@@ -646,6 +673,9 @@ select:hover{border-color:var(--border-hover)}
   <symbol id="i-alert" viewBox="0 0 24 24"><path d="M21.73 18 13.73 4a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></symbol>
   <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.1 12a10.9 10.9 0 0 1 19.8 0 10.9 10.9 0 0 1-19.8 0"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="m3 3 18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 4.2A10.8 10.8 0 0 1 21.9 12a11.7 11.7 0 0 1-2 3"/><path d="M6.6 6.6A11.7 11.7 0 0 0 2.1 12a10.9 10.9 0 0 0 14.2 6"/></symbol>
   <symbol id="i-server" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01"/><path d="M6 18h.01"/></symbol>
   <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></symbol>
   <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
@@ -676,6 +706,35 @@ select:hover{border-color:var(--border-hover)}
   </div>
 
   <section id="view-overview" role="tabpanel" aria-labelledby="tab-overview">
+    <section class="manual-query" aria-labelledby="manual-query-title">
+      <div class="manual-query-head">
+        <h2 id="manual-query-title" class="manual-query-title"><svg class="icon" aria-hidden="true"><use href="#i-key"></use></svg>自主查询</h2>
+        <span class="manual-query-meta">临时查询</span>
+      </div>
+      <form id="manual-query-form" class="manual-query-form" autocomplete="off" novalidate>
+        <div class="manual-query-fields">
+          <label class="manual-query-field" for="manual-query-type">
+            <span class="manual-query-label">查询项</span>
+            <select id="manual-query-type" required><option value="">选择查询项</option></select>
+          </label>
+          <label class="manual-query-field" for="manual-api-key">
+            <span class="manual-query-label">API Key</span>
+            <span class="manual-key-wrap">
+              <input id="manual-api-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="输入 API Key" required>
+              <button id="manual-key-toggle" class="manual-key-toggle" type="button" aria-label="显示 API Key" title="显示 API Key"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg></button>
+            </span>
+          </label>
+          <label id="manual-base-url-field" class="manual-query-field" for="manual-base-url" hidden>
+            <span class="manual-query-label">服务地址</span>
+            <input id="manual-base-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com" disabled>
+          </label>
+        </div>
+        <button id="manual-query-button" class="btn btn-primary manual-query-submit" type="submit"><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg><span class="btn-label">查询</span></button>
+      </form>
+      <p id="manual-query-message" class="manual-query-message" role="alert" hidden></p>
+      <div id="manual-query-result" class="manual-query-result" aria-busy="false" hidden></div>
+      <div id="manual-query-announcement" class="sr-only" aria-live="polite"></div>
+    </section>
     <div class="summary" aria-label="余额查询概览">
       <div class="summary-item"><span id="stat-providers" class="summary-value">0</span><span class="summary-label">AI 提供商</span></div>
       <div class="summary-item"><span id="stat-configured" class="summary-value">0</span><span class="summary-label">已配置查询</span></div>
@@ -740,6 +799,7 @@ select:hover{border-color:var(--border-hover)}
   var DEFAULT_TTL_SECONDS = 300;
   var MANAGEMENT_PREFIX = "/v0/management";
   var RUNTIME_CONFIG_APPLY_PATH = "/balance-query/config-apply";
+  var MANUAL_QUERY_PATH = "/balance-query/manual-query";
   var AUTH_STORAGE_KEY = "cli-proxy-auth";
   var ENC_PREFIX = "enc::v1::";
   var SECRET_SALT = "cli-proxy-api-webui::secure-storage";
@@ -769,15 +829,18 @@ select:hover{border-color:var(--border-hover)}
     view: "overview",
     dataReady: false,
     querying: false,
+    manualQuerying: false,
     saving: false,
     dirty: false,
     needsQuery: false,
     loadGeneration: 0,
     queryGeneration: 0,
+    manualQueryGeneration: 0,
     saveGeneration: 0,
     snapshotGeneration: 0,
     loadController: null,
     queryController: null,
+    manualQueryController: null,
     saveController: null,
     runtimeApplyFailed: false,
     activeOverviewCategory: "",
@@ -1627,6 +1690,14 @@ select:hover{border-color:var(--border-hover)}
     setButtonBusy(byID("refresh-button"), false, "刷新余额");
   }
 
+  function cancelManualQueryRequest() {
+    state.manualQueryGeneration += 1;
+    if (state.manualQueryController) state.manualQueryController.abort();
+    state.manualQueryController = null;
+    state.manualQuerying = false;
+    setManualQueryBusy(false);
+  }
+
   function cancelSaveRequests() {
     state.saveGeneration += 1;
     if (state.saveController) state.saveController.abort();
@@ -1638,6 +1709,7 @@ select:hover{border-color:var(--border-hover)}
 
   function showConnection(message) {
     state.runtimeApplyFailed = false;
+    resetManualQuery(true);
     byID("app").hidden = true;
     byID("connection-view").hidden = false;
     var defaultBase = state.credentials.apiBase || normalizeApiBase(window.location.origin);
@@ -3112,7 +3184,7 @@ select:hover{border-color:var(--border-hover)}
     renderOverviewNavigation(groups);
   }
 
-  function resultCard(result, index) {
+  function resultCard(result, index, detailsPrefix) {
     var failed = Boolean(result.error || result.failure);
     var failure = failed ? failurePresentation(result) : null;
     var warningItems = failed ? [] : resultWarnings(result);
@@ -3122,7 +3194,7 @@ select:hover{border-color:var(--border-hover)}
     var blockedWindow = quotaState === "blocked" ? quotaBlockingExhaustedWindow(resultWindows) : null;
     var quotaWarning = quotaState !== "normal";
     var detailKeys = !failed ? extraDetailKeys(result) : [];
-    var detailsID = "account-details-" + index + "-" + tinyHash(String(result.account_name || "") + "|" + String(result.base_url || ""));
+    var detailsID = String(detailsPrefix || "account-details") + "-" + index + "-" + tinyHash(String(result.account_name || "") + "|" + String(result.base_url || ""));
     var card = element("article", "result-card" + (failed ? " error" : partial || quotaWarning ? " limited" : ""));
     card.style.animationDelay = Math.min(index * 35, 210) + "ms";
     var head = element("div", "result-head");
@@ -3371,6 +3443,173 @@ select:hover{border-color:var(--border-hover)}
     });
     if (provider.keys.length > 3) wrap.appendChild(element("span", "badge muted", "另有 " + (provider.keys.length - 3) + " 个"));
     return wrap;
+  }
+
+  function manualQueryDefinition(value) {
+    return PROVIDER_DEFINITIONS.filter(function (definition) { return definition.value === value; })[0] || null;
+  }
+
+  function normalizeManualBaseURL(input) {
+    var value = String(input || "").trim();
+    if (!value) return "";
+    try {
+      var parsed = new URL(value);
+      if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username || parsed.password || !parsed.host) return "";
+      return parsed.href.replace(/\/+$/, "");
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function setManualQueryMessage(message) {
+    var node = byID("manual-query-message");
+    var text = String(message || "").trim();
+    setText(node, text);
+    node.hidden = !text;
+  }
+
+  function updateManualQueryBaseURL() {
+    var definition = manualQueryDefinition(byID("manual-query-type").value);
+    var required = Boolean(definition && definition.requires_base_url);
+    var field = byID("manual-base-url-field");
+    var input = byID("manual-base-url");
+    field.hidden = !required;
+    input.required = required;
+    input.disabled = !required || state.manualQuerying;
+  }
+
+  function setManualQueryBusy(busy) {
+    state.manualQuerying = Boolean(busy);
+    byID("manual-query-type").disabled = state.manualQuerying;
+    byID("manual-api-key").disabled = state.manualQuerying;
+    byID("manual-key-toggle").disabled = state.manualQuerying;
+    updateManualQueryBaseURL();
+    setButtonBusy(byID("manual-query-button"), state.manualQuerying, state.manualQuerying ? "查询中" : "查询");
+  }
+
+  function setManualKeyVisible(visible) {
+    var input = byID("manual-api-key");
+    var button = byID("manual-key-toggle");
+    input.type = visible ? "text" : "password";
+    button.setAttribute("aria-label", visible ? "隐藏 API Key" : "显示 API Key");
+    button.setAttribute("title", visible ? "隐藏 API Key" : "显示 API Key");
+    var use = button.querySelector("use");
+    if (use) use.setAttribute("href", visible ? "#i-eye-off" : "#i-eye");
+  }
+
+  function resetManualQuery(clearInputs) {
+    cancelManualQueryRequest();
+    setManualQueryMessage("");
+    setText(byID("manual-query-announcement"), "");
+    var target = byID("manual-query-result");
+    target.textContent = "";
+    target.hidden = true;
+    target.setAttribute("aria-busy", "false");
+    if (clearInputs) {
+      byID("manual-api-key").value = "";
+      byID("manual-base-url").value = "";
+      setManualKeyVisible(false);
+    }
+  }
+
+  function showManualQuerySkeleton() {
+    var target = byID("manual-query-result");
+    target.textContent = "";
+    target.hidden = false;
+    target.setAttribute("aria-busy", "true");
+    var card = element("div", "skeleton-card");
+    card.appendChild(element("div", "skeleton skeleton-line medium"));
+    card.appendChild(element("div", "skeleton skeleton-line short"));
+    card.appendChild(element("div", "skeleton skeleton-line value"));
+    card.appendChild(element("div", "skeleton skeleton-line medium"));
+    target.appendChild(card);
+  }
+
+  function queryManualBalance(event) {
+    if (event) event.preventDefault();
+    if (state.manualQuerying) return Promise.resolve(false);
+    var typeInput = byID("manual-query-type");
+    var keyInput = byID("manual-api-key");
+    var baseInput = byID("manual-base-url");
+    var queryType = String(typeInput.value || "").trim();
+    var definition = manualQueryDefinition(queryType);
+    var apiKey = String(keyInput.value || "").trim();
+    if (!definition) {
+      setManualQueryMessage("请选择查询项");
+      typeInput.focus();
+      return Promise.resolve(false);
+    }
+    if (!apiKey || apiKey.length > 8192) {
+      setManualQueryMessage(apiKey ? "API Key 过长" : "请输入 API Key");
+      keyInput.focus();
+      return Promise.resolve(false);
+    }
+    var baseURL = "";
+    if (definition.requires_base_url) {
+      baseURL = normalizeManualBaseURL(baseInput.value);
+      if (!baseURL) {
+        setManualQueryMessage("请输入有效的 HTTP(S) 服务地址");
+        baseInput.focus();
+        return Promise.resolve(false);
+      }
+    }
+
+    var generation = ++state.manualQueryGeneration;
+    var controller = new AbortController();
+    var credentials = Object.assign({}, state.credentials);
+    var payload = { api_key:apiKey, query_type:queryType };
+    if (baseURL) payload.base_url = baseURL;
+    if (state.globalProxyUrl) payload.proxy_url = state.globalProxyUrl;
+    state.manualQueryController = controller;
+    setManualQueryMessage("");
+    setManualQueryBusy(true);
+    showManualQuerySkeleton();
+    setText(byID("manual-query-announcement"), "正在查询");
+    return apiFetch(MANUAL_QUERY_PATH, {
+      method:"POST",
+      signal:controller.signal,
+      headers:{ "Content-Type":"application/json" },
+      body:JSON.stringify(payload)
+    }, queryTimeoutForBatch(1), credentials).then(function (data) {
+      if (generation !== state.manualQueryGeneration) return false;
+      if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("CPA 返回的查询结果格式不正确");
+      var result = sanitizeSnapshotValue(data, [apiKey]);
+      result.account_name = providerLabels[queryType] || result.provider || "自主查询";
+      var target = byID("manual-query-result");
+      target.textContent = "";
+      target.hidden = false;
+      target.setAttribute("aria-busy", "false");
+      target.appendChild(resultCard(result, 0, "manual-account-details"));
+      setText(byID("manual-query-announcement"), result.error || result.failure ? "查询失败，结果已更新" : "查询完成，结果已更新");
+      refreshCountdowns();
+      return true;
+    }).catch(function (error) {
+      if (generation !== state.manualQueryGeneration || error && error.cancelled) return false;
+      var target = byID("manual-query-result");
+      target.textContent = "";
+      target.hidden = true;
+      target.setAttribute("aria-busy", "false");
+      var message = replaceSecrets(error && error.message ? error.message : "查询失败", [apiKey]);
+      setManualQueryMessage(message);
+      setText(byID("manual-query-announcement"), "查询失败：" + message);
+      return false;
+    }).finally(function () {
+      apiKey = "";
+      if (generation !== state.manualQueryGeneration) return;
+      state.manualQueryController = null;
+      setManualQueryBusy(false);
+    });
+  }
+
+  function initializeManualQuery() {
+    var select = byID("manual-query-type");
+    PROVIDER_DEFINITIONS.forEach(function (definition) {
+      var option = document.createElement("option");
+      option.value = definition.value;
+      option.textContent = definition.label;
+      select.appendChild(option);
+    });
+    updateManualQueryBaseURL();
   }
 
   function clearSettingsNavigation() {
@@ -3910,6 +4149,7 @@ select:hover{border-color:var(--border-hover)}
     state.runtimeApplyFailed = false;
     cancelSaveRequests();
     cancelQueryRequests();
+    resetManualQuery(true);
     if (state.loadController) state.loadController.abort();
     var generation = ++state.loadGeneration;
     state.snapshotGeneration += 1;
@@ -4076,6 +4316,18 @@ select:hover{border-color:var(--border-hover)}
 
   document.querySelectorAll(".segment").forEach(function (button) {
     button.addEventListener("click", function () { setView(button.getAttribute("data-view")); });
+  });
+  initializeManualQuery();
+  byID("manual-query-form").addEventListener("submit", queryManualBalance);
+  byID("manual-query-type").addEventListener("change", function () {
+    setManualQueryMessage("");
+    updateManualQueryBaseURL();
+  });
+  byID("manual-api-key").addEventListener("input", function () { setManualQueryMessage(""); });
+  byID("manual-base-url").addEventListener("input", function () { setManualQueryMessage(""); });
+  byID("manual-key-toggle").addEventListener("click", function () {
+    setManualKeyVisible(byID("manual-api-key").type === "password");
+    byID("manual-api-key").focus();
   });
   byID("refresh-button").addEventListener("click", function () { if (!state.querying) queryBalances(true); });
   byID("save-button").addEventListener("click", saveSettings);
